@@ -10,6 +10,7 @@ import { SimplePool, nip19 } from "nostr-tools";
 import { ReleaseList, type FilterContext } from "./components/ReleaseList";
 import { ReleaseDetail } from "./components/ReleaseDetail";
 import { AddReleaseForm } from "./components/AddReleaseForm";
+import { LabelPanel, findMatch, type LabelEntry } from "./components/LabelPanel";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
@@ -21,6 +22,26 @@ import {
 } from "./lib/tauri";
 
 const KEYRING_BACKEND = "libsecret";
+
+const LABELS_STORAGE_KEY = "ndisc.labels";
+
+function loadLabels(): LabelEntry[] {
+  try {
+    const raw = localStorage.getItem(LABELS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is LabelEntry =>
+        e &&
+        typeof e === "object" &&
+        typeof e.name === "string" &&
+        typeof e.imageUrl === "string",
+    );
+  } catch {
+    return [];
+  }
+}
 
 const DB_FILTERS = [{ name: "SQLite", extensions: ["db", "sqlite"] }];
 
@@ -51,6 +72,19 @@ export default function App() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [npub, setNpub] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileMeta | null>(null);
+  const [labels, setLabelsState] = useState<LabelEntry[]>(() => loadLabels());
+
+  function setLabels(next: LabelEntry[]) {
+    setLabelsState(next);
+    try {
+      localStorage.setItem(LABELS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const labelHidden =
+    selected != null && labels.length > 0 && findMatch(labels, selected) == null;
   const [relays, setRelays] = useState<string[]>(() => {
     // Read current key first, fall back to the legacy key, then to defaults.
     for (const key of [RELAYS_STORAGE_KEY, LEGACY_RELAYS_STORAGE_KEY]) {
@@ -296,13 +330,30 @@ export default function App() {
           ) : (
             <AddReleaseForm onAdded={reload} />
           )}
-          <NostrPanel
-            relays={relays}
-            setRelays={setRelays}
-            filterContext={filterContext}
-            npub={npub}
-            onIdentityChanged={onIdentityChanged}
-          />
+          {labelHidden ? (
+            <NostrPanel
+              relays={relays}
+              setRelays={setRelays}
+              filterContext={filterContext}
+              npub={npub}
+              onIdentityChanged={onIdentityChanged}
+            />
+          ) : (
+            <div className="grid grid-cols-[2fr_1fr] gap-2 items-start">
+              <NostrPanel
+                relays={relays}
+                setRelays={setRelays}
+                filterContext={filterContext}
+                npub={npub}
+                onIdentityChanged={onIdentityChanged}
+              />
+              <LabelPanel
+                labels={labels}
+                setLabels={setLabels}
+                selected={selected}
+              />
+            </div>
+          )}
         </div>
       </div>
 

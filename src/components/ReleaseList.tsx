@@ -461,11 +461,24 @@ export function ReleaseList({
       icon={<Disc3 size={16} />}
       right={
         <span className="text-xs text-muted">
-          {items.length} {items.length === 1 ? "release" : "releases"}
+          <span className="text-accent font-mono">{items.length}</span>{" "}
+          {items.length === 1 ? "release" : "releases"}
           {items.length > 0 && (
             <>
-              <span className="ml-1">· {publishedCount} published</span>
-              <span className="ml-1">· {unpublishedCount} unpublished</span>
+              <span className="ml-1">
+                ·{" "}
+                <span className="text-mauve font-mono">
+                  {publishedCount}
+                </span>{" "}
+                published
+              </span>
+              <span className="ml-1">
+                ·{" "}
+                <span className="text-alert font-mono">
+                  {unpublishedCount}
+                </span>{" "}
+                unpublished
+              </span>
             </>
           )}
           {needsCoverOnly && (
@@ -962,18 +975,36 @@ export function ReleaseList({
                       .join(" · ")}
                   </div>
                 </div>
-                {r.medium && (
+                <div className="flex items-center gap-1.5 shrink-0">
                   <span
+                    title={
+                      r.lastPublishedAt != null
+                        ? "published to Nostr"
+                        : "not published to Nostr"
+                    }
                     className={cn(
-                      "shrink-0 text-[10px] px-1.5 py-0.5 rounded",
-                      r.medium === "digital"
-                        ? "bg-accent/20 text-accent"
-                        : "bg-ok/20 text-ok",
+                      "text-[10px] font-mono px-1.5 py-0.5 rounded border",
+                      "border-transparent text-center",
+                      r.lastPublishedAt != null
+                        ? "text-mauve font-semibold"
+                        : "text-mauve/40",
                     )}
                   >
-                    {r.medium}
+                    n
                   </span>
-                )}
+                  {r.medium && (
+                    <span
+                      className={cn(
+                        "text-[10px] px-1.5 py-0.5 rounded w-14 text-center",
+                        r.medium === "digital"
+                          ? "bg-accent/20 text-accent"
+                          : "bg-ok/20 text-ok",
+                      )}
+                    >
+                      {r.medium}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {showInlineEditor && (
