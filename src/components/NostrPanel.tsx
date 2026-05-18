@@ -1,18 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Copy,
   KeyRound,
-  LogOut,
   Radio,
   ShieldCheck,
   Upload,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
-import { DB_BUTTON_CLS, SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
+import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import {
-  clearKeypair,
   generateKeypair,
   importKeypair,
   publishLibrary,
@@ -131,20 +129,16 @@ export function NostrPanel({
     }
   }
 
-  async function onLogout() {
+  // Reset transient panel state when the user logs out from the header.
+  useEffect(() => {
+    if (npub !== null) return;
+    setRevealedNsec(null);
+    setPublishPhase("idle");
+    setPublishProgress(null);
+    setPublishSummary(null);
+    setPublishError(null);
     setError(null);
-    try {
-      await clearKeypair();
-      setRevealedNsec(null);
-      setPublishPhase("idle");
-      setPublishProgress(null);
-      setPublishSummary(null);
-      setPublishError(null);
-      onIdentityChanged(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
+  }, [npub]);
 
   async function runPublishLibrary() {
     if (relays.length === 0) {
@@ -361,12 +355,6 @@ export function NostrPanel({
           </div>
 
           {error && <div className="mt-2 text-alert text-xs">{error}</div>}
-
-          <div className="mt-3 pt-2 border-t border-surface/60 flex justify-end">
-            <button onClick={onLogout} className={SUBTLE_BUTTON_CLS}>
-              <LogOut size={12} /> Forget identity
-            </button>
-          </div>
         </>
       )}
     </Section>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { RotateCw, FolderOpen, FilePlus, Lock } from "lucide-react";
+import { RotateCw, FolderOpen, FilePlus, Lock, LogOut } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
+  ask,
   open as openDialog,
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
@@ -12,6 +13,7 @@ import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
+  clearKeypair,
   getNpub,
   initDb,
   setDbPath as setDbPathCmd,
@@ -130,6 +132,20 @@ export default function App() {
     if (!next) setProfile(null);
   }
 
+  async function onForgetIdentity() {
+    const ok = await ask(
+      "Forget Nostr identity? The nsec will be deleted from the OS keychain.",
+      { title: "Forget identity", kind: "warning" },
+    );
+    if (!ok) return;
+    try {
+      await clearKeypair();
+      onIdentityChanged(null);
+    } catch (e) {
+      console.error("clearKeypair failed", e);
+    }
+  }
+
   useEffect(() => {
     try {
       localStorage.setItem(RELAYS_STORAGE_KEY, JSON.stringify(relays));
@@ -208,6 +224,16 @@ export default function App() {
                 <Lock size={12} />
                 <span>nsec stored in keychain</span>
               </span>
+              <button
+                type="button"
+                onClick={onForgetIdentity}
+                title="Forget identity"
+                aria-label="Forget identity"
+                className="text-muted hover:text-alert transition-colors
+                           shrink-0 p-1 rounded-md hover:bg-surface"
+              >
+                <LogOut size={12} />
+              </button>
             </>
           )}
         </div>
