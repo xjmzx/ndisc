@@ -1,22 +1,19 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   AlertTriangle,
   Copy,
   KeyRound,
-  Lock,
   LogOut,
   Radio,
   ShieldCheck,
   Upload,
 } from "lucide-react";
-import { SimplePool, nip19 } from "nostr-tools";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS, SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import {
   clearKeypair,
   generateKeypair,
-  getNpub,
   importKeypair,
   publishLibrary,
   type PublishLibrarySummary,
@@ -36,12 +33,14 @@ interface NostrPanelProps {
   relays: string[];
   setRelays: (next: string[]) => void;
   filterContext: FilterContext;
+  npub: string | null;
+  onIdentityChanged: (next: string | null) => void;
 }
 
-type Phase = "loading" | "loggedOut" | "reveal" | "loggedIn";
+type Phase = "loggedOut" | "reveal" | "loggedIn";
 type PublishPhase = "idle" | "confirm" | "running" | "done";
 
-interface ProfileMeta {
+export interface ProfileMeta {
   name?: string;
   display_name?: string;
   nip05?: string;
@@ -73,13 +72,12 @@ export function NostrPanel({
   relays,
   setRelays,
   filterContext,
+  npub,
+  onIdentityChanged,
 }: NostrPanelProps) {
   const [newRelay, setNewRelay] = useState("");
 
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [npub, setNpub] = useState<string | null>(null);
   const [revealedNsec, setRevealedNsec] = useState<string | null>(null);
-  const [profile, setProfile] = useState<ProfileMeta | null>(null);
   const [pasteValue, setPasteValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -91,47 +89,11 @@ export function NostrPanel({
     useState<PublishLibrarySummary | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getNpub()
-      .then((p) => {
-        if (p) {
-          setNpub(p);
-          setPhase("loggedIn");
-          fetchProfile(p, relays);
-        } else {
-          setPhase("loggedOut");
-        }
-      })
-      .catch((e) => {
-        setError(String(e));
-        setPhase("loggedOut");
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function fetchProfile(npubBech32: string, relayList: string[]) {
-    try {
-      const decoded = nip19.decode(npubBech32);
-      if (decoded.type !== "npub") return;
-      const hex = decoded.data as string;
-      const pool = new SimplePool();
-      const event = await pool.get(relayList, {
-        kinds: [0],
-        authors: [hex],
-      });
-      pool.close(relayList);
-      if (event) {
-        try {
-          const meta = JSON.parse(event.content) as ProfileMeta;
-          setProfile(meta);
-        } catch {
-          /* malformed metadata, ignore */
-        }
-      }
-    } catch {
-      /* best-effort fetch, ignore */
-    }
-  }
+  const phase: Phase = revealedNsec
+    ? "reveal"
+    : npub
+      ? "loggedIn"
+      : "loggedOut";
 
   function addRelay() {
     const url = newRelay.trim();
@@ -145,9 +107,8 @@ export function NostrPanel({
     setBusy(true);
     try {
       const kp = await generateKeypair();
-      setNpub(kp.npub);
       setRevealedNsec(kp.nsec);
-      setPhase("reveal");
+      onIdentityChanged(kp.npub);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -161,10 +122,8 @@ export function NostrPanel({
     setBusy(true);
     try {
       const n = await importKeypair(pasteValue.trim());
-      setNpub(n);
       setPasteValue("");
-      setPhase("loggedIn");
-      fetchProfile(n, relays);
+      onIdentityChanged(n);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -176,14 +135,12 @@ export function NostrPanel({
     setError(null);
     try {
       await clearKeypair();
-      setNpub(null);
       setRevealedNsec(null);
-      setProfile(null);
       setPublishPhase("idle");
       setPublishProgress(null);
       setPublishSummary(null);
       setPublishError(null);
-      setPhase("loggedOut");
+      onIdentityChanged(null);
     } catch (e) {
       setError(String(e));
     }
@@ -250,16 +207,10 @@ export function NostrPanel({
 
   function confirmRevealed() {
     setRevealedNsec(null);
-    setPhase("loggedIn");
-    if (npub) fetchProfile(npub, relays);
   }
 
   return (
     <Section title="Nostr Sync" icon={<Radio size={16} />} className="pb-[28px]">
-      {phase === "loading" && (
-        <div className="text-xs text-muted">checking keychain…</div>
-      )}
-
       {phase === "loggedOut" && (
         <>
           <p className="text-xs text-muted">
@@ -344,22 +295,7 @@ export function NostrPanel({
 
       {phase === "loggedIn" && npub && (
         <>
-          <div className="flex items-center flex-wrap gap-x-3 gap-y-1
-                          pb-3 border-b border-surface/60">
-            <IdentityRow profile={profile} npub={npub} />
-            <span
-              className="flex items-center gap-1.5 text-[10px] text-muted"
-              title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
-            >
-              <Lock size={11} />
-              <span>nsec stored in keychain</span>
-            </span>
-            <button onClick={onLogout} className={SUBTLE_BUTTON_CLS}>
-              <LogOut size={12} /> Forget identity
-            </button>
-          </div>
-
-          <div className="mt-3 max-w-md">
+          <div className="max-w-md">
             <div className="text-xs text-muted mb-1">Relays</div>
             <ul className="space-y-1 mb-2">
               {relays.map((r) => (
@@ -425,44 +361,15 @@ export function NostrPanel({
           </div>
 
           {error && <div className="mt-2 text-alert text-xs">{error}</div>}
+
+          <div className="mt-3 pt-2 border-t border-surface/60 flex justify-end">
+            <button onClick={onLogout} className={SUBTLE_BUTTON_CLS}>
+              <LogOut size={12} /> Forget identity
+            </button>
+          </div>
         </>
       )}
     </Section>
-  );
-}
-
-const KEYRING_BACKEND = "libsecret";
-
-function IdentityRow({
-  profile,
-  npub,
-}: {
-  profile: ProfileMeta | null;
-  npub: string;
-}) {
-  const name = profile?.display_name || profile?.name;
-  const nip05 = profile?.nip05;
-
-  if (name && nip05) {
-    return (
-      <>
-        <span className="text-fg font-semibold text-sm">{name}</span>
-        <span className="text-accent text-xs font-mono">{nip05}</span>
-      </>
-    );
-  }
-  if (name) {
-    return <span className="text-fg font-semibold text-sm">{name}</span>;
-  }
-  if (nip05) {
-    return <span className="text-accent text-xs font-mono">{nip05}</span>;
-  }
-  // Brand-new keypair with no published kind:0 yet — at least show a short
-  // form of the npub so the user has SOMETHING to confirm they're logged in.
-  return (
-    <span className="text-muted text-xs font-mono">
-      {npub.slice(0, 12)}…{npub.slice(-6)}
-    </span>
   );
 }
 

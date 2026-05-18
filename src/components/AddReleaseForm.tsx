@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { ChevronDown, ChevronUp, Plus, Save } from "lucide-react";
+import { ChevronDown, ChevronUp, Disc, Plus, Save } from "lucide-react";
 import { Section } from "./Section";
 import { addRelease, type Release } from "../lib/tauri";
 
@@ -12,7 +12,7 @@ type Medium = "physical" | "digital";
 const EMPTY: Release = {
   artist: "",
   title: "",
-  year: null,
+  year: new Date().getFullYear(),
   medium: "physical",
   format: "",
   label: "",
@@ -72,7 +72,6 @@ export function AddReleaseForm({ onAdded }: Props) {
               value={release.releaseType ?? ""}
               onChange={(v) => set("releaseType", v)}
             />
-            <span className="text-muted text-xs">category</span>
             <CategorySelect
               value={release.category ?? ""}
               onChange={(v) => set("category", v)}
@@ -110,7 +109,11 @@ export function AddReleaseForm({ onAdded }: Props) {
               spellCheck={false}
               className={`${INPUT_CLS} w-24`}
             />
-            <span className="text-muted text-xs">condition (physical)</span>
+            <Disc
+              size={12}
+              className="text-muted shrink-0"
+              aria-label="physical-only"
+            />
             <ConditionSelect
               value={release.condition ?? ""}
               onChange={(v) => set("condition", v)}
@@ -130,14 +133,16 @@ export function AddReleaseForm({ onAdded }: Props) {
           onChange={(v) => set("catalogNumber", v)}
         />
         <Field
-          label="url"
+          label="source url"
           value={release.source ?? ""}
           onChange={(v) => set("source", v)}
+          placeholder="https://www.discogs.com/master/… or https://user.bandcamp.com/album/…"
         />
         <Field
           label="cover url"
           value={release.coverArtUrl ?? ""}
           onChange={(v) => set("coverArtUrl", v)}
+          placeholder="https://i.nostr.build/…"
         />
         <TextArea
           label="notes"
@@ -226,10 +231,12 @@ function Field({
   label,
   value,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className={ROW}>
@@ -238,6 +245,7 @@ function Field({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
         className={INPUT_CLS}
         spellCheck={false}
       />
@@ -432,7 +440,7 @@ function CategorySelect({
                    text-fg outline-none border border-transparent
                    focus:border-accent/50 cursor-pointer text-xs"
       >
-        <option value="">—</option>
+        <option value="">category</option>
         {CATEGORY_OPTIONS.map((c) => (
           <option key={c} value={c}>
             {c}
@@ -466,7 +474,7 @@ function ConditionSelect({
                    text-fg outline-none border border-transparent
                    focus:border-accent/50 cursor-pointer text-xs"
       >
-        <option value="">—</option>
+        <option value="">condition</option>
         {CONDITION_OPTIONS.map((c) => {
           const m = c.match(/\(([^)]+)\)\s*$/);
           return (

@@ -1,20 +1,24 @@
 import { useEffect, useState } from "react";
-import { RotateCw, FolderOpen, FilePlus } from "lucide-react";
+import { RotateCw, FolderOpen, FilePlus, Lock } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   open as openDialog,
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
+import { SimplePool, nip19 } from "nostr-tools";
 import { ReleaseList, type FilterContext } from "./components/ReleaseList";
 import { ReleaseDetail } from "./components/ReleaseDetail";
 import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LibraryPanel } from "./components/LibraryPanel";
-import { NostrPanel } from "./components/NostrPanel";
+import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
+  getNpub,
   initDb,
   setDbPath as setDbPathCmd,
   type Release,
 } from "./lib/tauri";
+
+const KEYRING_BACKEND = "libsecret";
 
 const DB_FILTERS = [{ name: "SQLite", extensions: ["db", "sqlite"] }];
 
@@ -43,6 +47,8 @@ export default function App() {
   const [dbPath, setDbPath] = useState<string | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [npub, setNpub] = useState<string | null>(null);
+  const [profile, setProfile] = useState<ProfileMeta | null>(null);
   const [relays, setRelays] = useState<string[]>(() => {
     // Read current key first, fall back to the legacy key, then to defaults.
     for (const key of [RELAYS_STORAGE_KEY, LEGACY_RELAYS_STORAGE_KEY]) {
@@ -88,7 +94,41 @@ export default function App() {
     getVersion()
       .then(setAppVersion)
       .catch(() => setAppVersion(null));
+    getNpub()
+      .then((p) => setNpub(p ?? null))
+      .catch(() => setNpub(null));
   }, []);
+
+  useEffect(() => {
+    if (!npub || relays.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const decoded = nip19.decode(npub);
+        if (decoded.type !== "npub") return;
+        const hex = decoded.data as string;
+        const pool = new SimplePool();
+        const event = await pool.get(relays, { kinds: [0], authors: [hex] });
+        pool.close(relays);
+        if (cancelled || !event) return;
+        try {
+          setProfile(JSON.parse(event.content) as ProfileMeta);
+        } catch {
+          /* malformed metadata, ignore */
+        }
+      } catch {
+        /* best-effort fetch, ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [npub, relays]);
+
+  function onIdentityChanged(next: string | null) {
+    setNpub(next);
+    if (!next) setProfile(null);
+  }
 
   useEffect(() => {
     try {
@@ -140,7 +180,7 @@ export default function App() {
   return (
     <div className="min-h-screen p-6 max-w-[1500px] mx-auto">
       <header className="mb-4 px-4 flex items-center justify-between gap-4">
-        <div className="flex items-baseline gap-3 min-w-0">
+        <div className="flex items-baseline gap-3 shrink-0">
           <h1 className="text-2xl font-bold text-accent tracking-tight shrink-0">
             n<span className="text-fg">disc</span>
           </h1>
@@ -153,9 +193,23 @@ export default function App() {
               v{appVersion}
             </span>
           )}
-          <p className="hidden md:block text-sm text-muted truncate">
-            physical | digital discography
-          </p>
+        </div>
+
+        <div className="hidden lg:flex flex-1 items-center justify-center min-w-0
+                        gap-x-3 gap-y-1 flex-wrap px-4">
+          {npub && (
+            <>
+              <IdentityRow profile={profile} npub={npub} />
+              <span
+                className="flex items-center gap-1.5 text-xs text-muted
+                           shrink-0"
+                title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
+              >
+                <Lock size={12} />
+                <span>nsec stored in keychain</span>
+              </span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0 min-w-0">
@@ -166,13 +220,12 @@ export default function App() {
           ) : dbPath ? (
             <>
               <div
-                className="hidden sm:flex items-center gap-2 text-[10px]
-                           uppercase tracking-wide text-muted min-w-0"
+                className="hidden sm:flex items-center gap-2 text-xs
+                           text-muted min-w-0"
               >
                 <span className="shrink-0">db</span>
                 <span
-                  className="font-mono normal-case text-xs text-fg/70 truncate
-                             max-w-[24rem]"
+                  className="font-mono text-mauve truncate max-w-[24rem]"
                   title={dbPath}
                 >
                   {dbPath}
@@ -223,6 +276,8 @@ export default function App() {
             relays={relays}
             setRelays={setRelays}
             filterContext={filterContext}
+            npub={npub}
+            onIdentityChanged={onIdentityChanged}
           />
         </div>
       </div>
@@ -231,6 +286,39 @@ export default function App() {
         <span>scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite</span>
       </footer>
     </div>
+  );
+}
+
+function IdentityRow({
+  profile,
+  npub,
+}: {
+  profile: ProfileMeta | null;
+  npub: string;
+}) {
+  const name = profile?.display_name || profile?.name;
+  const nip05 = profile?.nip05;
+
+  if (name && nip05) {
+    return (
+      <>
+        <span className="text-fg text-xs truncate">{name}</span>
+        <span className="text-mauve text-xs font-mono truncate">{nip05}</span>
+      </>
+    );
+  }
+  if (name) {
+    return <span className="text-fg text-xs truncate">{name}</span>;
+  }
+  if (nip05) {
+    return (
+      <span className="text-mauve text-xs font-mono truncate">{nip05}</span>
+    );
+  }
+  return (
+    <span className="text-mauve text-xs font-mono">
+      {npub.slice(0, 12)}…{npub.slice(-6)}
+    </span>
   );
 }
 
