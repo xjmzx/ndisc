@@ -10,7 +10,9 @@ import { SimplePool, nip19 } from "nostr-tools";
 import { ReleaseList, type FilterContext } from "./components/ReleaseList";
 import { ReleaseDetail } from "./components/ReleaseDetail";
 import { AddReleaseForm } from "./components/AddReleaseForm";
-import { LabelPanel, findMatch, type LabelEntry } from "./components/LabelPanel";
+import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
+import { LabelviewPanel } from "./components/LabelviewPanel";
+import { bundledSeedLabels, mergeSeed } from "./lib/labelSeed";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
@@ -83,8 +85,29 @@ export default function App() {
     }
   }
 
-  const labelHidden =
-    selected != null && labels.length > 0 && findMatch(labels, selected) == null;
+  // First-run seed: if no labels yet, pre-populate from the bundled
+  // src/assets/labels/ directory so the panel isn't empty.
+  useEffect(() => {
+    if (labels.length > 0) return;
+    const seeded = mergeSeed([], bundledSeedLabels());
+    if (seeded.length > 0) setLabels(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function reseedFromBundle() {
+    setLabels(mergeSeed(labels, bundledSeedLabels()));
+  }
+
+  // Lifted Label-form state so Labelview can prefill it from a different panel.
+  const [labelFormOpen, setLabelFormOpen] = useState(false);
+  const [labelFormName, setLabelFormName] = useState("");
+  const [labelFormUrl, setLabelFormUrl] = useState("");
+
+  function promptAddLabel(name: string, existingUrl: string) {
+    setLabelFormName(name);
+    setLabelFormUrl(existingUrl);
+    setLabelFormOpen(true);
+  }
   const [relays, setRelays] = useState<string[]>(() => {
     // Read current key first, fall back to the legacy key, then to defaults.
     for (const key of [RELAYS_STORAGE_KEY, LEGACY_RELAYS_STORAGE_KEY]) {
@@ -330,7 +353,7 @@ export default function App() {
           ) : (
             <AddReleaseForm onAdded={reload} />
           )}
-          {labelHidden ? (
+          <div className="grid grid-cols-[2fr_1fr_2fr] gap-2 items-start">
             <NostrPanel
               relays={relays}
               setRelays={setRelays}
@@ -338,22 +361,24 @@ export default function App() {
               npub={npub}
               onIdentityChanged={onIdentityChanged}
             />
-          ) : (
-            <div className="grid grid-cols-[2fr_1fr] gap-2 items-start">
-              <NostrPanel
-                relays={relays}
-                setRelays={setRelays}
-                filterContext={filterContext}
-                npub={npub}
-                onIdentityChanged={onIdentityChanged}
-              />
-              <LabelPanel
-                labels={labels}
-                setLabels={setLabels}
-                selected={selected}
-              />
-            </div>
-          )}
+            <LabelviewPanel
+              labels={labels}
+              reloadKey={reloadKey}
+              onPick={promptAddLabel}
+            />
+            <LabelPanel
+              labels={labels}
+              setLabels={setLabels}
+              selected={selected}
+              onReseed={reseedFromBundle}
+              formOpen={labelFormOpen}
+              setFormOpen={setLabelFormOpen}
+              formName={labelFormName}
+              setFormName={setLabelFormName}
+              formUrl={labelFormUrl}
+              setFormUrl={setLabelFormUrl}
+            />
+          </div>
         </div>
       </div>
 

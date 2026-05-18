@@ -145,6 +145,10 @@ export async function setReleaseCatalogNumber(
   return invoke("set_release_catalog_number", { releaseId, value });
 }
 
+export async function listDistinctLabels(): Promise<string[]> {
+  return invoke<string[]>("list_distinct_labels");
+}
+
 export async function exportMarkdown(
   destPath: string,
   filter?: {

@@ -499,6 +499,26 @@ fn html_attr_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+#[tauri::command]
+fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let conn = open(&app)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT label FROM releases
+             WHERE label IS NOT NULL AND label <> ''
+             ORDER BY label COLLATE NOCASE",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
 fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
     Ok(Release {
         id: row.get(0)?,
@@ -2765,6 +2785,7 @@ pub fn run() {
             set_release_condition,
             set_release_label,
             set_release_catalog_number,
+            list_distinct_labels,
             export_markdown,
             list_releases,
             delete_release,

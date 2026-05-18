@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Tag, X } from "lucide-react";
+import { Plus, RefreshCw, Tag, X } from "lucide-react";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import type { Release } from "../lib/tauri";
@@ -13,6 +13,13 @@ interface Props {
   labels: LabelEntry[];
   setLabels: (next: LabelEntry[]) => void;
   selected: Release | null;
+  onReseed?: () => void;
+  formOpen: boolean;
+  setFormOpen: (open: boolean) => void;
+  formName: string;
+  setFormName: (name: string) => void;
+  formUrl: string;
+  setFormUrl: (url: string) => void;
 }
 
 const CYCLE_MS = 21_000;
@@ -29,11 +36,19 @@ export function findMatch(
   );
 }
 
-export function LabelPanel({ labels, setLabels, selected }: Props) {
+export function LabelPanel({
+  labels,
+  setLabels,
+  selected,
+  onReseed,
+  formOpen,
+  setFormOpen,
+  formName,
+  setFormName,
+  formUrl,
+  setFormUrl,
+}: Props) {
   const [cycleIndex, setCycleIndex] = useState(0);
-  const [addOpen, setAddOpen] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newUrl, setNewUrl] = useState("");
   const cycleRef = useRef(cycleIndex);
   cycleRef.current = cycleIndex;
 
@@ -58,13 +73,24 @@ export function LabelPanel({ labels, setLabels, selected }: Props) {
   const display = match ?? labels[cycleIndex] ?? null;
 
   function addLabel() {
-    const url = newUrl.trim();
+    const url = formUrl.trim();
     if (!url) return;
-    const name = newName.trim() || new URL(url).hostname;
-    setLabels([...labels, { name, imageUrl: url }]);
-    setNewName("");
-    setNewUrl("");
-    setAddOpen(false);
+    const name = formName.trim() || new URL(url).hostname;
+    // Replace existing entry with the same (normalised) name; otherwise append.
+    const key = name.trim().toLowerCase();
+    const existingIdx = labels.findIndex(
+      (l) => l.name.trim().toLowerCase() === key,
+    );
+    const next =
+      existingIdx >= 0
+        ? labels.map((l, i) =>
+            i === existingIdx ? { name, imageUrl: url } : l,
+          )
+        : [...labels, { name, imageUrl: url }];
+    setLabels(next);
+    setFormName("");
+    setFormUrl("");
+    setFormOpen(false);
   }
 
   function removeCurrent() {
@@ -90,9 +116,21 @@ export function LabelPanel({ labels, setLabels, selected }: Props) {
               <X size={12} />
             </button>
           )}
+          {onReseed && (
+            <button
+              type="button"
+              onClick={onReseed}
+              title="Re-import bundled label images"
+              aria-label="Re-import bundled label images"
+              className="text-muted hover:text-mauve transition-colors p-1
+                         rounded-md hover:bg-surface"
+            >
+              <RefreshCw size={12} />
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setAddOpen((v) => !v)}
+            onClick={() => setFormOpen(!formOpen)}
             title="Add label image"
             aria-label="Add label image"
             className="text-muted hover:text-mauve transition-colors p-1
@@ -127,13 +165,13 @@ export function LabelPanel({ labels, setLabels, selected }: Props) {
         )}
       </div>
 
-      {addOpen && (
+      {formOpen && (
         <div className="mt-2 flex flex-col gap-1.5">
           <input
             type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="label name (e.g. Clone West Coast Series)"
+            value={formName}
+            onChange={(e) => setFormName(e.target.value)}
+            placeholder="label name (matches release.label)"
             className="px-2 py-1 rounded-md bg-surface text-fg text-xs
                        outline-none border border-transparent
                        focus:border-accent/50 placeholder:text-muted"
@@ -141,21 +179,26 @@ export function LabelPanel({ labels, setLabels, selected }: Props) {
           />
           <input
             type="text"
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
+            value={formUrl}
+            onChange={(e) => setFormUrl(e.target.value)}
             placeholder="https://i.nostr.build/…"
             className="px-2 py-1 rounded-md bg-surface text-fg text-xs
                        font-mono outline-none border border-transparent
                        focus:border-accent/50 placeholder:text-muted"
             spellCheck={false}
           />
+          <p className="text-[10px] text-muted leading-snug">
+            Tip: upload the image to{" "}
+            <span className="font-mono text-mauve">nostr.build</span> first,
+            then paste the URL here so the label syncs across devices.
+          </p>
           <button
             type="button"
             onClick={addLabel}
-            disabled={!newUrl.trim()}
+            disabled={!formUrl.trim()}
             className={`${DB_BUTTON_CLS} justify-center disabled:opacity-50`}
           >
-            <Plus size={12} /> Add
+            <Plus size={12} /> Save
           </button>
         </div>
       )}
