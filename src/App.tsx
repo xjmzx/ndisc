@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { RotateCw, FolderOpen, FilePlus } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   open as openDialog,
   save as saveDialog,
@@ -41,6 +42,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [dbPath, setDbPath] = useState<string | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [relays, setRelays] = useState<string[]>(() => {
     // Read current key first, fall back to the legacy key, then to defaults.
     for (const key of [RELAYS_STORAGE_KEY, LEGACY_RELAYS_STORAGE_KEY]) {
@@ -83,6 +85,9 @@ export default function App() {
     initDb()
       .then(setDbPath)
       .catch((e) => setDbError(String(e)));
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(null));
   }, []);
 
   useEffect(() => {
@@ -139,8 +144,17 @@ export default function App() {
           <h1 className="text-2xl font-bold text-accent tracking-tight shrink-0">
             n<span className="text-fg">disc</span>
           </h1>
-          <p className="hidden md:block text-xs text-muted truncate">
-            physical & digital music collection · search · share via Nostr
+          {appVersion && (
+            <span
+              className="hidden md:inline-flex items-center px-1.5 py-0.5
+                         rounded-md bg-surface text-mauve font-mono text-xs
+                         shrink-0"
+            >
+              v{appVersion}
+            </span>
+          )}
+          <p className="hidden md:block text-sm text-muted truncate">
+            physical | digital discography
           </p>
         </div>
 
