@@ -196,13 +196,13 @@ export default function App() {
   return (
     <div className="min-h-screen p-6 max-w-[1500px] mx-auto">
       <header className="mb-4 px-4 flex items-center justify-between gap-4">
-        <div className="flex items-baseline gap-3 shrink-0">
-          <h1 className="text-2xl font-bold text-accent tracking-tight shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
+          <h1 className="text-2xl font-bold text-accent tracking-tight leading-none shrink-0">
             n<span className="text-fg">disc</span>
           </h1>
           {appVersion && (
             <span
-              className="hidden md:inline-flex items-center px-1.5 py-0.5
+              className="hidden md:inline-flex items-center px-2.5 py-2
                          rounded-md bg-surface text-mauve font-mono text-xs
                          shrink-0"
             >
@@ -212,28 +212,25 @@ export default function App() {
         </div>
 
         <div className="hidden lg:flex flex-1 items-center justify-center min-w-0
-                        gap-x-3 gap-y-1 flex-wrap px-4">
+                        gap-2 flex-wrap px-4">
           {npub && (
             <>
-              <IdentityRow profile={profile} npub={npub} />
-              <span
-                className="flex items-center gap-1.5 text-xs text-muted
-                           shrink-0"
-                title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
+              <div
+                className="inline-flex items-center gap-4 px-3.5 py-2
+                           rounded-md bg-mauve/15 text-xs min-w-0"
               >
-                <Lock size={12} />
-                <span>nsec stored in keychain</span>
-              </span>
-              <button
-                type="button"
-                onClick={onForgetIdentity}
-                title="Forget identity"
-                aria-label="Forget identity"
-                className="text-muted hover:text-alert transition-colors
-                           shrink-0 p-1 rounded-md hover:bg-surface"
-              >
-                <LogOut size={12} />
-              </button>
+                <IdentityRow profile={profile} npub={npub} />
+                <span
+                  className="flex items-center gap-1.5 text-muted shrink-0"
+                  title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
+                >
+                  <Lock size={12} />
+                  <span>nsec stored in keychain</span>
+                </span>
+              </div>
+              <DbIconButton title="Forget identity" onClick={onForgetIdentity}>
+                <LogOut size={14} />
+              </DbIconButton>
             </>
           )}
         </div>
@@ -246,8 +243,9 @@ export default function App() {
           ) : dbPath ? (
             <>
               <div
-                className="hidden sm:flex items-center gap-2 text-xs
-                           text-muted min-w-0"
+                className="hidden sm:inline-flex items-center gap-2 px-2.5
+                           py-2 rounded-md bg-mauve/15 text-xs text-muted
+                           min-w-0"
               >
                 <span className="shrink-0">db</span>
                 <span
@@ -324,17 +322,22 @@ function IdentityRow({
 }) {
   const name = profile?.display_name || profile?.name;
   const nip05 = profile?.nip05;
+  // Names that look like identifiers (e.g. "user@host") render as mono so
+  // they sit visually consistent with the nip05 chip next to them.
+  const nameCls = name && name.includes("@")
+    ? "text-fg text-xs font-mono truncate"
+    : "text-fg text-xs truncate";
 
   if (name && nip05) {
     return (
       <>
-        <span className="text-fg text-xs truncate">{name}</span>
+        <span className={nameCls}>{name}</span>
         <span className="text-mauve text-xs font-mono truncate">{nip05}</span>
       </>
     );
   }
   if (name) {
-    return <span className="text-fg text-xs truncate">{name}</span>;
+    return <span className={nameCls}>{name}</span>;
   }
   if (nip05) {
     return (
