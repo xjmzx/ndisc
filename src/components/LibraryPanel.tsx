@@ -1,10 +1,21 @@
 import { useEffect, useState } from "react";
-import { Disc, FolderInput, Library, Play, RotateCcw } from "lucide-react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  Disc,
+  FileDown,
+  FolderInput,
+  Library,
+  Play,
+  RotateCcw,
+} from "lucide-react";
+import {
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import {
+  exportMarkdown,
   getStats,
   importDirectory,
   importDiscogsCsv,
@@ -48,6 +59,37 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
   const [mediumFilter, setMediumFilter] = useState<
     "both" | "physical" | "digital"
   >("both");
+
+  // --- Export ---------------------------------------------------------------
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+
+  async function onExportMarkdown() {
+    setExportMsg(null);
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    let picked: string | null;
+    try {
+      const result = await saveDialog({
+        title: "Export library as markdown",
+        defaultPath: `ndisc-${stamp}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      picked = typeof result === "string" ? result : null;
+    } catch (e) {
+      setExportMsg(`error: ${e}`);
+      return;
+    }
+    if (!picked) return;
+    setExporting(true);
+    try {
+      const count = await exportMarkdown(picked);
+      setExportMsg(`exported ${count} release${count === 1 ? "" : "s"}`);
+    } catch (e) {
+      setExportMsg(`error: ${e}`);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function reset() {
     setPhase("idle");
@@ -200,7 +242,25 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
             <button onClick={pickDiscogsCsv} className={DB_BUTTON_CLS}>
               <Disc size={14} /> Import Discogs
             </button>
+            <button
+              onClick={onExportMarkdown}
+              disabled={exporting}
+              className={DB_BUTTON_CLS}
+            >
+              <FileDown size={14} />{" "}
+              {exporting ? "exporting…" : "Export Markdown"}
+            </button>
           </div>
+          {exportMsg && (
+            <div
+              className={
+                "mt-1 text-xs text-right " +
+                (exportMsg.startsWith("error") ? "text-alert" : "text-ok")
+              }
+            >
+              {exportMsg}
+            </div>
+          )}
           {error && (
             <div className="mt-1 text-alert text-xs text-right">{error}</div>
           )}

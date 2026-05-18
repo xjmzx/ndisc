@@ -145,6 +145,26 @@ export async function setReleaseCatalogNumber(
   return invoke("set_release_catalog_number", { releaseId, value });
 }
 
+export async function exportMarkdown(
+  destPath: string,
+  filter?: {
+    query?: string;
+    medium?: "physical" | "digital";
+    needsCover?: boolean;
+    publishedFilter?: PublishedFilter;
+    labelFilter?: LabelFilter;
+  },
+): Promise<number> {
+  return invoke<number>("export_markdown", {
+    destPath,
+    query: filter?.query,
+    medium: filter?.medium,
+    needsCover: filter?.needsCover,
+    publishedFilter: filter?.publishedFilter,
+    labelFilter: filter?.labelFilter,
+  });
+}
+
 export async function getStats(): Promise<Stats> {
   return invoke<Stats>("get_stats");
 }

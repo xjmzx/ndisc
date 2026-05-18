@@ -436,6 +436,69 @@ fn set_release_catalog_number(
     Ok(())
 }
 
+#[tauri::command]
+fn export_markdown(
+    app: tauri::AppHandle,
+    dest_path: String,
+    query: Option<String>,
+    medium: Option<String>,
+    needs_cover: Option<bool>,
+    published_filter: Option<String>,
+    label_filter: Option<String>,
+) -> Result<usize, String> {
+    let releases = list_releases(
+        app,
+        query,
+        medium,
+        needs_cover,
+        published_filter,
+        label_filter,
+    )?;
+    let md = build_markdown(&releases);
+    std::fs::write(&dest_path, md).map_err(|e| e.to_string())?;
+    Ok(releases.len())
+}
+
+fn build_markdown(releases: &[Release]) -> String {
+    let mut s = String::new();
+    s.push_str("| Cover | Artist | Title | Catalog | Label | Year | Country |\n");
+    s.push_str("|-------|--------|-------|---------|-------|------|---------|\n");
+    for r in releases {
+        let cover = r
+            .cover_art_url
+            .as_deref()
+            .filter(|u| !u.is_empty())
+            .map(|u| format!("<img src=\"{}\" width=\"80\">", html_attr_escape(u)))
+            .unwrap_or_default();
+        let year = r.year.map(|y| y.to_string()).unwrap_or_default();
+        s.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            cover,
+            md_cell(&r.artist),
+            md_cell(&r.title),
+            md_cell(r.catalog_number.as_deref().unwrap_or("")),
+            md_cell(r.label.as_deref().unwrap_or("")),
+            year,
+            md_cell(r.country.as_deref().unwrap_or("")),
+        ));
+    }
+    s
+}
+
+fn md_cell(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('\n', " ")
+        .replace('\r', "")
+}
+
+fn html_attr_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
     Ok(Release {
         id: row.get(0)?,
@@ -2702,6 +2765,7 @@ pub fn run() {
             set_release_condition,
             set_release_label,
             set_release_catalog_number,
+            export_markdown,
             list_releases,
             delete_release,
             get_stats,
