@@ -76,6 +76,10 @@ export async function addRelease(release: Release): Promise<number> {
   return invoke<number>("add_release", { release });
 }
 
+export async function restoreRelease(release: Release): Promise<number> {
+  return invoke<number>("restore_release", { release });
+}
+
 export async function listReleases(
   query?: string,
   medium?: "physical" | "digital",

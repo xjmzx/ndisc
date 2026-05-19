@@ -19,6 +19,7 @@ import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
 import {
   deleteRelease,
+  restoreRelease,
   publishRelease,
   refreshRelease,
   setCoverArtUrl,
@@ -95,6 +96,7 @@ interface Props {
   relays: string[];
   onDeleted: () => void;
   onChanged: (updated: Release) => void;
+  showUndoToast?: (message: string, undo: () => void | Promise<void>) => void;
 }
 
 // Status block at the bottom of the detail panel shows exactly one of:
@@ -108,7 +110,13 @@ type LatestOp =
   | { kind: "warn"; text: string }
   | { kind: "error"; text: string };
 
-export function ReleaseDetail({ release, relays, onDeleted, onChanged }: Props) {
+export function ReleaseDetail({
+  release,
+  relays,
+  onDeleted,
+  onChanged,
+  showUndoToast,
+}: Props) {
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -195,9 +203,21 @@ export function ReleaseDetail({ release, relays, onDeleted, onChanged }: Props) 
       kind: "warning",
     });
     if (!yes) return;
+    const snapshot = release;
     try {
       await deleteRelease(release.id);
       onDeleted();
+      showUndoToast?.(
+        `Deleted "${snapshot.artist} — ${snapshot.title}"`,
+        async () => {
+          try {
+            await restoreRelease(snapshot);
+            onDeleted();
+          } catch (e) {
+            alert(`Restore failed: ${e}`);
+          }
+        },
+      );
     } catch (e) {
       alert(String(e));
     }

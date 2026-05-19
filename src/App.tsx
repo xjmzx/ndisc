@@ -12,6 +12,7 @@ import { ReleaseDetail } from "./components/ReleaseDetail";
 import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
+import { UndoToast, type UndoToastState } from "./components/UndoToast";
 import { bundledSeedLabels, mergeSeed } from "./lib/labelSeed";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
@@ -107,6 +108,12 @@ export default function App() {
     setLabelFormName(name);
     setLabelFormUrl(existingUrl);
     setLabelFormOpen(true);
+  }
+
+  // Undo toast — generic, used by destructive actions like delete-release.
+  const [toast, setToast] = useState<UndoToastState | null>(null);
+  function showUndoToast(message: string, undo: () => void | Promise<void>) {
+    setToast({ key: Date.now(), message, undo });
   }
   const [relays, setRelays] = useState<string[]>(() => {
     // Read current key first, fall back to the legacy key, then to defaults.
@@ -349,6 +356,7 @@ export default function App() {
               relays={relays}
               onDeleted={reload}
               onChanged={handleReleaseChanged}
+              showUndoToast={showUndoToast}
             />
           ) : (
             <AddReleaseForm onAdded={reload} />
@@ -385,6 +393,8 @@ export default function App() {
       <footer className="mt-8 text-xs text-muted">
         <span>scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite</span>
       </footer>
+
+      <UndoToast toast={toast} onDismiss={() => setToast(null)} />
     </div>
   );
 }

@@ -262,6 +262,53 @@ fn set_db_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
     Ok(p.to_string_lossy().into_owned())
 }
 
+// Restore a release using its prior id. Used by the in-app undo toast so a
+// recently-deleted row comes back with the same id (so previously-published
+// Nostr d-tags still address it).
+#[tauri::command]
+fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
+    let id = release
+        .id
+        .ok_or_else(|| "release.id is required for restore".to_string())?;
+    let conn = open(&app)?;
+    conn.execute(
+        "INSERT INTO releases
+         (id, artist, title, year, medium, format, label, catalog_number, country,
+          condition, notes, source, file_path, cover_art_path, cover_art_url,
+          discogs_id, musicbrainz_id, release_type, category,
+          last_published_at, last_published_naddr, added_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+        params![
+            id,
+            release.artist,
+            release.title,
+            release.year,
+            release.medium,
+            release.format,
+            release.label,
+            release.catalog_number,
+            release.country,
+            release.condition,
+            release.notes,
+            release.source,
+            release.file_path,
+            release.cover_art_path,
+            release.cover_art_url,
+            release.discogs_id,
+            release.musicbrainz_id,
+            release.release_type,
+            release.category,
+            release.last_published_at,
+            release.last_published_naddr,
+            release.added_at,
+            release.updated_at,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 #[tauri::command]
 fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
     let conn = open(&app)?;
@@ -499,14 +546,20 @@ fn html_attr_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+// All distinct labels, ordered by release count desc (then alphabetical),
+// capped at 500 rows as a defensive ceiling. The UI applies its own display
+// cap and search filter on top of this — including single-release labels so
+// the user can assign an image to anything they own.
 #[tauri::command]
 fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let conn = open(&app)?;
     let mut stmt = conn
         .prepare(
-            "SELECT DISTINCT label FROM releases
+            "SELECT label FROM releases
              WHERE label IS NOT NULL AND label <> ''
-             ORDER BY label COLLATE NOCASE",
+             GROUP BY label
+             ORDER BY COUNT(*) DESC, label COLLATE NOCASE
+             LIMIT 500",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -2778,6 +2831,7 @@ pub fn run() {
             init_db,
             set_db_path,
             add_release,
+            restore_release,
             set_cover_art_url,
             set_release_type,
             set_release_category,
