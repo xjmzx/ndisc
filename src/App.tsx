@@ -13,7 +13,11 @@ import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
-import { bundledSeedLabels, mergeSeed } from "./lib/labelSeed";
+import {
+  bundledSeedLabels,
+  clearStaleBundleUrls,
+  mergeSeed,
+} from "./lib/labelSeed";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
@@ -34,13 +38,14 @@ function loadLabels(): LabelEntry[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
+    const valid = parsed.filter(
       (e): e is LabelEntry =>
         e &&
         typeof e === "object" &&
         typeof e.name === "string" &&
         typeof e.imageUrl === "string",
     );
+    return clearStaleBundleUrls(valid);
   } catch {
     return [];
   }
@@ -86,12 +91,16 @@ export default function App() {
     }
   }
 
-  // First-run seed: if no labels yet, pre-populate from the bundled
-  // src/assets/labels/ directory so the panel isn't empty.
+  // First-run seed: if no labels yet, pre-populate from the nostr.build
+  // hosted seed pool so the panel isn't empty. On returning runs, persist
+  // any URL migrations clearStaleBundleUrls applied in loadLabels.
   useEffect(() => {
-    if (labels.length > 0) return;
-    const seeded = mergeSeed([], bundledSeedLabels());
-    if (seeded.length > 0) setLabels(seeded);
+    if (labels.length === 0) {
+      const seeded = mergeSeed([], bundledSeedLabels());
+      if (seeded.length > 0) setLabels(seeded);
+    } else {
+      setLabels(labels);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

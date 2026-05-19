@@ -81,7 +81,18 @@ export function LabelPanel({
     }
   }, [labels.length]);
 
-  const display = match ?? editingEntry ?? labels[cycleIndex] ?? null;
+  // If the selected release has a label but we have no entry for it,
+  // synthesize a placeholder so the panel shows "no art for THIS label"
+  // instead of cycling through other label images.
+  const releaseLabelPlaceholder: LabelEntry | null = useMemo(() => {
+    const name = selected?.label?.trim() ?? "";
+    if (!name || match) return null;
+    return { name, imageUrl: "" };
+  }, [selected, match]);
+
+  const display =
+    match ?? editingEntry ?? releaseLabelPlaceholder ?? labels[cycleIndex] ?? null;
+  const isSynthetic = display != null && display === releaseLabelPlaceholder;
   const editing = formOpen;
 
   function addLabel() {
@@ -116,7 +127,7 @@ export function LabelPanel({
       icon={<Tag size={16} />}
       right={
         <div className="flex items-center gap-1">
-          {display && !match && (
+          {display && !match && !isSynthetic && (
             <button
               type="button"
               onClick={removeCurrent}
@@ -132,8 +143,8 @@ export function LabelPanel({
             <button
               type="button"
               onClick={onReseed}
-              title="Re-import bundled label images"
-              aria-label="Re-import bundled label images"
+              title="Re-seed missing labels from the built-in list"
+              aria-label="Re-seed missing labels from the built-in list"
               className="text-muted hover:text-mauve transition-colors p-1
                          rounded-md hover:bg-surface"
             >
