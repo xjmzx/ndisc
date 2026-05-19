@@ -54,14 +54,25 @@ export function LabelPanel({
 
   const match = useMemo(() => findMatch(labels, selected), [labels, selected]);
 
-  // Cycle only when no release is selected and we have 2+ labels.
+  // When the form is open, freeze on the entry whose name matches what's
+  // being edited so the user sees what they're updating.
+  const editingEntry = useMemo(() => {
+    if (!formOpen) return null;
+    const needle = formName.trim().toLowerCase();
+    if (!needle) return null;
+    return (
+      labels.find((l) => l.name.trim().toLowerCase() === needle) ?? null
+    );
+  }, [formOpen, formName, labels]);
+
+  // Cycle only when no release is selected, no form open, and we have 2+.
   useEffect(() => {
-    if (selected || labels.length < 2) return;
+    if (selected || formOpen || labels.length < 2) return;
     const t = window.setInterval(() => {
       setCycleIndex((i) => (i + 1) % labels.length);
     }, CYCLE_MS);
     return () => window.clearInterval(t);
-  }, [selected, labels.length]);
+  }, [selected, formOpen, labels.length]);
 
   // Clamp cycleIndex if labels shrink.
   useEffect(() => {
@@ -70,14 +81,15 @@ export function LabelPanel({
     }
   }, [labels.length]);
 
-  const display = match ?? labels[cycleIndex] ?? null;
+  const display = match ?? editingEntry ?? labels[cycleIndex] ?? null;
+  const editing = formOpen;
 
   function addLabel() {
+    const name = formName.trim();
+    if (!name) return;
     const url = formUrl.trim();
-    if (!url) return;
-    const name = formName.trim() || new URL(url).hostname;
     // Replace existing entry with the same (normalised) name; otherwise append.
-    const key = name.trim().toLowerCase();
+    const key = name.toLowerCase();
     const existingIdx = labels.findIndex(
       (l) => l.name.trim().toLowerCase() === key,
     );
@@ -142,25 +154,48 @@ export function LabelPanel({
       }
     >
       <div className="h-[186px] flex items-center justify-center">
-        {display ? (
+        {display && display.imageUrl ? (
           <img
             src={display.imageUrl}
             alt={display.name}
             title={display.name}
-            className="aspect-square h-full max-w-full rounded-md object-cover"
+            className={
+              "aspect-square h-full max-w-full rounded-md object-cover " +
+              (editing ? "ring-2 ring-accent/70" : "")
+            }
             onError={(e) => {
               (e.currentTarget as HTMLImageElement).style.display = "none";
             }}
           />
         ) : (
           <div
-            className="aspect-square h-full max-w-full rounded-md border
-                       border-dashed border-surface flex items-center
-                       justify-center text-muted text-xs text-center px-2"
+            className={
+              "aspect-square h-full max-w-full rounded-md border flex " +
+              "flex-col items-center justify-center gap-1 text-center px-2 " +
+              (editing
+                ? "border-accent/70 border-solid bg-bg/40"
+                : "border-dashed border-surface bg-bg/30")
+            }
           >
-            {labels.length === 0
-              ? "no label images"
-              : "no match for this release"}
+            {display ? (
+              <>
+                <span className="text-[10px] uppercase tracking-wide text-muted">
+                  [no data]
+                </span>
+                <span
+                  className="text-xs text-fg/80 truncate max-w-full"
+                  title={display.name}
+                >
+                  {display.name}
+                </span>
+              </>
+            ) : (
+              <span className="text-muted text-xs">
+                {labels.length === 0
+                  ? "no label images"
+                  : "no match for this release"}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -195,7 +230,7 @@ export function LabelPanel({
           <button
             type="button"
             onClick={addLabel}
-            disabled={!formUrl.trim()}
+            disabled={!formName.trim()}
             className={`${DB_BUTTON_CLS} justify-center disabled:opacity-50`}
           >
             <Plus size={12} /> Save
