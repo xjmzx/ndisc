@@ -474,7 +474,7 @@ export function ReleaseList({
               </span>
               <span className="ml-1">
                 ·{" "}
-                <span className="text-alert font-mono">
+                <span className="text-fg font-mono">
                   {unpublishedCount}
                 </span>{" "}
                 unpublished
