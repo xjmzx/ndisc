@@ -271,6 +271,13 @@ export default function App() {
     setReloadKey((k) => k + 1);
   }
 
+  // Selecting a release ends any label-editing session, so the LABEL panel
+  // follows the release instead of staying on the picked label.
+  function selectRelease(release: Release) {
+    setSelected(release);
+    setLabelFormOpen(false);
+  }
+
   async function switchDbTo(newPath: string) {
     setDbError(null);
     try {
@@ -399,7 +406,7 @@ export default function App() {
           <ReleaseList
             reloadKey={reloadKey}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectRelease}
             onFilterChange={setFilterContext}
             relays={relays}
           />
