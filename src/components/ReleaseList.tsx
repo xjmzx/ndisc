@@ -958,22 +958,26 @@ export function ReleaseList({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Nostr purple is fixed across both themes — not the
+                      theme-variable mauve token. Lit = published. */}
                   <span
                     title={
                       r.lastPublishedAt != null
                         ? "published to Nostr"
                         : "not published to Nostr"
                     }
-                    className={cn(
-                      "text-[10px] font-mono px-1.5 py-0.5 rounded border",
-                      "border-transparent text-center",
+                    aria-label={
                       r.lastPublishedAt != null
-                        ? "text-mauve font-semibold"
-                        : "text-mauve/40",
+                        ? "published to Nostr"
+                        : "not published to Nostr"
+                    }
+                    className={cn(
+                      "shrink-0 w-2.5 h-2.5 rounded-full",
+                      r.lastPublishedAt != null
+                        ? "bg-[#a78bfa]"
+                        : "bg-[#a78bfa]/25",
                     )}
-                  >
-                    n
-                  </span>
+                  />
                   {r.medium && (
                     <span
                       className={cn(

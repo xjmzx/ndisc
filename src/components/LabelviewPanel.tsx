@@ -11,9 +11,10 @@ interface Props {
 }
 
 const MAX_DISPLAY = 36;
-// Cap how many label rows we render, regardless of how many the backend
-// returned. Keeps the picker compact and predictable.
-const MAX_ROWS = 40;
+// Safety cap on how many label rows we render at once. The list scrolls,
+// so this only guards against a pathological label count; if a library
+// ever exceeds it, pagination would be the next step.
+const MAX_ROWS = 500;
 
 function normaliseName(s: string): string {
   return s.trim().toLowerCase();
@@ -44,7 +45,6 @@ export function LabelviewPanel({ labels, reloadKey, onPick }: Props) {
   }, [distinct, query]);
 
   const visible = filtered.slice(0, MAX_ROWS);
-  const hiddenCount = Math.max(0, filtered.length - visible.length);
 
   return (
     <Section title="Labels" icon={<List size={16} />}>
@@ -108,17 +108,17 @@ export function LabelviewPanel({ labels, reloadKey, onPick }: Props) {
               </li>
             );
           })}
-          {hiddenCount > 0 && (
-            <li className="px-2 pt-1 text-[10px] text-muted">
-              +{hiddenCount} more (top {MAX_ROWS} shown)
-            </li>
-          )}
           {filtered.length === 0 && (
             <li className="px-2 py-1 text-[10px] text-muted">
               no matches
             </li>
           )}
         </ul>
+        {visible.length > 0 && (
+          <div className="px-2 pt-1 text-[10px] text-muted tabular-nums">
+            {visible.length}
+          </div>
+        )}
         </>
       )}
     </Section>
