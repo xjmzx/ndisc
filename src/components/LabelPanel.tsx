@@ -99,7 +99,12 @@ export function LabelPanel({
     (selected ? null : labels[cycleIndex]) ??
     null;
   const isSynthetic = display != null && display === releaseLabelPlaceholder;
-  const awaitingArt = display != null && !display.imageUrl;
+  // "Not On Label" is Discogs shorthand for a self-released record — there's
+  // no label art to chase, so present it muted rather than as missing art.
+  const isSelfReleased =
+    (selected?.label?.trim().toLowerCase() ?? "") === "not on label";
+  const awaitingArt =
+    display != null && !display.imageUrl && !isSelfReleased;
   const editing = formOpen;
 
   function addLabel() {
@@ -202,17 +207,21 @@ export function LabelPanel({
             }
           >
             {display ? (
-              <>
-                <span className="text-[10px] uppercase tracking-wide text-mauve/80">
-                  [no data]
-                </span>
-                <span
-                  className="text-xs text-fg/80 truncate max-w-full"
-                  title={display.name}
-                >
-                  {display.name}
-                </span>
-              </>
+              isSelfReleased ? (
+                <span className="text-xs text-muted">Self-released</span>
+              ) : (
+                <>
+                  <span className="text-[10px] uppercase tracking-wide text-mauve/80">
+                    [no data]
+                  </span>
+                  <span
+                    className="text-xs text-fg/80 truncate max-w-full"
+                    title={display.name}
+                  >
+                    {display.name}
+                  </span>
+                </>
+              )
             ) : (
               <span className="text-muted text-xs">
                 {selected ? "no label" : "no label images"}
