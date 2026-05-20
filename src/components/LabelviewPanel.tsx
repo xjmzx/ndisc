@@ -7,7 +7,7 @@ import type { LabelEntry } from "./LabelPanel";
 interface Props {
   labels: LabelEntry[];
   reloadKey: number;
-  onPick: (name: string, existingUrl: string) => void;
+  onPick: (name: string, existingUrl: string, existingSite: string) => void;
 }
 
 const MAX_DISPLAY = 36;
@@ -81,7 +81,9 @@ export function LabelviewPanel({ labels, reloadKey, onPick }: Props) {
               <li key={name}>
                 <button
                   type="button"
-                  onClick={() => onPick(name, entry?.imageUrl ?? "")}
+                  onClick={() =>
+                    onPick(name, entry?.imageUrl ?? "", entry?.siteUrl ?? "")
+                  }
                   title={
                     hasImage
                       ? `Edit image for ${name}`

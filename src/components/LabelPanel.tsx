@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RefreshCw, Tag, X } from "lucide-react";
+import { Pause, Play, Plus, RefreshCw, Tag, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import type { Release } from "../lib/tauri";
@@ -7,6 +8,8 @@ import type { Release } from "../lib/tauri";
 export interface LabelEntry {
   name: string;
   imageUrl: string;
+  // Optional label website — shown as a clickable link under the image.
+  siteUrl?: string;
 }
 
 type BrandVariant = "themeA" | "themeB" | "ink";
@@ -40,6 +43,8 @@ interface Props {
   setFormName: (name: string) => void;
   formUrl: string;
   setFormUrl: (url: string) => void;
+  formSite: string;
+  setFormSite: (url: string) => void;
 }
 
 // How long each carousel slide is shown.
@@ -61,6 +66,11 @@ export function findMatch(
   );
 }
 
+// Strip the protocol and any trailing slash for a compact link label.
+function prettyUrl(url: string): string {
+  return url.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
+
 export function LabelPanel({
   labels,
   setLabels,
@@ -72,6 +82,8 @@ export function LabelPanel({
   setFormName,
   formUrl,
   setFormUrl,
+  formSite,
+  setFormSite,
 }: Props) {
   const [cycleIndex, setCycleIndex] = useState(0);
   const cycleRef = useRef(cycleIndex);
@@ -85,6 +97,9 @@ export function LabelPanel({
   // then falls back to the placeholder. Reset (below) whenever the shown
   // image URL changes, so a corrected URL gets a fresh load attempt.
   const [imageFailed, setImageFailed] = useState(false);
+
+  // Carousel pause toggle — session-only, applies while idle.
+  const [paused, setPaused] = useState(false);
 
   const match = useMemo(() => findMatch(labels, selected), [labels, selected]);
 
@@ -132,14 +147,14 @@ export function LabelPanel({
     return out;
   }, [labels]);
 
-  // Cycle the carousel only while idle and there are 2+ slides.
+  // Cycle the carousel only while idle, not paused, and 2+ slides exist.
   useEffect(() => {
-    if (!idle || slides.length < 2) return;
+    if (!idle || paused || slides.length < 2) return;
     const t = window.setInterval(() => {
       setCycleIndex((i) => (i + 1) % slides.length);
     }, CYCLE_MS);
     return () => window.clearInterval(t);
-  }, [idle, slides.length]);
+  }, [idle, paused, slides.length]);
 
   // Clamp cycleIndex if the slide count shrinks.
   useEffect(() => {
@@ -170,6 +185,9 @@ export function LabelPanel({
   const brandVariant: BrandVariant | null =
     display == null && slide?.kind === "brand" ? slide.variant : null;
 
+  // Website link shown under the image for whichever label is on screen.
+  const siteUrl = display?.siteUrl?.trim() || null;
+
   const isSynthetic = display != null && display === releaseLabelPlaceholder;
   // "Not On Label" is Discogs shorthand for a self-released record — there's
   // no label art to chase, so present it muted rather than as missing art.
@@ -191,6 +209,9 @@ export function LabelPanel({
     const name = formName.trim();
     if (!name) return;
     const url = formUrl.trim();
+    const site = formSite.trim();
+    const fresh: LabelEntry = { name, imageUrl: url };
+    if (site) fresh.siteUrl = site;
     // Replace existing entry with the same (normalised) name; otherwise append.
     const key = name.toLowerCase();
     const existingIdx = labels.findIndex(
@@ -199,13 +220,16 @@ export function LabelPanel({
     const next =
       existingIdx >= 0
         ? labels.map((l, i) =>
-            // Update only the URL — keep the existing entry's name casing.
-            i === existingIdx ? { ...l, imageUrl: url } : l,
+            // Keep the existing entry's name casing; update image + website.
+            i === existingIdx
+              ? { ...l, imageUrl: url, siteUrl: site || undefined }
+              : l,
           )
-        : [...labels, { name, imageUrl: url }];
+        : [...labels, fresh];
     setLabels(next);
     setFormName("");
     setFormUrl("");
+    setFormSite("");
     setFormOpen(false);
   }
 
@@ -220,6 +244,18 @@ export function LabelPanel({
       icon={<Tag size={16} />}
       right={
         <div className="flex items-center gap-1">
+          {idle && (
+            <button
+              type="button"
+              onClick={() => setPaused((p) => !p)}
+              title={paused ? "Resume carousel" : "Pause carousel"}
+              aria-label={paused ? "Resume carousel" : "Pause carousel"}
+              className="text-muted hover:text-mauve transition-colors p-1
+                         rounded-md hover:bg-surface"
+            >
+              {paused ? <Play size={12} /> : <Pause size={12} />}
+            </button>
+          )}
           {display && display !== match && !isSynthetic && (
             <button
               type="button"
@@ -265,7 +301,9 @@ export function LabelPanel({
         className={
           "h-[186px] flex items-center justify-center transition-opacity " +
           "duration-300 " +
-          (idle ? "opacity-60 hover:opacity-100" : "opacity-100")
+          (idle && !paused
+            ? "opacity-60 hover:opacity-100"
+            : "opacity-100")
         }
       >
         {brandVariant ? (
@@ -318,6 +356,18 @@ export function LabelPanel({
         )}
       </div>
 
+      {siteUrl && (
+        <button
+          type="button"
+          onClick={() => openUrl(siteUrl)}
+          title={siteUrl}
+          className="mt-1.5 block w-full truncate text-center text-[10px]
+                     text-accent hover:underline"
+        >
+          {prettyUrl(siteUrl)}
+        </button>
+      )}
+
       {formOpen && (
         <div className="mt-2 flex flex-col gap-1.5">
           <input
@@ -334,7 +384,17 @@ export function LabelPanel({
             type="text"
             value={formUrl}
             onChange={(e) => setFormUrl(e.target.value)}
-            placeholder="https://i.nostr.build/…"
+            placeholder="https://i.nostr.build/… (image)"
+            className="px-2 py-1 rounded-md bg-surface text-fg text-xs
+                       font-mono outline-none border border-transparent
+                       focus:border-accent/50 placeholder:text-muted"
+            spellCheck={false}
+          />
+          <input
+            type="text"
+            value={formSite}
+            onChange={(e) => setFormSite(e.target.value)}
+            placeholder="label website (optional)"
             className="px-2 py-1 rounded-md bg-surface text-fg text-xs
                        font-mono outline-none border border-transparent
                        focus:border-accent/50 placeholder:text-muted"

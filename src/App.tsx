@@ -43,7 +43,8 @@ function loadLabels(): LabelEntry[] {
         e &&
         typeof e === "object" &&
         typeof e.name === "string" &&
-        typeof e.imageUrl === "string",
+        typeof e.imageUrl === "string" &&
+        (e.siteUrl === undefined || typeof e.siteUrl === "string"),
     );
     return clearStaleBundleUrls(valid);
   } catch {
@@ -139,10 +140,16 @@ export default function App() {
   const [labelFormOpen, setLabelFormOpen] = useState(false);
   const [labelFormName, setLabelFormName] = useState("");
   const [labelFormUrl, setLabelFormUrl] = useState("");
+  const [labelFormSite, setLabelFormSite] = useState("");
 
-  function promptAddLabel(name: string, existingUrl: string) {
+  function promptAddLabel(
+    name: string,
+    existingUrl: string,
+    existingSite: string,
+  ) {
     setLabelFormName(name);
     setLabelFormUrl(existingUrl);
+    setLabelFormSite(existingSite);
     setLabelFormOpen(true);
   }
 
@@ -433,6 +440,8 @@ export default function App() {
               setFormName={setLabelFormName}
               formUrl={labelFormUrl}
               setFormUrl={setLabelFormUrl}
+              formSite={labelFormSite}
+              setFormSite={setLabelFormSite}
             />
           </div>
         </div>
