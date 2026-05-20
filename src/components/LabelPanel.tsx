@@ -42,7 +42,12 @@ interface Props {
   setFormUrl: (url: string) => void;
 }
 
+// How long each carousel slide is shown.
 const CYCLE_MS = 21_000;
+
+// After a release is selected the panel pins to its label this long, then
+// falls back to the looping carousel on its own.
+const RESELECT_MS = 10_000;
 
 export function findMatch(
   labels: LabelEntry[],
@@ -72,6 +77,10 @@ export function LabelPanel({
   const cycleRef = useRef(cycleIndex);
   cycleRef.current = cycleIndex;
 
+  // Flips true once a freshly selected release has been pinned long enough
+  // (RESELECT_MS) that the panel should resume the looping carousel.
+  const [releaseExpired, setReleaseExpired] = useState(false);
+
   const match = useMemo(() => findMatch(labels, selected), [labels, selected]);
 
   // When the form is open, freeze on the entry whose name matches what's
@@ -84,6 +93,18 @@ export function LabelPanel({
       labels.find((l) => l.name.trim().toLowerCase() === needle) ?? null
     );
   }, [formOpen, formName, labels]);
+
+  // Pin the panel to a newly selected release, then after RESELECT_MS let
+  // it expire so the panel falls back to the looping carousel.
+  useEffect(() => {
+    setReleaseExpired(false);
+    if (!selected) return;
+    const t = window.setTimeout(() => setReleaseExpired(true), RESELECT_MS);
+    return () => window.clearTimeout(t);
+  }, [selected]);
+
+  // Idle = nothing pinned: no release (or its pin expired) and no form open.
+  const idle = (!selected || releaseExpired) && !formOpen;
 
   // Carousel slides: label art interleaved with three ndisc brand cards.
   // The brand cards break up the run of label images and give a fresh
@@ -106,14 +127,14 @@ export function LabelPanel({
     return out;
   }, [labels]);
 
-  // Cycle only when no release is selected, no form open, and we have 2+.
+  // Cycle the carousel only while idle and there are 2+ slides.
   useEffect(() => {
-    if (selected || formOpen || slides.length < 2) return;
+    if (!idle || slides.length < 2) return;
     const t = window.setInterval(() => {
       setCycleIndex((i) => (i + 1) % slides.length);
     }, CYCLE_MS);
     return () => window.clearInterval(t);
-  }, [selected, formOpen, slides.length]);
+  }, [idle, slides.length]);
 
   // Clamp cycleIndex if the slide count shrinks.
   useEffect(() => {
@@ -131,15 +152,14 @@ export function LabelPanel({
     return { name, imageUrl: "" };
   }, [selected, match]);
 
-  // The carousel only runs while idle. Once a release is selected we must
-  // NOT borrow another label's art — show release-specific content instead.
-  const idle = !selected && !formOpen;
+  // While pinned, show release-specific content and never borrow another
+  // label's art. While idle, show the carousel slide.
   const slide: Slide | null = idle ? slides[cycleIndex] ?? null : null;
 
   const display: LabelEntry | null =
-    match ??
+    (idle ? null : match) ??
     editingEntry ??
-    releaseLabelPlaceholder ??
+    (idle ? null : releaseLabelPlaceholder) ??
     (slide?.kind === "label" ? slide.entry : null);
 
   const brandVariant: BrandVariant | null =
@@ -149,6 +169,7 @@ export function LabelPanel({
   // "Not On Label" is Discogs shorthand for a self-released record — there's
   // no label art to chase, so present it muted rather than as missing art.
   const isSelfReleased =
+    !idle &&
     (selected?.label?.trim().toLowerCase() ?? "") === "not on label";
   const awaitingArt =
     display != null && !display.imageUrl && !isSelfReleased;
@@ -186,7 +207,7 @@ export function LabelPanel({
       icon={<Tag size={16} />}
       right={
         <div className="flex items-center gap-1">
-          {display && !match && !isSynthetic && (
+          {display && display !== match && !isSynthetic && (
             <button
               type="button"
               onClick={removeCurrent}
@@ -227,7 +248,13 @@ export function LabelPanel({
         </div>
       }
     >
-      <div className="h-[186px] flex items-center justify-center">
+      <div
+        className={
+          "h-[186px] flex items-center justify-center transition-opacity " +
+          "duration-300 " +
+          (idle ? "opacity-60 hover:opacity-100" : "opacity-100")
+        }
+      >
         {brandVariant ? (
           <BrandCard variant={brandVariant} />
         ) : display && display.imageUrl ? (
