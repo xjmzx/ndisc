@@ -9,6 +9,26 @@ export interface LabelEntry {
   imageUrl: string;
 }
 
+type BrandVariant = "themeA" | "themeB" | "ink";
+
+type Slide =
+  | { kind: "label"; entry: LabelEntry }
+  | { kind: "brand"; variant: BrandVariant };
+
+const BRAND_VARIANTS: BrandVariant[] = ["themeA", "themeB", "ink"];
+
+// Fixed brand colours — the cards always render theme A / theme B regardless
+// of the app's active theme, so the idle carousel previews both palettes.
+// The "ink" card is transparent with black text: a near-blank breather slide.
+const BRAND_STYLES: Record<
+  BrandVariant,
+  { wrap: string; n: string; disc: string }
+> = {
+  themeA: { wrap: "bg-black", n: "text-[#34d399]", disc: "text-[#f0f6fc]" },
+  themeB: { wrap: "bg-black", n: "text-[#ff7849]", disc: "text-[#c9d1d9]" },
+  ink: { wrap: "bg-transparent", n: "text-black", disc: "text-black" },
+};
+
 interface Props {
   labels: LabelEntry[];
   setLabels: (next: LabelEntry[]) => void;
@@ -65,21 +85,42 @@ export function LabelPanel({
     );
   }, [formOpen, formName, labels]);
 
+  // Carousel slides: label art interleaved with three ndisc brand cards.
+  // The brand cards break up the run of label images and give a fresh
+  // install (no labels seeded yet) something branded to show.
+  const slides: Slide[] = useMemo(() => {
+    const brands: Slide[] = BRAND_VARIANTS.map((variant) => ({
+      kind: "brand",
+      variant,
+    }));
+    if (labels.length === 0) return brands;
+    const out: Slide[] = [brands[0]];
+    const rest = brands.slice(1);
+    const gap = Math.max(1, Math.ceil(labels.length / (rest.length + 1)));
+    let b = 0;
+    labels.forEach((entry, i) => {
+      out.push({ kind: "label", entry });
+      if ((i + 1) % gap === 0 && b < rest.length) out.push(rest[b++]);
+    });
+    while (b < rest.length) out.push(rest[b++]);
+    return out;
+  }, [labels]);
+
   // Cycle only when no release is selected, no form open, and we have 2+.
   useEffect(() => {
-    if (selected || formOpen || labels.length < 2) return;
+    if (selected || formOpen || slides.length < 2) return;
     const t = window.setInterval(() => {
-      setCycleIndex((i) => (i + 1) % labels.length);
+      setCycleIndex((i) => (i + 1) % slides.length);
     }, CYCLE_MS);
     return () => window.clearInterval(t);
-  }, [selected, formOpen, labels.length]);
+  }, [selected, formOpen, slides.length]);
 
-  // Clamp cycleIndex if labels shrink.
+  // Clamp cycleIndex if the slide count shrinks.
   useEffect(() => {
-    if (cycleRef.current >= labels.length && labels.length > 0) {
+    if (cycleRef.current >= slides.length && slides.length > 0) {
       setCycleIndex(0);
     }
-  }, [labels.length]);
+  }, [slides.length]);
 
   // If the selected release has a label but we have no entry for it,
   // synthesize a placeholder so the panel shows "no art for THIS label"
@@ -90,14 +131,20 @@ export function LabelPanel({
     return { name, imageUrl: "" };
   }, [selected, match]);
 
-  // The carousel is only a fallback for the idle state. Once a release is
-  // selected we must NOT borrow another label's art — show an empty frame.
-  const display =
+  // The carousel only runs while idle. Once a release is selected we must
+  // NOT borrow another label's art — show release-specific content instead.
+  const idle = !selected && !formOpen;
+  const slide: Slide | null = idle ? slides[cycleIndex] ?? null : null;
+
+  const display: LabelEntry | null =
     match ??
     editingEntry ??
     releaseLabelPlaceholder ??
-    (selected ? null : labels[cycleIndex]) ??
-    null;
+    (slide?.kind === "label" ? slide.entry : null);
+
+  const brandVariant: BrandVariant | null =
+    display == null && slide?.kind === "brand" ? slide.variant : null;
+
   const isSynthetic = display != null && display === releaseLabelPlaceholder;
   // "Not On Label" is Discogs shorthand for a self-released record — there's
   // no label art to chase, so present it muted rather than as missing art.
@@ -181,7 +228,9 @@ export function LabelPanel({
       }
     >
       <div className="h-[186px] flex items-center justify-center">
-        {display && display.imageUrl ? (
+        {brandVariant ? (
+          <BrandCard variant={brandVariant} />
+        ) : display && display.imageUrl ? (
           <img
             src={display.imageUrl}
             alt={display.name}
@@ -269,5 +318,27 @@ export function LabelPanel({
         </div>
       )}
     </Section>
+  );
+}
+
+// A square ndisc-branded carousel slide. Brand colours are fixed (not the
+// app's active theme) so the carousel can preview both palettes. The "n" and
+// "disc" weights match the app title header.
+function BrandCard({ variant }: { variant: BrandVariant }) {
+  const s = BRAND_STYLES[variant];
+  return (
+    <div
+      className={
+        "aspect-square h-full max-w-full rounded-md flex items-center " +
+        "justify-center select-none " +
+        s.wrap
+      }
+    >
+      <span
+        className={"text-2xl font-bold tracking-tight leading-none " + s.n}
+      >
+        n<span className={s.disc}>disc</span>
+      </span>
+    </div>
   );
 }

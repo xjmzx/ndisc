@@ -12,6 +12,8 @@ const SEED_LABELS: LabelEntry[] = [
   { name: "Blue Room Released", imageUrl: "https://i.nostr.build/SIV7CtV9y3MUeekz.jpg" },
   { name: "Breakin Records", imageUrl: "https://i.nostr.build/1QaEpjxGY2t1U0bR.jpg" },
   { name: "Clear", imageUrl: "https://i.nostr.build/DMo8Z1lBBN7N2MSP.jpg" },
+  { name: "Clone", imageUrl: "https://i.nostr.build/HfYWRo1EQ4AjjBd5.jpg" },
+  { name: "Clone Aqualung Series", imageUrl: "https://i.nostr.build/HfYWRo1EQ4AjjBd5.jpg" },
   { name: "Clone Basement Series", imageUrl: "https://i.nostr.build/HfYWRo1EQ4AjjBd5.jpg" },
   { name: "Clone West Coast Series", imageUrl: "https://i.nostr.build/HfYWRo1EQ4AjjBd5.jpg" },
   { name: "Dub Communication", imageUrl: "https://i.nostr.build/wieKBGyIgJx2GZP4.jpg" },
