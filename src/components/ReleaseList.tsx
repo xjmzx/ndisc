@@ -979,7 +979,7 @@ export function ReleaseList({
                       className={cn(
                         "text-[10px] px-1.5 py-0.5 rounded w-14 text-center",
                         r.medium === "digital"
-                          ? "bg-accent/20 text-accent"
+                          ? "bg-digital/20 text-digital"
                           : "bg-ok/20 text-ok",
                       )}
                     >
