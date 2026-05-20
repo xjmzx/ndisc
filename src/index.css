@@ -2,6 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme palettes — channel triples consumed by tailwind.config.ts as
+   rgb(var(--c-x) / <alpha-value>). :root is the fizx.uk scheme (navy base,
+   emerald + violet accents); .theme-upleb — toggled by the ndisc title
+   button — swaps to the upleb.uk orange scheme. */
+:root {
+  --c-bg: 9 13 18;
+  --c-panel: 13 17 23;
+  --c-surface: 19 29 42;
+  --c-surface-hover: 30 45 61;
+  --c-fg: 240 246 252;
+  --c-muted: 107 122 141;
+  --c-accent: 52 211 153;
+  --c-ok: 74 222 128;
+  --c-warn: 251 191 36;
+  --c-alert: 248 113 113;
+  --c-mauve: 167 139 250;
+}
+
+.theme-upleb {
+  --c-bg: 10 15 21;
+  --c-panel: 13 17 23;
+  --c-surface: 22 32 45;
+  --c-surface-hover: 30 45 61;
+  --c-fg: 201 209 217;
+  --c-muted: 107 122 141;
+  --c-accent: 255 120 73;
+  --c-ok: 74 222 128;
+  --c-warn: 251 191 36;
+  --c-alert: 248 113 113;
+  --c-mauve: 255 179 71;
+}
+
 html,
 body,
 #root {
@@ -30,9 +62,9 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #45475a; /* surfaceHover */
+  background: rgb(var(--c-surface-hover));
   border-radius: 5px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #6c7086; /* muted */
+  background: rgb(var(--c-muted));
 }

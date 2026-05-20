@@ -90,9 +90,16 @@ export function LabelPanel({
     return { name, imageUrl: "" };
   }, [selected, match]);
 
+  // The carousel is only a fallback for the idle state. Once a release is
+  // selected we must NOT borrow another label's art — show an empty frame.
   const display =
-    match ?? editingEntry ?? releaseLabelPlaceholder ?? labels[cycleIndex] ?? null;
+    match ??
+    editingEntry ??
+    releaseLabelPlaceholder ??
+    (selected ? null : labels[cycleIndex]) ??
+    null;
   const isSynthetic = display != null && display === releaseLabelPlaceholder;
+  const awaitingArt = display != null && !display.imageUrl;
   const editing = formOpen;
 
   function addLabel() {
@@ -154,10 +161,14 @@ export function LabelPanel({
           <button
             type="button"
             onClick={() => setFormOpen(!formOpen)}
-            title="Add label image"
+            title={awaitingArt ? "Add an image for this label" : "Add label image"}
             aria-label="Add label image"
-            className="text-muted hover:text-mauve transition-colors p-1
-                       rounded-md hover:bg-surface"
+            className={
+              "transition-colors p-1 rounded-md hover:bg-surface " +
+              (awaitingArt && !formOpen
+                ? "text-mauve ring-1 ring-mauve/50 bg-mauve/10"
+                : "text-muted hover:text-mauve")
+            }
           >
             <Plus size={14} />
           </button>
@@ -181,16 +192,18 @@ export function LabelPanel({
         ) : (
           <div
             className={
-              "aspect-square h-full max-w-full rounded-md border flex " +
+              "aspect-square h-full max-w-full rounded-md border-2 flex " +
               "flex-col items-center justify-center gap-1 text-center px-2 " +
               (editing
                 ? "border-accent/70 border-solid bg-bg/40"
-                : "border-dashed border-surface bg-bg/30")
+                : awaitingArt
+                  ? "border-dashed border-mauve/50 bg-mauve/5"
+                  : "border-dashed border-surface bg-bg/30")
             }
           >
             {display ? (
               <>
-                <span className="text-[10px] uppercase tracking-wide text-muted">
+                <span className="text-[10px] uppercase tracking-wide text-mauve/80">
                   [no data]
                 </span>
                 <span
@@ -202,9 +215,7 @@ export function LabelPanel({
               </>
             ) : (
               <span className="text-muted text-xs">
-                {labels.length === 0
-                  ? "no label images"
-                  : "no match for this release"}
+                {selected ? "no label" : "no label images"}
               </span>
             )}
           </div>

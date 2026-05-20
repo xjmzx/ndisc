@@ -51,6 +51,19 @@ function loadLabels(): LabelEntry[] {
   }
 }
 
+const THEME_STORAGE_KEY = "ndisc.theme";
+type Theme = "fizx" | "upleb";
+
+function loadTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === "upleb"
+      ? "upleb"
+      : "fizx";
+  } catch {
+    return "fizx";
+  }
+}
+
 const DB_FILTERS = [{ name: "SQLite", extensions: ["db", "sqlite"] }];
 
 const DEFAULT_RELAYS = [
@@ -81,6 +94,20 @@ export default function App() {
   const [npub, setNpub] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileMeta | null>(null);
   const [labels, setLabelsState] = useState<LabelEntry[]>(() => loadLabels());
+  const [theme, setTheme] = useState<Theme>(loadTheme);
+
+  // Apply + persist the colour theme: fizx.uk (default) or upleb.uk.
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      "theme-upleb",
+      theme === "upleb",
+    );
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   function setLabels(next: LabelEntry[]) {
     setLabelsState(next);
@@ -270,9 +297,21 @@ export default function App() {
     <div className="min-h-screen p-6 max-w-[1500px] mx-auto">
       <header className="mb-4 px-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
-          <h1 className="text-2xl font-bold text-accent tracking-tight leading-none shrink-0">
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === "fizx" ? "upleb" : "fizx"))}
+            title={
+              theme === "fizx"
+                ? "Theme: fizx.uk — click to switch to upleb.uk"
+                : "Theme: upleb.uk — click to switch to fizx.uk"
+            }
+            aria-label="Switch colour theme"
+            className="text-2xl font-bold text-accent tracking-tight
+                       leading-none shrink-0 cursor-pointer transition-opacity
+                       hover:opacity-70"
+          >
             n<span className="text-fg">disc</span>
-          </h1>
+          </button>
           {appVersion && (
             <span
               className="hidden md:inline-flex items-center px-2.5 py-2

@@ -60,13 +60,36 @@ multi-database switcher in the header.
   the on-disk cover with the published Nostr image for music apps that
   read the album folder directly.
 
+### Labels
+
+- **Label panel** shows a 21-second auto-rotating carousel of label
+  artwork from your saved entries when the app is idle, and locks onto
+  the currently-selected release's label when there's a match. Click +
+  to add or edit an entry — name plus image URL (uploads to
+  `nostr.build` are encouraged so images sync across devices).
+- **Labelview list** beside it: a scrollable, searchable index of every
+  distinct label string in the library, drawn straight from
+  `releases.label`. A mauve ✓ chip indicates an image is on file;
+  clicking a row pre-fills the LabelPanel form so you can add or
+  replace the image inline. Caps at 40 visible rows with a "+N more"
+  footer; the search input filters across all distinct labels.
+- Built-in seed of ~41 popular electronic labels mapped to
+  `nostr.build` URLs (see `src/lib/labelSeed.ts`), with a re-seed icon
+  to merge in any seed entries missing from your set. Older builds
+  bundled the label images as files; the current seed is URL-only so
+  the binary stays small and images stay consistent across installs.
+- One-shot migration on launch blanks any stale relative-path image
+  URLs left over from those older builds, so the entry stays visible
+  but you can see which labels still need a fresh upload.
+
 ### Nostr identity & publishing
 
 - Generate a fresh keypair or paste an existing `nsec`. The secret key
   is stored in the OS keychain (libsecret on Linux via `keyring`);
-  never written to a plain file. The `npub` and best-effort NIP-05
-  resolved from your published `kind:0` metadata appear in the panel
-  when logged in.
+  never written to a plain file. When logged in, the `npub` and the
+  best-effort NIP-05 resolved from your `kind:0` metadata appear in
+  the **app header** (alongside the version chip and DB switcher); a
+  small icon there forgets the identity with confirmation.
 - **Publish a release** as a `kind:31237` parameterized-replaceable
   event with the schema below. The release-detail action row shows
   the abbreviated `naddr1qq…` inline with adjacent copy + njump.me
@@ -85,7 +108,14 @@ multi-database switcher in the header.
   Unpublish clears these. A `published / unpublished` filter in the
   releases toolbar lets you sweep through the rest of the library and
   the right-hand count shows `N · X published · Y unpublished` of the
-  current filter.
+  current filter. Each row carries a small `[n]` chip — bright mauve
+  when published, faded when not — so the publish state is visible
+  without opening the detail panel.
+- **Reconcile published state** (toolbar action): fetches the user's
+  published `kind:31237` events from the configured relays and updates
+  `last_published_at` / `last_published_naddr` on the matching rows.
+  Restores state after switching machines or rebuilding the DB from
+  scratch.
 
 ### Refresh from disk
 
@@ -96,12 +126,23 @@ multi-database switcher in the header.
 
 ### UI niceties
 
+- App header carries the ndisc logo, the running app version, the
+  Nostr identity row, and the DB switcher — all in a single bar.
 - Library panel header inlines stats (Total / Physical / Digital /
   Artists) and the import shortcuts on a single row.
 - Releases list shows 36×36 cover thumbnails per row with `cover.jpg`-
   style local files served via the asset protocol; scrollbar styled to
   match the dark palette with `scrollbar-gutter: stable` so layout
-  doesn't shift on hover.
+  doesn't shift on hover. Filter stats above the list colour the total
+  (accent blue), the published count (mauve), and the unpublished
+  count (white).
+- **Markdown export** of the library (or any filtered subset) — writes
+  a single `.md` table with cover thumbnails inlined as `<img>` tags
+  pointing at `cover_art_url`, useful for sharing or static-site
+  embeds.
+- **Undo toast** on release delete — appears for 10 s with an "Undo"
+  button that restores the row (id preserved, so any previously
+  published Nostr event still addresses the same release).
 - Catppuccin Mocha palette across the app; mauve secondary buttons
   reserve the accent blue for primary content actions.
 
@@ -216,17 +257,21 @@ they're still on disk.
 ```
 ndisc/
 ├── src/                          # React + TS frontend
-│   ├── App.tsx                   # top-level layout + DB controls
+│   ├── App.tsx                   # top-level layout + header + DB controls
 │   ├── components/
 │   │   ├── LibraryPanel.tsx      # stats + import combined section
 │   │   ├── ReleaseList.tsx       # the Releases list + filters + extract/rescan
 │   │   ├── ReleaseDetail.tsx     # detail panel: cover, fields, publish, refresh
 │   │   ├── AddReleaseForm.tsx    # add-release form (compact inline-label rows)
 │   │   ├── NostrPanel.tsx        # keypair management + publish-library + relays
+│   │   ├── LabelPanel.tsx        # label-image carousel + add/edit form
+│   │   ├── LabelviewPanel.tsx    # distinct-labels list + search
+│   │   ├── UndoToast.tsx         # floating undo toast (used by delete)
 │   │   └── Section.tsx           # shared panel wrapper
 │   ├── lib/buttonStyles.ts       # shared mauve "tool-tier" button class
 │   ├── lib/cn.ts                 # clsx + tailwind-merge helper
 │   ├── lib/cover.ts              # cover-image source resolution
+│   ├── lib/labelSeed.ts          # nostr.build label-URL seed + migration
 │   └── lib/tauri.ts              # typed wrappers around invoke()
 ├── src-tauri/                    # Rust crate (Tauri shell + SQLite layer)
 │   ├── src/lib.rs                # schema, commands, import, publish, migrations
@@ -304,8 +349,9 @@ specific item you chose to share.
 - Subscribe to other users' collections from within ndisc (discovery).
 - Cross-reference with `audio-flac-quality-check` reports for digital
   files — surface tracks flagged `PROBABLY-LOSSY` on the release entry.
-- Bulk variants of the existing per-release interop actions (Refresh
-  all, Sync all covers to disk).
+- Bulk variants of **Refresh-from-disk** and **Sync-cover-to-disk**.
+  (Embedded-cover extract and broader filename rescan already run
+  across every no-cover release in one go.)
 
 ## Companion apps in the suite
 

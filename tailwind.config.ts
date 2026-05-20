@@ -1,25 +1,29 @@
 import type { Config } from "tailwindcss";
 
+// Themeable palette — values come from CSS custom properties defined in
+// src/index.css. The channel-triple form keeps Tailwind's `/opacity`
+// modifiers working (e.g. bg-mauve/5 → rgb(var(--c-mauve) / 0.05)).
+const c = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
+
 export default {
   darkMode: ["class"],
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        // Catppuccin Mocha — same palette as bpm-tapper, FLAC browser, smpl-tool.
-        // `bg` is pure black for the outer page surround; `panel` keeps the
-        // Catppuccin base tone for the actual content cards.
-        bg: "#000000",
-        panel: "#0e0e18",
-        surface: "#232434",
-        surfaceHover: "#45475a",
-        fg: "#cdd6f4",
-        muted: "#6c7086",
-        accent: "#89b4fa",
-        ok: "#a6e3a1",
-        warn: "#f9e2af",
-        alert: "#f38ba8",
-        mauve: "#cba6f7",
+        // :root is the fizx.uk scheme; .theme-upleb swaps to the upleb.uk
+        // orange scheme (toggled via the ndisc title button).
+        bg: c("--c-bg"),
+        panel: c("--c-panel"),
+        surface: c("--c-surface"),
+        surfaceHover: c("--c-surface-hover"),
+        fg: c("--c-fg"),
+        muted: c("--c-muted"),
+        accent: c("--c-accent"),
+        ok: c("--c-ok"),
+        warn: c("--c-warn"),
+        alert: c("--c-alert"),
+        mauve: c("--c-mauve"),
       },
       fontFamily: {
         sans: ["Helvetica", "Arial", "system-ui", "sans-serif"],
