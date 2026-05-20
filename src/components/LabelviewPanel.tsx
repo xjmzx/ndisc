@@ -68,8 +68,10 @@ export function LabelviewPanel({ labels, reloadKey, onPick }: Props) {
                          focus:border-accent/50 placeholder:text-muted"
             />
           </div>
+        {/* Cap the list at 6 visible rows (24px each + 2px gap) so the
+            panel stays compact; the rest scrolls. */}
         <ul
-          className="max-h-[200px] overflow-y-auto pr-1 space-y-0.5
+          className="max-h-[154px] overflow-y-auto pr-1 space-y-0.5
                      [scrollbar-gutter:stable]"
         >
           {visible.map((name) => {
