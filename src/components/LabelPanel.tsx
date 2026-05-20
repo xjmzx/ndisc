@@ -81,6 +81,11 @@ export function LabelPanel({
   // (RESELECT_MS) that the panel should resume the looping carousel.
   const [releaseExpired, setReleaseExpired] = useState(false);
 
+  // True when the currently shown label image fails to load — the panel
+  // then falls back to the placeholder. Reset (below) whenever the shown
+  // image URL changes, so a corrected URL gets a fresh load attempt.
+  const [imageFailed, setImageFailed] = useState(false);
+
   const match = useMemo(() => findMatch(labels, selected), [labels, selected]);
 
   // When the form is open, freeze on the entry whose name matches what's
@@ -175,6 +180,13 @@ export function LabelPanel({
     display != null && !display.imageUrl && !isSelfReleased;
   const editing = formOpen;
 
+  // A broken or stale URL must not stick: clear the failed flag whenever the
+  // shown image changes (carousel advance, release switch, or a URL edit).
+  const shownImageUrl = display?.imageUrl ?? "";
+  useEffect(() => {
+    setImageFailed(false);
+  }, [shownImageUrl]);
+
   function addLabel() {
     const name = formName.trim();
     if (!name) return;
@@ -187,7 +199,8 @@ export function LabelPanel({
     const next =
       existingIdx >= 0
         ? labels.map((l, i) =>
-            i === existingIdx ? { name, imageUrl: url } : l,
+            // Update only the URL — keep the existing entry's name casing.
+            i === existingIdx ? { ...l, imageUrl: url } : l,
           )
         : [...labels, { name, imageUrl: url }];
     setLabels(next);
@@ -257,7 +270,7 @@ export function LabelPanel({
       >
         {brandVariant ? (
           <BrandCard variant={brandVariant} />
-        ) : display && display.imageUrl ? (
+        ) : display && display.imageUrl && !imageFailed ? (
           <img
             src={display.imageUrl}
             alt={display.name}
@@ -266,9 +279,7 @@ export function LabelPanel({
               "aspect-square h-full max-w-full rounded-md object-cover " +
               (editing ? "ring-2 ring-accent/70" : "")
             }
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
+            onError={() => setImageFailed(true)}
           />
         ) : (
           <div
@@ -288,7 +299,7 @@ export function LabelPanel({
               ) : (
                 <>
                   <span className="text-[10px] uppercase tracking-wide text-mauve/80">
-                    [no data]
+                    {imageFailed ? "image unavailable" : "[no data]"}
                   </span>
                   <span
                     className="text-xs text-fg/80 truncate max-w-full"
