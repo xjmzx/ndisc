@@ -941,25 +941,7 @@ export function ReleaseList({
               )}
             >
               <div className="flex items-center gap-2">
-                <div
-                  className="shrink-0 w-9 h-9 rounded bg-surface overflow-hidden
-                             flex items-center justify-center"
-                >
-                  {thumb ? (
-                    <img
-                      src={thumb}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-                  ) : (
-                    <Disc3 size={14} className="text-muted/60" />
-                  )}
-                </div>
+                <CoverThumb src={thumb} />
                 <div className="min-w-0 flex-1">
                   <div
                     className={cn(
@@ -1056,6 +1038,41 @@ export function ReleaseList({
         })}
       </ul>
     </Section>
+  );
+}
+
+// Release-row thumbnail. Falls back to a dashed placeholder when there is
+// no cover, or when a set cover URL/path fails to load.
+function CoverThumb({ src }: { src: string | null }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  const showImage = src != null && !failed;
+
+  return (
+    <div
+      className={cn(
+        "shrink-0 w-9 h-9 rounded overflow-hidden flex items-center",
+        "justify-center",
+        showImage
+          ? "bg-surface"
+          : "border border-dashed border-mauve/40 bg-mauve/5",
+      )}
+    >
+      {showImage ? (
+        <img
+          src={src ?? undefined}
+          alt=""
+          className="w-full h-full object-cover"
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Disc3 size={14} className="text-mauve/50" />
+      )}
+    </div>
   );
 }
 

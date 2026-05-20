@@ -428,6 +428,7 @@ export function ReleaseDetail({
           <CoverUrlField
             value={release.coverArtUrl ?? ""}
             onCommit={commitCoverUrl}
+            highlight={!coverSrc}
           />
         </div>
       </div>
@@ -878,9 +879,10 @@ function EditableText({
 interface CoverUrlFieldProps {
   value: string;
   onCommit: (v: string | null) => Promise<void> | void;
+  highlight?: boolean;
 }
 
-function CoverUrlField({ value, onCommit }: CoverUrlFieldProps) {
+function CoverUrlField({ value, onCommit, highlight }: CoverUrlFieldProps) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
 
@@ -927,11 +929,14 @@ function CoverUrlField({ value, onCommit }: CoverUrlFieldProps) {
         }}
         placeholder="https://i.nostr.build/…"
         disabled={saving}
-        className="flex-1 min-w-0 px-2 py-1 rounded
-                   bg-surface/40 text-fg outline-none
-                   border border-surface/60 focus:border-accent/50
-                   text-[10px] font-mono
-                   placeholder:text-muted/60 disabled:opacity-50"
+        className={
+          "flex-1 min-w-0 px-2 py-1 rounded bg-surface/40 text-fg " +
+          "outline-none border focus:border-accent/50 text-[10px] " +
+          "font-mono placeholder:text-muted/60 disabled:opacity-50 " +
+          (highlight && !draft.trim()
+            ? "border-mauve/50"
+            : "border-surface/60")
+        }
         spellCheck={false}
       />
       {value && (
@@ -955,23 +960,42 @@ interface CoverArtProps {
 }
 
 function CoverArt({ src, alt }: CoverArtProps) {
+  // Track load failures so a broken URL/path falls back to the placeholder
+  // instead of leaving a blank box. Reset when the release changes.
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  const showImage = src != null && !failed;
+
   return (
-    <div className="shrink-0 w-[195px] h-[195px] rounded-md bg-surface
-                    overflow-hidden flex items-center justify-center">
-      {src ? (
+    <div
+      className={
+        "shrink-0 w-[195px] h-[195px] rounded-md overflow-hidden flex " +
+        "items-center justify-center " +
+        (showImage
+          ? "bg-surface"
+          : "border-2 border-dashed border-mauve/50 bg-mauve/5")
+      }
+    >
+      {showImage ? (
         <img
-          src={src}
+          src={src ?? undefined}
           alt={alt}
           className="w-full h-full object-cover"
           loading="lazy"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
+          onError={() => setFailed(true)}
         />
       ) : (
-        <div className="text-muted flex flex-col items-center gap-1 text-[10px]">
+        <div
+          className="text-mauve/70 flex flex-col items-center gap-1.5
+                     text-[10px] text-center px-2"
+        >
           <ImageIcon size={28} strokeWidth={1.5} />
-          <span>no cover</span>
+          <span className="uppercase tracking-wide">
+            {failed ? "cover failed to load" : "no cover"}
+          </span>
         </div>
       )}
     </div>
