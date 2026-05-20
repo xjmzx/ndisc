@@ -423,7 +423,7 @@ export default function App() {
           ) : (
             <AddReleaseForm onAdded={reload} />
           )}
-          <div className="grid grid-cols-[2fr_1fr_2fr] gap-2 items-start">
+          <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)] gap-2 items-start">
             <NostrPanel
               relays={relays}
               setRelays={setRelays}
