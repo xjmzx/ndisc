@@ -13,7 +13,7 @@
   --c-surface-hover: 30 45 61;
   --c-fg: 240 246 252;
   --c-muted: 107 122 141;
-  --c-accent: 52 211 153;
+  --c-accent: 122 240 205; /* Primary accent — bright mint, lifted toward white */
   /* RELEASES digital-badge colour — blue here so it reads distinctly
      against the green physical badge. */
   --c-digital: 125 211 252;
@@ -30,7 +30,7 @@
   --c-surface-hover: 30 45 61;
   --c-fg: 201 209 217;
   --c-muted: 107 122 141;
-  --c-accent: 255 120 73;
+  --c-accent: 255 182 158; /* Primary accent — bright peach, lifted toward white */
   /* upleb keeps the digital badge on the accent — unchanged from before. */
   --c-digital: 255 120 73;
   --c-ok: 74 222 128;
