@@ -176,9 +176,11 @@ export function LabelPanel({
   // label's art. While idle, show the carousel slide.
   const slide: Slide | null = idle ? slides[cycleIndex] ?? null : null;
 
+  // editingEntry wins: while the form is open the panel must show the label
+  // being configured — not the selected release's matched label.
   const display: LabelEntry | null =
-    (idle ? null : match) ??
     editingEntry ??
+    (idle ? null : match) ??
     (idle ? null : releaseLabelPlaceholder) ??
     (slide?.kind === "label" ? slide.entry : null);
 
