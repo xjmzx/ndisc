@@ -23,7 +23,10 @@ jobs:
     name: Build Linux x86_64
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      # Action versions below run on the Node 24 Actions runtime
+      # (checkout v6, setup-node v6, action-gh-release v3). GitHub
+      # deprecated the Node 20 action runtime in 2025.
+      - uses: actions/checkout@v6
 
       # Same packages listed in the README under "Install dependencies"
       # plus libsecret-1-dev so the keyring crate links.
@@ -40,8 +43,11 @@ jobs:
             build-essential \
             curl wget file
 
+      # `node-version` is the Node used to run the project build (vite/tsc),
+      # independent of the action's own Node 24 runtime. Node 20 LTS is kept
+      # here deliberately — changing the build toolchain is a separate call.
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -76,7 +82,7 @@ jobs:
       # The `prerelease` flag is auto-set from the tag: anything with a hyphen
       # (v0.1.0-beta, v0.2.0-rc.1) is a pre-release; plain `vX.Y.Z` isn't.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
