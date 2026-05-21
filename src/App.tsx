@@ -132,8 +132,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function reseedFromBundle() {
-    setLabels(mergeSeed(labels, bundledSeedLabels()));
+  // Returns how many labels the merge actually added, so the panel can
+  // surface a count in the reseed button's tooltip.
+  function reseedFromBundle(): number {
+    const merged = mergeSeed(labels, bundledSeedLabels());
+    const added = merged.length - labels.length;
+    if (added > 0) setLabels(merged);
+    return added;
   }
 
   // Lifted Label-form state so Labelview can prefill it from a different panel.
