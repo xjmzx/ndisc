@@ -1,0 +1,14 @@
+{
+  "_comment": "Minimal kind:31237 release event — every optional column on the release was null. Demonstrates the v1 `rule`: only `d` is structurally guaranteed. Note there is NO `medium` tag (nor type/category/year/etc.) — consumers must NOT require those. A consumer that drops this event because `medium` is absent is non-conformant.",
+  "kind": 31237,
+  "content": "",
+  "tags": [
+    ["d", "disco-vault:7"],
+    ["title", "Untitled"],
+    ["artist", "Unknown Artist"]
+  ],
+  "id": "<illustrative — 64-hex event id>",
+  "pubkey": "<illustrative — 64-hex author pubkey>",
+  "created_at": 1747900000,
+  "sig": "<illustrative — 128-hex signature>"
+}

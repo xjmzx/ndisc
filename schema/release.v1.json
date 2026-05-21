@@ -1,0 +1,66 @@
+{
+  "$comment": "Canonical Nostr wire contract between ndisc (publisher) and the glmps web viewers (consumers). FROZEN — see schema/README.md. Source of truth: xjmzx/ndisc src-tauri/src/lib.rs (release_event / delete_release); the contract test `mod schema_v1` pins ndisc's output to this file.",
+  "schemaVersion": "release.v1",
+  "frozen": true,
+  "canonicalHome": "xjmzx/ndisc — schema/release.v1.json",
+  "kinds": {
+    "release": {
+      "kind": 31237,
+      "class": "addressable / parameterized-replaceable (range 30000-39999)",
+      "addressableBy": ["pubkey", "kind", "d-tag"],
+      "content": "Release notes — plain text. May be an empty string.",
+      "tags": {
+        "d": {
+          "required": true,
+          "format": "disco-vault:<integer release id>",
+          "note": "The ONLY structurally guaranteed tag. The `disco-vault:` prefix is the legacy app name and is frozen — do not change it to `ndisc:`."
+        },
+        "title": { "required": false, "type": "string", "note": "Present unless empty." },
+        "artist": { "required": false, "type": "string", "note": "Present unless empty." },
+        "type": { "required": false, "enum": ["music", "sample", "stem", "field-recording", "message", "other"] },
+        "category": { "required": false, "enum": ["album", "ep", "single", "compilation", "mix", "live", "soundtrack", "bootleg", "miscellaneous"] },
+        "medium": { "required": false, "enum": ["physical", "digital"], "note": "OPTIONAL — frequently absent. Consumers must not require it." },
+        "format": { "required": false, "type": "string" },
+        "year": { "required": false, "type": "string", "note": "Integer rendered as a string." },
+        "label": { "required": false, "type": "string" },
+        "catalog": { "required": false, "type": "string" },
+        "country": { "required": false, "type": "string" },
+        "condition": { "required": false, "type": "string", "note": "Discogs grade verbatim, e.g. 'Near Mint (NM or M-)'." },
+        "source": { "required": false, "type": "string", "note": "URL — emitted only when it is http(s)." },
+        "i": { "required": false, "type": "string", "repeatable": true, "occurrences": "0-2", "format": "discogs:release:<id> | musicbrainz:release:<mbid>", "note": "NIP-73 external content IDs." },
+        "image": { "required": false, "type": "string", "note": "Cover-art URL." }
+      },
+      "rule": "Every tag except `d` is omitted entirely when its value is empty. Consumers MUST require only `d` structurally and treat all other tags — including `title`, `artist`, and `medium` — as optional."
+    },
+    "deletion": {
+      "kind": 5,
+      "spec": "NIP-09",
+      "content": "Empty string.",
+      "tags": {
+        "a": {
+          "required": true,
+          "format": "31237:<author pubkey hex>:disco-vault:<integer release id>",
+          "note": "Addressable coordinate of the deleted release. Authoritative — match this verbatim."
+        },
+        "k": {
+          "required": true,
+          "value": "31237",
+          "note": "Redundant: the kind is already encoded in `a`. Consumers may ignore `k`."
+        }
+      },
+      "rule": "Consumers MUST apply deletions client-side. Some relays (e.g. Primal) do not enforce kind:5, so server-side filtering cannot be relied on."
+    }
+  },
+  "consumes": {
+    "profile": {
+      "kind": 0,
+      "direction": "read-only",
+      "note": "ndisc reads the author's kind:0 metadata (name / nip05 / picture) for display. It never publishes kind:0."
+    }
+  },
+  "naddr": {
+    "spec": "NIP-19 naddr",
+    "coordinate": { "kind": 31237, "pubkey": "<author pubkey>", "identifier": "disco-vault:<integer release id>" }
+  },
+  "changePolicy": "FROZEN. Any change to the emitted event format is a coordinated v2 bump — add release.v2.json and migrate consumers — never an edit to this file."
+}

@@ -1,0 +1,13 @@
+{
+  "_comment": "Reference kind:5 (NIP-09) deletion event — deletes the release in release-31237.full.json. Consumers MUST apply this client-side: fetch kind:5 alongside kind:31237 and suppress any release whose addressable `a` coordinate appears here. The `a` value is authoritative; `k` is redundant.",
+  "kind": 5,
+  "content": "",
+  "tags": [
+    ["a", "31237:<author pubkey hex>:disco-vault:42"],
+    ["k", "31237"]
+  ],
+  "id": "<illustrative — 64-hex event id>",
+  "pubkey": "<illustrative — 64-hex author pubkey>",
+  "created_at": 1747900100,
+  "sig": "<illustrative — 128-hex signature>"
+}

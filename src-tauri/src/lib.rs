@@ -2895,3 +2895,150 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+// ---------------------------------------------------------------------------
+// Schema contract test — kind:31237 release event (schema/release.v1.json)
+// ---------------------------------------------------------------------------
+// Pins `release_event`'s output to the frozen v1 wire contract shared with the
+// glmps viewers. A failure here means the emitted event format drifted: that
+// is a coordinated v2 bump (add schema/release.v2.json), never a test edit.
+#[cfg(test)]
+mod schema_v1 {
+    use super::*;
+
+    // A release with every optional column null.
+    fn base_release() -> Release {
+        Release {
+            id: Some(42),
+            artist: "Aphex Twin".into(),
+            title: "Selected Ambient Works 85-92".into(),
+            year: None,
+            medium: None,
+            format: None,
+            label: None,
+            catalog_number: None,
+            country: None,
+            condition: None,
+            notes: None,
+            source: None,
+            file_path: None,
+            cover_art_path: None,
+            cover_art_url: None,
+            discogs_id: None,
+            musicbrainz_id: None,
+            release_type: None,
+            category: None,
+            last_published_at: None,
+            last_published_naddr: None,
+            added_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn tag_names(ev: &Event) -> Vec<String> {
+        let mut names: Vec<String> = ev
+            .tags
+            .iter()
+            .filter_map(|t| t.as_slice().first().cloned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn i_tags(ev: &Event) -> Vec<String> {
+        ev.tags
+            .iter()
+            .filter_map(|t| {
+                let s = t.as_slice();
+                if s.len() >= 2 && s[0] == "i" {
+                    Some(s[1].clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn kind_is_frozen_at_31237() {
+        assert_eq!(KIND_RELEASE, 31237);
+        let ev = release_event(&Keys::generate(), &base_release()).unwrap();
+        assert_eq!(ev.kind, Kind::Custom(KIND_RELEASE));
+    }
+
+    #[test]
+    fn d_tag_uses_frozen_disco_vault_prefix() {
+        let ev = release_event(&Keys::generate(), &base_release()).unwrap();
+        assert_eq!(tag_value(&ev, "d"), Some("disco-vault:42"));
+    }
+
+    #[test]
+    fn minimal_release_emits_only_guaranteed_tags() {
+        // Every optional column null -> only d/title/artist. Notably NO
+        // `medium` tag: consumers must require only `d` structurally.
+        let ev = release_event(&Keys::generate(), &base_release()).unwrap();
+        assert_eq!(tag_names(&ev), vec!["artist", "d", "title"]);
+        assert_eq!(tag_value(&ev, "medium"), None);
+        assert_eq!(ev.content, "");
+    }
+
+    #[test]
+    fn full_release_emits_every_tag_with_pinned_names() {
+        let r = Release {
+            year: Some(1992),
+            medium: Some("digital".into()),
+            format: Some("FLAC".into()),
+            label: Some("Apollo".into()),
+            catalog_number: Some("AMB3922".into()),
+            country: Some("UK".into()),
+            condition: Some("Near Mint (NM or M-)".into()),
+            notes: Some("First three albums, remastered.".into()),
+            source: Some("https://www.discogs.com/release/12345".into()),
+            cover_art_url: Some("https://i.nostr.build/example.jpg".into()),
+            discogs_id: Some(12345),
+            musicbrainz_id: Some("0000-aphex-saw8592".into()),
+            release_type: Some("music".into()),
+            category: Some("album".into()),
+            ..base_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+
+        assert_eq!(ev.content, "First three albums, remastered.");
+        assert_eq!(tag_value(&ev, "d"), Some("disco-vault:42"));
+        assert_eq!(tag_value(&ev, "title"), Some("Selected Ambient Works 85-92"));
+        assert_eq!(tag_value(&ev, "artist"), Some("Aphex Twin"));
+        assert_eq!(tag_value(&ev, "type"), Some("music"));
+        assert_eq!(tag_value(&ev, "category"), Some("album"));
+        assert_eq!(tag_value(&ev, "medium"), Some("digital"));
+        assert_eq!(tag_value(&ev, "format"), Some("FLAC"));
+        assert_eq!(tag_value(&ev, "year"), Some("1992"));
+        assert_eq!(tag_value(&ev, "label"), Some("Apollo"));
+        assert_eq!(tag_value(&ev, "catalog"), Some("AMB3922"));
+        assert_eq!(tag_value(&ev, "country"), Some("UK"));
+        assert_eq!(tag_value(&ev, "condition"), Some("Near Mint (NM or M-)"));
+        assert_eq!(
+            tag_value(&ev, "source"),
+            Some("https://www.discogs.com/release/12345"),
+        );
+        assert_eq!(
+            tag_value(&ev, "image"),
+            Some("https://i.nostr.build/example.jpg"),
+        );
+
+        // `i` is repeatable (NIP-73): discogs + musicbrainz external IDs.
+        let ids = i_tags(&ev);
+        assert!(ids.contains(&"discogs:release:12345".to_string()));
+        assert!(ids.contains(&"musicbrainz:release:0000-aphex-saw8592".to_string()));
+    }
+
+    #[test]
+    fn source_tag_is_omitted_when_not_an_http_url() {
+        let r = Release {
+            source: Some("not-a-url".into()),
+            ..base_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        assert_eq!(tag_value(&ev, "source"), None);
+    }
+}
+
