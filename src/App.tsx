@@ -13,11 +13,7 @@ import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
-import {
-  bundledSeedLabels,
-  clearStaleBundleUrls,
-  mergeSeed,
-} from "./lib/labelSeed";
+import { clearStaleBundleUrls } from "./lib/labelSeed";
 import { LibraryPanel } from "./components/LibraryPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
@@ -119,26 +115,30 @@ export default function App() {
     }
   }
 
-  // First-run seed: if no labels yet, pre-populate from the nostr.build
-  // hosted seed pool so the panel isn't empty. On returning runs, persist
-  // any URL migrations clearStaleBundleUrls applied in loadLabels.
+  // On load, persist any one-shot URL migration clearStaleBundleUrls applied
+  // in loadLabels. No first-run seeding: a fresh install starts with no
+  // labels and the Label panel shows its branded carousel cards until the
+  // user adds their own.
   useEffect(() => {
-    if (labels.length === 0) {
-      const seeded = mergeSeed([], bundledSeedLabels());
-      if (seeded.length > 0) setLabels(seeded);
-    } else {
-      setLabels(labels);
-    }
+    if (labels.length > 0) setLabels(labels);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Returns how many labels the merge actually added, so the panel can
-  // surface a count in the reseed button's tooltip.
-  function reseedFromBundle(): number {
-    const merged = mergeSeed(labels, bundledSeedLabels());
-    const added = merged.length - labels.length;
-    if (added > 0) setLabels(merged);
-    return added;
+  // Wipe every stored label after a confirm. The branded carousel cards
+  // aren't stored labels, so the panel still has something to show.
+  async function clearAllLabels() {
+    const n = labels.length;
+    if (n === 0) return;
+    const yes = await ask(
+      `Remove all ${n} label${n === 1 ? "" : "s"}? This can't be undone.`,
+      {
+        title: "Clear labels",
+        kind: "warning",
+        okLabel: "Remove all",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (yes) setLabels([]);
   }
 
   // Lifted Label-form state so Labelview can prefill it from a different panel.
@@ -345,24 +345,19 @@ export default function App() {
         <div className="hidden lg:flex flex-1 items-center justify-center min-w-0
                         gap-2 flex-wrap px-4">
           {npub && (
-            <>
-              <div
-                className="inline-flex items-center gap-4 px-3.5 py-2
-                           rounded-md bg-mauve/15 text-xs min-w-0"
+            <div
+              className="inline-flex items-center gap-4 px-3.5 py-2
+                         rounded-md bg-mauve/15 text-xs min-w-0"
+            >
+              <IdentityRow profile={profile} npub={npub} />
+              <span
+                className="flex items-center gap-1.5 text-muted shrink-0"
+                title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
               >
-                <IdentityRow profile={profile} npub={npub} />
-                <span
-                  className="flex items-center gap-1.5 text-muted shrink-0"
-                  title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
-                >
-                  <Lock size={12} />
-                  <span>nsec stored in keychain</span>
-                </span>
-              </div>
-              <DbIconButton title="Forget identity" onClick={onForgetIdentity}>
-                <LogOut size={14} />
-              </DbIconButton>
-            </>
+                <Lock size={12} />
+                <span>nsec stored in keychain</span>
+              </span>
+            </div>
           )}
         </div>
 
@@ -371,36 +366,65 @@ export default function App() {
             <span className="text-alert font-mono text-xs break-all max-w-xs truncate">
               {dbError}
             </span>
-          ) : dbPath ? (
-            <>
-              <div
-                className="hidden sm:inline-flex items-center gap-2 px-2.5
-                           py-2 rounded-md bg-mauve/15 text-xs text-muted
-                           min-w-0"
-              >
-                <span className="shrink-0">db</span>
-                <span
-                  className="font-mono text-mauve truncate max-w-[24rem]"
-                  title={dbPath}
-                >
-                  {dbPath}
-                </span>
-              </div>
-              <DbIconButton title="Refresh" onClick={reload}>
-                <RotateCw size={14} />
-              </DbIconButton>
-              <DbIconButton
-                title="Open existing database…"
-                onClick={onOpenDb}
-              >
-                <FolderOpen size={14} />
-              </DbIconButton>
-              <DbIconButton title="Create new database…" onClick={onNewDb}>
-                <FilePlus size={14} />
-              </DbIconButton>
-            </>
           ) : (
-            <span className="text-xs text-muted">initialising…</span>
+            <>
+              {dbPath ? (
+                <>
+                  <div
+                    className="hidden sm:inline-flex items-center gap-2 px-2.5
+                               py-2 rounded-md bg-mauve/15 text-xs text-muted
+                               min-w-0"
+                  >
+                    <span className="shrink-0">db</span>
+                    <span
+                      className="font-mono text-mauve truncate max-w-[24rem]"
+                      title={dbPath}
+                    >
+                      {dbPath}
+                    </span>
+                  </div>
+                  {/* db group — refresh / open / create */}
+                  <div className="inline-flex items-center gap-1">
+                    <DbIconButton title="Refresh" onClick={reload}>
+                      <RotateCw size={14} />
+                    </DbIconButton>
+                    <DbIconButton
+                      title="Open existing database…"
+                      onClick={onOpenDb}
+                    >
+                      <FolderOpen size={14} />
+                    </DbIconButton>
+                    <DbIconButton
+                      title="Create new database…"
+                      onClick={onNewDb}
+                    >
+                      <FilePlus size={14} />
+                    </DbIconButton>
+                  </div>
+                </>
+              ) : (
+                <span className="text-xs text-muted">initialising…</span>
+              )}
+              {/* nostr group — identity actions, demarked from the db group */}
+              {npub && (
+                <>
+                  {dbPath && (
+                    <span
+                      className="w-px h-6 bg-surface shrink-0"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <div className="inline-flex items-center gap-1">
+                    <DbIconButton
+                      title="Forget identity"
+                      onClick={onForgetIdentity}
+                    >
+                      <LogOut size={14} />
+                    </DbIconButton>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
       </header>
@@ -428,7 +452,7 @@ export default function App() {
           ) : (
             <AddReleaseForm onAdded={reload} />
           )}
-          <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)] gap-2 items-start">
+          <div className="grid grid-cols-[minmax(0,5fr)_minmax(0,4fr)_minmax(0,5fr)] gap-2 items-start">
             <NostrPanel
               relays={relays}
               setRelays={setRelays}
@@ -445,7 +469,7 @@ export default function App() {
               labels={labels}
               setLabels={setLabels}
               selected={selected}
-              onReseed={reseedFromBundle}
+              onClearAll={clearAllLabels}
               formOpen={labelFormOpen}
               setFormOpen={setLabelFormOpen}
               formName={labelFormName}

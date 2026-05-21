@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, Plus, RefreshCw, Tag, X } from "lucide-react";
+import { Pause, Play, Plus, Tag, Trash2, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
@@ -36,8 +36,8 @@ interface Props {
   labels: LabelEntry[];
   setLabels: (next: LabelEntry[]) => void;
   selected: Release | null;
-  // Reseeds missing labels from the built-in list; returns the count added.
-  onReseed?: () => number;
+  // Removes every stored label (the parent handles the confirm dialog).
+  onClearAll?: () => void;
   formOpen: boolean;
   setFormOpen: (open: boolean) => void;
   formName: string;
@@ -76,7 +76,7 @@ export function LabelPanel({
   labels,
   setLabels,
   selected,
-  onReseed,
+  onClearAll,
   formOpen,
   setFormOpen,
   formName,
@@ -101,29 +101,6 @@ export function LabelPanel({
 
   // Carousel pause toggle — session-only, applies while idle.
   const [paused, setPaused] = useState(false);
-
-  // Transient feedback for the reseed button's tooltip: how many labels the
-  // last click added. Cleared after a few seconds back to the default hint.
-  const [reseedNote, setReseedNote] = useState<string | null>(null);
-  const reseedTimer = useRef<number | null>(null);
-  useEffect(
-    () => () => {
-      if (reseedTimer.current) window.clearTimeout(reseedTimer.current);
-    },
-    [],
-  );
-
-  function handleReseed() {
-    if (!onReseed) return;
-    const added = onReseed();
-    setReseedNote(
-      added === 0
-        ? "Already up to date — no new labels added"
-        : `Added ${added} label${added === 1 ? "" : "s"} from the built-in list`,
-    );
-    if (reseedTimer.current) window.clearTimeout(reseedTimer.current);
-    reseedTimer.current = window.setTimeout(() => setReseedNote(null), 6000);
-  }
 
   const match = useMemo(() => findMatch(labels, selected), [labels, selected]);
 
@@ -294,16 +271,18 @@ export function LabelPanel({
               <X size={12} />
             </button>
           )}
-          {onReseed && (
+          {onClearAll && labels.length > 0 && (
             <button
               type="button"
-              onClick={handleReseed}
-              title={reseedNote ?? "Re-seed missing labels from the built-in list"}
-              aria-label="Re-seed missing labels from the built-in list"
-              className="text-muted hover:text-mauve transition-colors p-1
+              onClick={onClearAll}
+              title={`Remove all ${labels.length} label${
+                labels.length === 1 ? "" : "s"
+              }`}
+              aria-label="Remove all labels"
+              className="text-muted hover:text-alert transition-colors p-1
                          rounded-md hover:bg-surface"
             >
-              <RefreshCw size={12} />
+              <Trash2 size={12} />
             </button>
           )}
           <button
