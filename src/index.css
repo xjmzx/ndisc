@@ -21,6 +21,8 @@
   --c-warn: 251 191 36;
   --c-alert: 248 113 113;
   --c-mauve: 167 139 250;
+  /* db-toolbar group — auburn, set apart from the mauve library/nostr groups */
+  --c-auburn: 178 96 58;
 }
 
 .theme-upleb {
@@ -37,6 +39,7 @@
   --c-warn: 251 191 36;
   --c-alert: 248 113 113;
   --c-mauve: 255 179 71;
+  --c-auburn: 178 96 58;
 }
 
 html,

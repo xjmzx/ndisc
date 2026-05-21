@@ -104,12 +104,25 @@ fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+// Debug builds (`tauri dev`) use separate `*-dev` config + DB files so
+// development never reads or writes the real release database, which sits in
+// the same data directory. Release builds (`tauri build`) are unaffected.
 fn default_db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("discography.db"))
+    let name = if cfg!(debug_assertions) {
+        "discography-dev.db"
+    } else {
+        "discography.db"
+    };
+    Ok(app_data_dir(app)?.join(name))
 }
 
 fn config_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("config.json"))
+    let name = if cfg!(debug_assertions) {
+        "config.dev.json"
+    } else {
+        "config.json"
+    };
+    Ok(app_data_dir(app)?.join(name))
 }
 
 fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -1151,8 +1164,19 @@ pub struct Keypair {
     pub nsec: String,
 }
 
+// Debug builds (`tauri dev`) use a separate keychain service so development
+// signs in with its own identity and never reads or writes the real release
+// nsec. Release builds keep KEYRING_SERVICE unchanged.
+fn keyring_service() -> &'static str {
+    if cfg!(debug_assertions) {
+        "ndisc-dev"
+    } else {
+        KEYRING_SERVICE
+    }
+}
+
 fn keyring_entry() -> Result<Entry, String> {
-    Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
+    Entry::new(keyring_service(), KEYRING_USER).map_err(|e| e.to_string())
 }
 
 fn store_nsec(nsec: &str) -> Result<(), String> {
@@ -2819,11 +2843,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            if let Err(e) = migrate_legacy_data_dir(&app.handle()) {
-                eprintln!("ndisc: data-dir migration error: {}", e);
-            }
-            if let Err(e) = migrate_legacy_keychain() {
-                eprintln!("ndisc: keychain migration error: {}", e);
+            // The legacy migrations touch the real release data dir + `ndisc`
+            // keychain. Skip them entirely in debug builds so `tauri dev`
+            // never reads or writes the installed app's data.
+            if !cfg!(debug_assertions) {
+                if let Err(e) = migrate_legacy_data_dir(&app.handle()) {
+                    eprintln!("ndisc: data-dir migration error: {}", e);
+                }
+                if let Err(e) = migrate_legacy_keychain() {
+                    eprintln!("ndisc: keychain migration error: {}", e);
+                }
             }
             Ok(())
         })

@@ -6,6 +6,7 @@ import {
   Library,
   Play,
   RotateCcw,
+  X,
 } from "lucide-react";
 import {
   open as openDialog,
@@ -13,7 +14,7 @@ import {
 } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
-import { DB_BUTTON_CLS } from "../lib/buttonStyles";
+import { ToolbarIconButton } from "./ToolbarIconButton";
 import {
   exportMarkdown,
   getStats,
@@ -28,18 +29,41 @@ import {
   type Stats,
 } from "../lib/tauri";
 
-interface Props {
-  reloadKey: number;
-  onImported: () => void;
-}
-
 type Phase = "idle" | "scanning" | "ready" | "importing" | "done";
+type MediumFilter = "both" | "physical" | "digital";
 
 type ScanResult =
   | { kind: "folder"; report: ScanReport }
   | { kind: "discogs"; report: ScanDiscogsReport };
 
-export function LibraryPanel({ reloadKey, onImported }: Props) {
+// The library import/export state, lifted out of the old LIBRARY panel so its
+// stats and action buttons can live in the header toolbar. The multi-step
+// import flow renders in a transient panel (LibraryFlowPanel) that only
+// appears while `active` is true.
+export interface LibraryController {
+  stats: Stats | null;
+  phase: Phase;
+  active: boolean;
+  pickedPath: string | null;
+  scan: ScanResult | null;
+  progress: ImportProgress | null;
+  last: ImportSummary | null;
+  error: string | null;
+  exportMsg: string | null;
+  exporting: boolean;
+  mediumFilter: MediumFilter;
+  setMediumFilter: (m: MediumFilter) => void;
+  pickFolder: () => Promise<void>;
+  pickDiscogsCsv: () => Promise<void>;
+  runImport: () => Promise<void>;
+  exportMarkdownFile: () => Promise<void>;
+  reset: () => void;
+}
+
+export function useLibrary(
+  reloadKey: number,
+  onImported: () => void,
+): LibraryController {
   // --- Stats ----------------------------------------------------------------
   const [stats, setStats] = useState<Stats | null>(null);
   useEffect(() => {
@@ -56,15 +80,32 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
   const [last, setLast] = useState<ImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Discogs-only: which media to import from the CSV.
-  const [mediumFilter, setMediumFilter] = useState<
-    "both" | "physical" | "digital"
-  >("both");
+  const [mediumFilter, setMediumFilter] = useState<MediumFilter>("both");
 
   // --- Export ---------------------------------------------------------------
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
 
-  async function onExportMarkdown() {
+  // The export result is a one-liner — clear it (and let the transient panel
+  // unmount) a few seconds after it lands.
+  useEffect(() => {
+    if (!exportMsg) return;
+    const t = window.setTimeout(() => setExportMsg(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [exportMsg]);
+
+  function reset() {
+    setPhase("idle");
+    setPickedPath(null);
+    setScan(null);
+    setProgress(null);
+    setLast(null);
+    setError(null);
+    setExportMsg(null);
+    setMediumFilter("both");
+  }
+
+  async function exportMarkdownFile() {
     setExportMsg(null);
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     let picked: string | null;
@@ -89,16 +130,6 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
     } finally {
       setExporting(false);
     }
-  }
-
-  function reset() {
-    setPhase("idle");
-    setPickedPath(null);
-    setScan(null);
-    setProgress(null);
-    setLast(null);
-    setError(null);
-    setMediumFilter("both");
   }
 
   async function pickFolder() {
@@ -204,67 +235,134 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
     }
   }
 
-  // --- Render ---------------------------------------------------------------
-  // How many rows the Import button will actually take in, given the
-  // Discogs medium filter.
+  const active = phase !== "idle" || exportMsg != null || error != null;
+
+  return {
+    stats,
+    phase,
+    active,
+    pickedPath,
+    scan,
+    progress,
+    last,
+    error,
+    exportMsg,
+    exporting,
+    mediumFilter,
+    setMediumFilter,
+    pickFolder,
+    pickDiscogsCsv,
+    runImport,
+    exportMarkdownFile,
+    reset,
+  };
+}
+
+// --- Header pieces ----------------------------------------------------------
+
+// The four headline counts, shown as chips in the header. Values keep the
+// accent colour.
+export function LibraryStats({ stats }: { stats: Stats | null }) {
+  if (!stats) return null;
+  return (
+    <div className="flex items-center gap-1.5">
+      <StatChip label="Total" value={stats.total} />
+      <StatChip label="Physical" value={stats.physical} />
+      <StatChip label="Digital" value={stats.digital} />
+      <StatChip label="Artists" value={stats.uniqueArtists} />
+    </div>
+  );
+}
+
+function StatChip({ label, value }: { label: string; value: number }) {
+  return (
+    <span
+      className="inline-flex items-baseline gap-1.5 px-2.5 py-2 rounded-md
+                 bg-surface text-xs whitespace-nowrap"
+    >
+      <span className="text-muted">{label}</span>
+      <span className="text-accent font-mono">{value.toLocaleString()}</span>
+    </span>
+  );
+}
+
+// The library action group for the header toolbar.
+export function LibraryToolbar({ lib }: { lib: LibraryController }) {
+  return (
+    <div className="inline-flex items-center gap-1">
+      <ToolbarIconButton
+        title="Import a local music folder"
+        onClick={lib.pickFolder}
+      >
+        <FolderInput size={14} />
+      </ToolbarIconButton>
+      <ToolbarIconButton
+        title="Import a Discogs collection CSV"
+        onClick={lib.pickDiscogsCsv}
+      >
+        <Disc size={14} />
+      </ToolbarIconButton>
+      <ToolbarIconButton
+        title={lib.exporting ? "exporting…" : "Export library as markdown"}
+        onClick={lib.exportMarkdownFile}
+        disabled={lib.exporting}
+      >
+        <FileDown size={14} />
+      </ToolbarIconButton>
+    </div>
+  );
+}
+
+// --- Transient flow panel ---------------------------------------------------
+
+// Shown in the left column only while an import is mid-flight (or an export
+// result / error is pending). Hosts the scan → confirm → progress → done flow.
+export function LibraryFlowPanel({ lib }: { lib: LibraryController }) {
+  const { phase, pickedPath, scan, progress, last, error, exportMsg } = lib;
+
+  // How many rows the Import button will actually take in, given the Discogs
+  // medium filter.
   const discogsImportCount =
     scan?.kind === "discogs"
-      ? mediumFilter === "physical"
+      ? lib.mediumFilter === "physical"
         ? scan.report.physical
-        : mediumFilter === "digital"
+        : lib.mediumFilter === "digital"
           ? scan.report.digital
           : scan.report.totalRows
       : 0;
-
-  const inlineStats = stats ? (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm items-center">
-      <StatBadge label="Total" value={String(stats.total)} />
-      <StatBadge label="Physical" value={String(stats.physical)} />
-      <StatBadge label="Digital" value={String(stats.digital)} />
-      <StatBadge label="Artists" value={String(stats.uniqueArtists)} />
-    </div>
-  ) : (
-    <span className="text-sm text-muted">no data yet</span>
-  );
 
   return (
     <Section
       title="Library"
       icon={<Library size={16} />}
-      right={inlineStats}
+      right={
+        phase !== "importing" ? (
+          <button
+            type="button"
+            onClick={lib.reset}
+            title="Dismiss"
+            aria-label="Dismiss"
+            className="text-muted hover:text-alert transition-colors p-1
+                       rounded-md hover:bg-surface"
+          >
+            <X size={14} />
+          </button>
+        ) : undefined
+      }
     >
-      {phase === "idle" && (
-        <>
-          <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={pickFolder} className={DB_BUTTON_CLS}>
-              <FolderInput size={14} /> Import Local
-            </button>
-            <button onClick={pickDiscogsCsv} className={DB_BUTTON_CLS}>
-              <Disc size={14} /> Import Discogs
-            </button>
-            <button
-              onClick={onExportMarkdown}
-              disabled={exporting}
-              className={DB_BUTTON_CLS}
-            >
-              <FileDown size={14} />{" "}
-              {exporting ? "exporting…" : "Export Markdown"}
-            </button>
-          </div>
+      {phase === "idle" && (exportMsg || error) && (
+        <div className="text-xs">
           {exportMsg && (
             <div
               className={
-                "mt-1 text-xs text-right " +
-                (exportMsg.startsWith("error") ? "text-alert" : "text-ok")
+                exportMsg.startsWith("error") ? "text-alert" : "text-ok"
               }
             >
               {exportMsg}
             </div>
           )}
-          {error && (
-            <div className="mt-1 text-alert text-xs text-right">{error}</div>
-          )}
-        </>
+          {error && <div className="text-alert">{error}</div>}
+        </div>
       )}
 
       {phase === "scanning" && (
@@ -300,10 +398,10 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
                   {(["both", "physical", "digital"] as const).map((m) => (
                     <button
                       key={m}
-                      onClick={() => setMediumFilter(m)}
+                      onClick={() => lib.setMediumFilter(m)}
                       className={
                         "px-2.5 py-1 text-xs capitalize transition-colors " +
-                        (mediumFilter === m
+                        (lib.mediumFilter === m
                           ? "bg-accent text-bg font-semibold"
                           : "bg-surface text-fg hover:bg-surfaceHover")
                       }
@@ -317,7 +415,7 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
           )}
           <div className="mt-3 flex gap-2">
             <button
-              onClick={runImport}
+              onClick={lib.runImport}
               disabled={scan.kind === "discogs" && discogsImportCount === 0}
               className="px-4 py-2 rounded-md bg-accent text-bg font-semibold
                          hover:opacity-90 disabled:opacity-50
@@ -332,7 +430,7 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
               {scan.kind === "folder" ? "releases" : "rows"}
             </button>
             <button
-              onClick={reset}
+              onClick={lib.reset}
               className="px-3 py-2 rounded-md bg-surface hover:bg-surfaceHover
                          text-fg flex items-center gap-1.5 text-xs"
             >
@@ -391,7 +489,7 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
             </details>
           )}
           <button
-            onClick={reset}
+            onClick={lib.reset}
             className="mt-3 px-3 py-1.5 rounded-md bg-surface hover:bg-surfaceHover
                        text-fg flex items-center gap-1.5 text-xs"
           >
@@ -400,15 +498,6 @@ export function LibraryPanel({ reloadKey, onImported }: Props) {
         </>
       )}
     </Section>
-  );
-}
-
-function StatBadge({ label, value }: { label: string; value: string }) {
-  return (
-    <span>
-      <span className="text-muted">{label} </span>
-      <span className="text-accent font-mono">{value}</span>
-    </span>
   );
 }
 

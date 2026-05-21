@@ -25,6 +25,7 @@ export default {
         warn: c("--c-warn"),
         alert: c("--c-alert"),
         mauve: c("--c-mauve"),
+        auburn: c("--c-auburn"),
       },
       fontFamily: {
         sans: ["Helvetica", "Arial", "system-ui", "sans-serif"],

@@ -913,9 +913,13 @@ export function ReleaseList({
           </details>
         )}
 
-      <ul className="mt-1 flex-1 overflow-auto rounded-md
+      {/* Fixed height (not a max) so the panel is the same height whether the
+          DB holds 0 rows (e.g. a fresh dev sandbox) or thousands — the list
+          area no longer collapses to its content. The LIBRARY panel no longer
+          sits above this list, so it reclaims that vertical space; during an
+          import the transient panel adds a brief page scroll. */}
+      <ul className="mt-1 h-[calc(100vh-220px)] overflow-auto rounded-md
                      divide-y divide-surface/60 bg-bg/50
-                     max-h-[calc(100vh-310px)]
                      [scrollbar-gutter:stable]">
         {items.length === 0 && !loading && !error && (
           <li className="px-3 py-3 text-muted text-xs">

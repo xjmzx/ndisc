@@ -8,6 +8,7 @@ import {
   Image as ImageIcon,
   Pencil,
   RefreshCcw,
+  StickyNote,
   Trash2,
   Undo2,
   Upload,
@@ -423,7 +424,9 @@ export function ReleaseDetail({
 
       <div className="mt-4 grid grid-cols-[max-content_1fr] gap-x-3 items-center
                       text-xs max-w-md">
-        <span className="text-muted">cover url</span>
+        <span className="text-muted flex items-center" title="cover url">
+          <ImageIcon size={14} aria-label="cover url" />
+        </span>
         <div className="min-w-0">
           <CoverUrlField
             value={release.coverArtUrl ?? ""}
@@ -480,14 +483,8 @@ export function ReleaseDetail({
           placeholder="condition"
           width="w-32"
         />
+        <NotesField value={release.notes ?? null} />
       </div>
-
-      {release.notes && (
-        <div className="mt-3 text-xs">
-          <div className="text-muted mb-1">notes</div>
-          <p className="whitespace-pre-wrap text-fg/90">{release.notes}</p>
-        </div>
-      )}
 
       <div className="mt-4 pt-3 border-t border-surface/60">
         <div className="flex flex-wrap gap-x-2 gap-y-2 items-center">
@@ -683,6 +680,28 @@ function NaRow({ label, value }: { label: string; value: string | null }) {
         )}
       </dd>
     </>
+  );
+}
+
+// Read-only notes field. Sits in the editable-field row so it occupies a
+// stable slot whether or not the release has notes — no more appearing and
+// disappearing block. Long/multi-line notes truncate; full text is in the
+// title tooltip. Sized to roughly match the cover-url field.
+function NotesField({ value }: { value: string | null }) {
+  const shown = value && value.trim().length > 0 ? value.trim() : null;
+  return (
+    <div
+      title={shown ? `notes: ${shown}` : "no notes set"}
+      aria-label="notes"
+      className="w-[26rem] max-w-full h-6 inline-flex items-center gap-1.5
+                 px-1.5 rounded bg-surface/40 border border-surface/60
+                 text-fg/90"
+    >
+      <StickyNote size={10} className="shrink-0 text-muted/50" />
+      <span className={`truncate ${shown ? "" : "italic text-muted/50"}`}>
+        {shown ?? "notes"}
+      </span>
+    </div>
   );
 }
 

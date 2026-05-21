@@ -14,7 +14,13 @@ import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
 import { clearStaleBundleUrls } from "./lib/labelSeed";
-import { LibraryPanel } from "./components/LibraryPanel";
+import {
+  useLibrary,
+  LibraryStats,
+  LibraryToolbar,
+  LibraryFlowPanel,
+} from "./components/LibraryPanel";
+import { ToolbarIconButton } from "./components/ToolbarIconButton";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import {
   clearKeypair,
@@ -271,6 +277,10 @@ export default function App() {
     setSelected(null);
   }
 
+  // Library stats + import/export controller. Its toolbar + stat chips live
+  // in the header; the import flow renders transiently in the left column.
+  const lib = useLibrary(reloadKey, reload);
+
   function handleReleaseChanged(updated: Release) {
     setSelected(updated);
     setReloadKey((k) => k + 1);
@@ -342,88 +352,72 @@ export default function App() {
           )}
         </div>
 
-        <div className="hidden lg:flex flex-1 items-center justify-center min-w-0
-                        gap-2 flex-wrap px-4">
-          {npub && (
-            <div
-              className="inline-flex items-center gap-4 px-3.5 py-2
-                         rounded-md bg-mauve/15 text-xs min-w-0"
-            >
-              <IdentityRow profile={profile} npub={npub} />
-              <span
-                className="flex items-center gap-1.5 text-muted shrink-0"
-                title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
-              >
-                <Lock size={12} />
-                <span>nsec stored in keychain</span>
-              </span>
-            </div>
-          )}
+        {/* Library stats — centred between the title and the toolbar. */}
+        <div className="hidden lg:flex flex-1 items-center justify-center
+                        min-w-0 px-4">
+          <LibraryStats stats={lib.stats} />
         </div>
 
+        {/* Toolbar: library | db | nostr — three divider-separated groups. */}
         <div className="flex items-center gap-2 shrink-0 min-w-0">
+          {/* library group — import local / discogs, export markdown */}
+          <LibraryToolbar lib={lib} />
+
+          {/* db group — auburn, set apart from the mauve library/nostr groups */}
+          <span className="w-px h-6 bg-surface shrink-0" aria-hidden="true" />
           {dbError ? (
             <span className="text-alert font-mono text-xs break-all max-w-xs truncate">
               {dbError}
             </span>
+          ) : dbPath ? (
+            <div className="inline-flex items-center gap-1">
+              <ToolbarIconButton tone="auburn" title="Refresh" onClick={reload}>
+                <RotateCw size={14} />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                tone="auburn"
+                title="Open existing database…"
+                onClick={onOpenDb}
+              >
+                <FolderOpen size={14} />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                tone="auburn"
+                title="Create new database…"
+                onClick={onNewDb}
+              >
+                <FilePlus size={14} />
+              </ToolbarIconButton>
+            </div>
           ) : (
+            <span className="text-xs text-muted">initialising…</span>
+          )}
+
+          {/* nostr group — NIP-05 chip + forget identity, side by side */}
+          {npub && (
             <>
-              {dbPath ? (
-                <>
-                  <div
-                    className="hidden sm:inline-flex items-center gap-2 px-2.5
-                               py-2 rounded-md bg-mauve/15 text-xs text-muted
-                               min-w-0"
+              <span
+                className="w-px h-6 bg-surface shrink-0"
+                aria-hidden="true"
+              />
+              <div className="inline-flex items-center gap-2">
+                {profile?.nip05 && (
+                  <span
+                    className="hidden sm:inline-flex items-center px-2.5 py-2
+                               rounded-md bg-mauve/15 text-mauve font-mono
+                               text-xs max-w-[16rem] truncate"
+                    title={`NIP-05: ${profile.nip05}`}
                   >
-                    <span className="shrink-0">db</span>
-                    <span
-                      className="font-mono text-mauve truncate max-w-[24rem]"
-                      title={dbPath}
-                    >
-                      {dbPath}
-                    </span>
-                  </div>
-                  {/* db group — refresh / open / create */}
-                  <div className="inline-flex items-center gap-1">
-                    <DbIconButton title="Refresh" onClick={reload}>
-                      <RotateCw size={14} />
-                    </DbIconButton>
-                    <DbIconButton
-                      title="Open existing database…"
-                      onClick={onOpenDb}
-                    >
-                      <FolderOpen size={14} />
-                    </DbIconButton>
-                    <DbIconButton
-                      title="Create new database…"
-                      onClick={onNewDb}
-                    >
-                      <FilePlus size={14} />
-                    </DbIconButton>
-                  </div>
-                </>
-              ) : (
-                <span className="text-xs text-muted">initialising…</span>
-              )}
-              {/* nostr group — identity actions, demarked from the db group */}
-              {npub && (
-                <>
-                  {dbPath && (
-                    <span
-                      className="w-px h-6 bg-surface shrink-0"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <div className="inline-flex items-center gap-1">
-                    <DbIconButton
-                      title="Forget identity"
-                      onClick={onForgetIdentity}
-                    >
-                      <LogOut size={14} />
-                    </DbIconButton>
-                  </div>
-                </>
-              )}
+                    {profile.nip05}
+                  </span>
+                )}
+                <ToolbarIconButton
+                  title="Forget identity"
+                  onClick={onForgetIdentity}
+                >
+                  <LogOut size={14} />
+                </ToolbarIconButton>
+              </div>
             </>
           )}
         </div>
@@ -431,7 +425,7 @@ export default function App() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
         <div className="grid grid-cols-1 gap-2 content-start">
-          <LibraryPanel reloadKey={reloadKey} onImported={reload} />
+          {lib.active && <LibraryFlowPanel lib={lib} />}
           <ReleaseList
             reloadKey={reloadKey}
             selected={selected}
@@ -483,8 +477,41 @@ export default function App() {
         </div>
       </div>
 
-      <footer className="mt-8 text-xs text-muted">
+      {/* Three columns: stack info left, identity centred, db path right —
+          justify-between buffers each from the next. */}
+      <footer className="mt-8 flex flex-wrap items-center justify-between
+                          gap-x-8 gap-y-1 text-xs text-muted">
         <span>scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite</span>
+        {npub && (
+          <span className="inline-flex items-center gap-2 min-w-0">
+            {(profile?.display_name || profile?.name) && (
+              <span className="text-fg/70 truncate">
+                {profile?.display_name || profile?.name}
+              </span>
+            )}
+            <span className="font-mono text-mauve" title={npub}>
+              {npub.slice(0, 12)}…{npub.slice(-6)}
+            </span>
+            <span
+              className="inline-flex items-center gap-1"
+              title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
+            >
+              <Lock size={11} />
+              <span>nsec stored in keychain</span>
+            </span>
+          </span>
+        )}
+        {dbPath && (
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <span className="shrink-0">db</span>
+            <span
+              className="font-mono text-mauve truncate max-w-[40rem]"
+              title={dbPath}
+            >
+              {dbPath}
+            </span>
+          </span>
+        )}
       </footer>
 
       <UndoToast toast={toast} onDismiss={() => setToast(null)} />
@@ -492,63 +519,3 @@ export default function App() {
   );
 }
 
-function IdentityRow({
-  profile,
-  npub,
-}: {
-  profile: ProfileMeta | null;
-  npub: string;
-}) {
-  const name = profile?.display_name || profile?.name;
-  const nip05 = profile?.nip05;
-  // Names that look like identifiers (e.g. "user@host") render as mono so
-  // they sit visually consistent with the nip05 chip next to them.
-  const nameCls = name && name.includes("@")
-    ? "text-fg text-xs font-mono truncate"
-    : "text-fg text-xs truncate";
-
-  if (name && nip05) {
-    return (
-      <>
-        <span className={nameCls}>{name}</span>
-        <span className="text-mauve text-xs font-mono truncate">{nip05}</span>
-      </>
-    );
-  }
-  if (name) {
-    return <span className={nameCls}>{name}</span>;
-  }
-  if (nip05) {
-    return (
-      <span className="text-mauve text-xs font-mono truncate">{nip05}</span>
-    );
-  }
-  return (
-    <span className="text-mauve text-xs font-mono">
-      {npub.slice(0, 12)}…{npub.slice(-6)}
-    </span>
-  );
-}
-
-function DbIconButton({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-label={title}
-      className="p-2 rounded-md bg-mauve/15 text-mauve
-                 hover:bg-mauve hover:text-bg transition-colors"
-    >
-      {children}
-    </button>
-  );
-}
