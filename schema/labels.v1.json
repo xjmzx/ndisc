@@ -1,0 +1,38 @@
+{
+  "$comment": "Canonical Nostr wire contract between ndisc (publisher) and the glmps web viewers (consumers) for the record-label image library. UNFROZEN — promoted to frozen + SHA-pinned (mirroring release.v1.json) once ndisc implements publishing.",
+  "schemaVersion": "labels.v1",
+  "frozen": false,
+  "canonicalHome": "xjmzx/ndisc — schema/labels.v1.json (planned)",
+  "kinds": {
+    "label_library": {
+      "kind": 31238,
+      "class": "addressable / parameterized-replaceable (range 30000-39999)",
+      "addressableBy": ["pubkey", "kind", "d-tag"],
+      "content": "JSON. See contentSchema below.",
+      "tags": {
+        "d": {
+          "required": true,
+          "value": "disco-vault:labels",
+          "note": "Fixed identifier — exactly one label-library event per author. The disco-vault: prefix matches release.v1's convention."
+        },
+        "alt": {
+          "required": false,
+          "type": "string",
+          "note": "NIP-31 human-readable description. Recommended: 'ndisc record-label image library'."
+        }
+      },
+      "contentSchema": {
+        "schemaVersion": { "required": true, "value": "labels.v1" },
+        "labels": {
+          "required": true,
+          "type": "object",
+          "keys": "Label name string. Matched verbatim (case-sensitive, whitespace-significant) against the `label` tag value on release events (kind:31237).",
+          "values": {
+            "image": { "required": true, "type": "string", "format": "https URL (typically nostr.build)" }
+          }
+        }
+      },
+      "rule": "Consumers MUST tolerate missing entries — fall back to a generic glyph. Consumers MUST tolerate extra fields inside each value object — forward-compatible (e.g. `country`, `founded`, `website` may be added in labels.v2)."
+    }
+  }
+}

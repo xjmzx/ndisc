@@ -466,6 +466,7 @@ export default function App() {
               setLabels={setLabels}
               selected={selected}
               onClearAll={clearAllLabels}
+              relays={relays}
               formOpen={labelFormOpen}
               setFormOpen={setLabelFormOpen}
               formName={labelFormName}

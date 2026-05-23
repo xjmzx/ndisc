@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, Plus, Tag, Trash2, X } from "lucide-react";
+import { Pause, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
-import type { Release } from "../lib/tauri";
+import { publishLabels, type Release } from "../lib/tauri";
 
 export interface LabelEntry {
   name: string;
@@ -38,6 +39,10 @@ interface Props {
   selected: Release | null;
   // Removes every stored label (the parent handles the confirm dialog).
   onClearAll?: () => void;
+  // Relay set for the labels.v1 manifest publish (kind:31238). Wired
+  // through from App.tsx so it stays in sync with the release-publish
+  // relay set the user already configures.
+  relays: string[];
   formOpen: boolean;
   setFormOpen: (open: boolean) => void;
   formName: string;
@@ -77,6 +82,7 @@ export function LabelPanel({
   setLabels,
   selected,
   onClearAll,
+  relays,
   formOpen,
   setFormOpen,
   formName,
@@ -89,6 +95,50 @@ export function LabelPanel({
   const [cycleIndex, setCycleIndex] = useState(0);
   const cycleRef = useRef(cycleIndex);
   cycleRef.current = cycleIndex;
+
+  // Labels.v1 manifest publish state. Counts only entries with a real
+  // imageUrl since those are the only ones that benefit the consumer.
+  const [publishingLabels, setPublishingLabels] = useState(false);
+  const publishable = useMemo(
+    () => labels.filter((l) => l.imageUrl && l.imageUrl.startsWith("http")),
+    [labels],
+  );
+
+  async function onPublishLabels() {
+    if (publishingLabels || publishable.length === 0 || relays.length === 0) return;
+    const ok = await ask(
+      `Publish ${publishable.length} record-label image${
+        publishable.length === 1 ? "" : "s"
+      } as a labels.v1 manifest (kind:31238) to ${relays.length} relay${
+        relays.length === 1 ? "" : "s"
+      }?\n\n` +
+        `Glmps web viewers will render these on matching release pages. Republishing replaces the previous manifest.`,
+      { title: "Publish labels manifest", kind: "info" },
+    );
+    if (!ok) return;
+    setPublishingLabels(true);
+    try {
+      const result = await publishLabels(
+        publishable.map((l) => ({ name: l.name, imageUrl: l.imageUrl })),
+        relays,
+      );
+      const accepted = result.acceptedBy.length;
+      const rejected = result.rejected.length;
+      await ask(
+        `Published labels manifest (event ${result.eventId.slice(0, 8)}…).\n\n` +
+          `Accepted by ${accepted} relay${accepted === 1 ? "" : "s"}` +
+          (rejected ? `, rejected by ${rejected}.` : "."),
+        { title: "Labels manifest published", kind: "info" },
+      );
+    } catch (e) {
+      await ask(`Publish failed:\n\n${e}`, {
+        title: "Labels manifest — error",
+        kind: "error",
+      });
+    } finally {
+      setPublishingLabels(false);
+    }
+  }
 
   // Flips true once a freshly selected release has been pinned long enough
   // (RESELECT_MS) that the panel should resume the looping carousel.
@@ -269,6 +319,25 @@ export function LabelPanel({
                          rounded-md hover:bg-surface"
             >
               <X size={12} />
+            </button>
+          )}
+          {publishable.length > 0 && relays.length > 0 && (
+            <button
+              type="button"
+              onClick={onPublishLabels}
+              disabled={publishingLabels}
+              title={
+                publishingLabels
+                  ? "Publishing…"
+                  : `Publish ${publishable.length} label image${
+                      publishable.length === 1 ? "" : "s"
+                    } as a labels.v1 manifest (kind:31238)`
+              }
+              aria-label="Publish labels manifest to Nostr"
+              className="text-muted hover:text-mauve transition-colors p-1
+                         rounded-md hover:bg-surface disabled:opacity-50"
+            >
+              <Upload size={12} className={publishingLabels ? "animate-pulse" : ""} />
             </button>
           )}
           {onClearAll && labels.length > 0 && (

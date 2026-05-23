@@ -374,6 +374,16 @@ export async function deleteReaction(
   return invoke<PublishResult>("delete_reaction", { reactionEventId });
 }
 
+/** Publish the labels.v1 manifest (kind:31238). Only entries with a
+ *  non-empty name + imageUrl are included; the Rust side drops empties
+ *  too. Republishing replaces (d-tag is fixed at `disco-vault:labels`). */
+export async function publishLabels(
+  labels: Array<{ name: string; imageUrl: string }>,
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("publish_labels", { labels, relays });
+}
+
 export async function publishLibrary(
   relays: string[],
   filter?: {

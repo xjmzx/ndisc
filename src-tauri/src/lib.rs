@@ -22,6 +22,9 @@ const KEYRING_USER: &str = "nostr-nsec";
 const LEGACY_KEYRING_SERVICE: &str = "disco-vault";
 const LEGACY_BUNDLE_ID: &str = "uk.fizx.discovault";
 const KIND_RELEASE: u16 = 31237;
+const KIND_LABELS: u16 = 31238;
+const LABELS_D_TAG: &str = "disco-vault:labels";
+const LABELS_ALT: &str = "ndisc record-label image library";
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS releases (
@@ -1541,6 +1544,85 @@ async fn unpublish_release(
     })
 }
 
+/// Inbound shape for `publish_labels`. Carries the per-label image URL
+/// the frontend already has (from `localStorage["ndisc.labels"]`).
+/// Entries with an empty `name` or `image_url` are dropped at the Rust
+/// boundary so the published manifest only contains real entries.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LabelInput {
+    name: String,
+    image_url: String,
+}
+
+/// Publish the labels.v1 manifest (kind:31238) so consumers (glmps web
+/// viewers) can render record-label images on release detail pages.
+/// d-tag is fixed at `disco-vault:labels` (one event per author —
+/// republishing replaces). Content schema is locked at `labels.v1`.
+/// See `schema/labels.v1.json`.
+#[tauri::command]
+async fn publish_labels(
+    labels: Vec<LabelInput>,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let mut labels_obj = serde_json::Map::new();
+    for entry in labels {
+        let name = entry.name.trim();
+        let url = entry.image_url.trim();
+        if name.is_empty() || url.is_empty() {
+            continue;
+        }
+        let mut value = serde_json::Map::new();
+        value.insert("image".to_string(), serde_json::Value::String(url.to_string()));
+        labels_obj.insert(name.to_string(), serde_json::Value::Object(value));
+    }
+
+    let content = serde_json::json!({
+        "schemaVersion": "labels.v1",
+        "labels": labels_obj,
+    });
+    let content_str = serde_json::to_string(&content).map_err(|e| e.to_string())?;
+
+    let tags = vec![
+        Tag::parse(["d", LABELS_D_TAG]).map_err(|e| e.to_string())?,
+        Tag::parse(["alt", LABELS_ALT]).map_err(|e| e.to_string())?,
+    ];
+
+    let event = EventBuilder::new(Kind::Custom(KIND_LABELS), &content_str)
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let event_id = event.id.to_string();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    if accepted_by.is_empty() {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
 #[tauri::command]
 async fn publish_release(
     app: tauri::AppHandle,
@@ -2968,6 +3050,7 @@ pub fn run() {
             delete_release,
             publish_reaction,
             delete_reaction,
+            publish_labels,
             get_stats,
             scan_directory,
             import_directory,
