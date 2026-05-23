@@ -361,6 +361,19 @@ export async function unpublishRelease(
   return invoke<PublishResult>("unpublish_release", { releaseId, relays });
 }
 
+export async function publishReaction(
+  releaseId: number,
+  content: string,
+): Promise<PublishResult> {
+  return invoke<PublishResult>("publish_reaction", { releaseId, content });
+}
+
+export async function deleteReaction(
+  reactionEventId: string,
+): Promise<PublishResult> {
+  return invoke<PublishResult>("delete_reaction", { reactionEventId });
+}
+
 export async function publishLibrary(
   relays: string[],
   filter?: {

@@ -1271,6 +1271,100 @@ fn release_d_tag(release_id: i64) -> String {
     format!("disco-vault:{}", release_id)
 }
 
+const REACTION_RELAYS_DEFAULT: &[&str] = &["wss://relay.fizx.uk", "wss://nos.lol"];
+
+/// Publish a kind:7 reaction targeting one of the user's own releases.
+/// Builds the replaceable address `31237:<my_pk>:disco-vault:<release_id>`
+/// from the stored keys, signs the event, publishes to a small relay
+/// set. Mirrors the ndisc.view reaction format ([a, p, k] tags) so the
+/// web viewer aggregates desktop-published reactions the same way it
+/// aggregates its own.
+#[tauri::command]
+async fn publish_reaction(
+    release_id: i64,
+    content: String,
+) -> Result<PublishResult, String> {
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity in keychain".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let d = release_d_tag(release_id);
+    let address = format!(
+        "{}:{}:{}",
+        u16::from(Kind::Custom(KIND_RELEASE)),
+        keys.public_key(),
+        d
+    );
+
+    let tags = vec![
+        Tag::parse(["a", &address]).map_err(|e| e.to_string())?,
+        Tag::parse(["p", &keys.public_key().to_string()]).map_err(|e| e.to_string())?,
+        Tag::parse(["k", &KIND_RELEASE.to_string()]).map_err(|e| e.to_string())?,
+    ];
+
+    let event = EventBuilder::new(Kind::Reaction, &content)
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let event_id = event.id.to_string();
+
+    let relays: Vec<String> = REACTION_RELAYS_DEFAULT.iter().map(|s| s.to_string()).collect();
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    if accepted_by.is_empty() {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
+/// Publish a kind:5 deletion event for one of our prior kind:7 reactions.
+#[tauri::command]
+async fn delete_reaction(
+    reaction_event_id: String,
+) -> Result<PublishResult, String> {
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity in keychain".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let tags = vec![
+        Tag::parse(["e", &reaction_event_id]).map_err(|e| e.to_string())?,
+        Tag::parse(["k", "7"]).map_err(|e| e.to_string())?,
+    ];
+
+    let event = EventBuilder::new(Kind::EventDeletion, "")
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let event_id = event.id.to_string();
+
+    let relays: Vec<String> = REACTION_RELAYS_DEFAULT.iter().map(|s| s.to_string()).collect();
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
 fn build_naddr(keys: &Keys, d: &str, relays: &[String]) -> Result<String, String> {
     let relay_hints: Vec<RelayUrl> = relays
         .iter()
@@ -2872,6 +2966,8 @@ pub fn run() {
             export_markdown,
             list_releases,
             delete_release,
+            publish_reaction,
+            delete_reaction,
             get_stats,
             scan_directory,
             import_directory,

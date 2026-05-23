@@ -22,6 +22,7 @@ import {
 } from "./components/LibraryPanel";
 import { ToolbarIconButton } from "./components/ToolbarIconButton";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
+import { ReactionsProvider } from "./hooks/useReactions";
 import {
   clearKeypair,
   getNpub,
@@ -323,6 +324,7 @@ export default function App() {
   }
 
   return (
+    <ReactionsProvider npub={npub}>
     <div className="min-h-screen p-6 max-w-[1500px] mx-auto">
       <header className="mb-4 px-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
@@ -516,6 +518,7 @@ export default function App() {
 
       <UndoToast toast={toast} onDismiss={() => setToast(null)} />
     </div>
+    </ReactionsProvider>
   );
 }
 

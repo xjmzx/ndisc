@@ -6,13 +6,18 @@ import {
   FileMusic,
   ImageDown,
   Image as ImageIcon,
+  Loader2,
   Pencil,
   RefreshCcw,
   StickyNote,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Undo2,
   Upload,
 } from "lucide-react";
+import { useReactions } from "../hooks/useReactions";
+import { REACTION_DOWN, REACTION_UP, displayCount } from "../lib/rating";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
@@ -404,9 +409,12 @@ export function ReleaseDetail({
       }
       icon={<FileMusic size={16} />}
       right={
-        <button onClick={onDelete} className={SUBTLE_BUTTON_CLS}>
-          <Trash2 size={12} /> delete
-        </button>
+        <div className="flex items-center gap-3">
+          {release.id != null && <ReactionButtons releaseId={release.id} />}
+          <button onClick={onDelete} className={SUBTLE_BUTTON_CLS}>
+            <Trash2 size={12} /> delete
+          </button>
+        </div>
       }
     >
       <div className="flex gap-4 items-stretch">
@@ -1017,6 +1025,72 @@ function CoverArt({ src, alt }: CoverArtProps) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// Compact thumbs-up/down with count + own-reaction highlight. Shown in
+// the ReleaseDetail header when the user is signed in; gracefully
+// degrades to disabled+muted buttons otherwise. Reactions live on the
+// release's replaceable address (kind:31237:pubkey:disco-vault:id) so
+// ndisc.view and other web clients aggregate them identically.
+function ReactionButtons({ releaseId }: { releaseId: number }) {
+  const { forRelease, react, unreact, canReact, busy } = useReactions();
+  const agg = forRelease(releaseId);
+  const isBusy = busy === releaseId;
+  const myUp = agg.mine != null;
+
+  async function onUp() {
+    if (!canReact || isBusy) return;
+    if (myUp) await unreact(releaseId);
+    else await react(releaseId, REACTION_UP);
+  }
+  async function onDown() {
+    if (!canReact || isBusy) return;
+    if (myUp) await unreact(releaseId);
+    await react(releaseId, REACTION_DOWN);
+  }
+
+  return (
+    <div className="inline-flex items-center gap-1 text-[11px]">
+      <button
+        onClick={onUp}
+        disabled={!canReact || isBusy}
+        title={
+          !canReact
+            ? "load a Nostr identity to react"
+            : myUp
+              ? "remove your reaction"
+              : "upvote"
+        }
+        className={
+          "inline-flex items-center gap-1 px-2 py-0.5 rounded " +
+          "disabled:opacity-40 disabled:cursor-not-allowed " +
+          (myUp
+            ? "bg-ok/15 text-ok"
+            : "text-muted hover:text-fg hover:bg-surface/40")
+        }
+      >
+        {isBusy ? (
+          <Loader2 size={11} className="animate-spin" />
+        ) : (
+          <ThumbsUp size={11} />
+        )}
+        {displayCount(agg.up)}
+      </button>
+      <button
+        onClick={onDown}
+        disabled={!canReact || isBusy}
+        title={!canReact ? "load a Nostr identity to react" : "downvote"}
+        className={
+          "inline-flex items-center gap-1 px-2 py-0.5 rounded " +
+          "disabled:opacity-40 disabled:cursor-not-allowed " +
+          "text-muted hover:text-alert hover:bg-surface/40"
+        }
+      >
+        <ThumbsDown size={11} />
+        {displayCount(agg.down)}
+      </button>
     </div>
   );
 }
