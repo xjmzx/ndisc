@@ -71,10 +71,10 @@ export function LabelviewPanel({ labels, reloadKey, onPick }: Props) {
                      focus:border-accent/50 placeholder:text-muted"
         />
       </div>
-      {/* Fixed height (6 rows: 24px each + 2px gap) so the panel keeps its
+      {/* Fixed height (5 rows: 24px each + 2px gap) so the panel keeps its
           size whether the library is empty (fresh install) or populated. */}
       <ul
-        className="h-[154px] overflow-y-auto pr-1 space-y-0.5
+        className="h-[128px] overflow-y-auto pr-1 space-y-0.5
                    [scrollbar-gutter:stable]"
       >
         {visible.map((name) => {
