@@ -410,7 +410,9 @@ export function ReleaseDetail({
       icon={<FileMusic size={16} />}
       right={
         <div className="flex items-center gap-3">
-          {release.id != null && <ReactionButtons releaseId={release.id} />}
+          {release.id != null && lastPublish && (
+            <ReactionButtons releaseId={release.id} />
+          )}
           <button onClick={onDelete} className={SUBTLE_BUTTON_CLS}>
             <Trash2 size={12} /> delete
           </button>
