@@ -458,6 +458,7 @@ export default function App() {
             />
             <LabelviewPanel
               labels={labels}
+              setLabels={setLabels}
               reloadKey={reloadKey}
               onPick={promptAddLabel}
             />
