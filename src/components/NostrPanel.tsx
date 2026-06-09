@@ -204,7 +204,7 @@ export function NostrPanel({
   }
 
   return (
-    <Section title="Nostr Sync" icon={<Radio size={16} />} className="pb-[28px]">
+    <Section title="Nostr" icon={<Radio size={16} />} className="pb-[28px]">
       {phase === "loggedOut" && (
         <>
           <p className="text-xs text-muted">

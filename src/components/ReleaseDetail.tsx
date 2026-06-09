@@ -234,7 +234,7 @@ export function ReleaseDetail({
     if (relays.length === 0) {
       setLatestOp({
         kind: "error",
-        text: "Add at least one relay in the Nostr Sync panel.",
+        text: "Add at least one relay in the Nostr panel.",
       });
       return;
     }
@@ -319,7 +319,7 @@ export function ReleaseDetail({
     if (relays.length === 0) {
       setLatestOp({
         kind: "error",
-        text: "Add at least one relay in the Nostr Sync panel.",
+        text: "Add at least one relay in the Nostr panel.",
       });
       return;
     }
@@ -504,7 +504,7 @@ export function ReleaseDetail({
             className={ACTION_ICON_BUTTON_CLS}
             title={
               relays.length === 0
-                ? "Add a relay in the Nostr Sync panel first"
+                ? "Add a relay in the Nostr panel first"
                 : publishing
                   ? "publishing…"
                   : "Publish this release as a kind:31237 event"

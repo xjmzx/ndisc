@@ -407,7 +407,7 @@ export function ReleaseList({
   }, [reloadKey, medium, needsCoverOnly, publishedFilter, labelFilter]);
 
   // Bubble filter state + visible-items count up so other panels (like the
-  // Nostr Sync publish-library button) can render contextual UI.
+  // Nostr publish-library button) can render contextual UI.
   useEffect(() => {
     if (!onFilterChange) return;
     onFilterChange({
