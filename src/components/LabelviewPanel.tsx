@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, ImageOff, Link2Off, List, Search, X } from "lucide-react";
 import { Section } from "./Section";
-import { listDistinctLabels } from "../lib/tauri";
+import { listDistinctLabels, type LabelCount } from "../lib/tauri";
 import type { LabelEntry } from "./LabelPanel";
 
 interface Props {
@@ -33,7 +33,7 @@ export function LabelviewPanel({
   reloadKey,
   onPick,
 }: Props) {
-  const [distinct, setDistinct] = useState<string[]>([]);
+  const [distinct, setDistinct] = useState<LabelCount[]>([]);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("library");
   const [noArtOnly, setNoArtOnly] = useState(false);
@@ -49,7 +49,16 @@ export function LabelviewPanel({
   );
 
   const distinctSet = useMemo(
-    () => new Set(distinct.map(normaliseName)),
+    () => new Set(distinct.map((d) => normaliseName(d.name))),
+    [distinct],
+  );
+
+  // Release-count lookup keyed by normalised label name — drives the
+  // per-row count chip. Orphans aren't in this map (count would be 0)
+  // so the chip stays hidden for them.
+  const countByName = useMemo(
+    () =>
+      new Map(distinct.map((d) => [normaliseName(d.name), d.count] as const)),
     [distinct],
   );
 
@@ -70,7 +79,9 @@ export function LabelviewPanel({
   }, [mode, orphans.length]);
 
   const source: string[] =
-    mode === "orphans" ? orphans.map((l) => l.name) : distinct;
+    mode === "orphans"
+      ? orphans.map((l) => l.name)
+      : distinct.map((d) => d.name);
 
   // Optional "no art" filter — keeps only names whose entry is missing or
   // has an empty imageUrl. Useful for finding labels still awaiting art.
@@ -220,6 +231,7 @@ export function LabelviewPanel({
               </li>
             );
           }
+          const count = countByName.get(normaliseName(name)) ?? 0;
           return (
             <li key={name}>
               <button
@@ -229,8 +241,8 @@ export function LabelviewPanel({
                 }
                 title={
                   hasImage
-                    ? `Edit image for ${name}`
-                    : `Supply image for ${name}`
+                    ? `Edit image for ${name} — ${count} release${count === 1 ? "" : "s"}`
+                    : `Supply image for ${name} — ${count} release${count === 1 ? "" : "s"}`
                 }
                 className="w-full flex items-center gap-2 px-2 py-1
                            rounded hover:bg-surface text-left text-xs"
@@ -244,7 +256,18 @@ export function LabelviewPanel({
                 >
                   <Check size={12} />
                 </span>
-                <span className="truncate">{truncateForDisplay(name)}</span>
+                <span className="truncate flex-1">
+                  {truncateForDisplay(name)}
+                </span>
+                {count > 0 && (
+                  <span
+                    aria-label={`${count} release${count === 1 ? "" : "s"}`}
+                    className="shrink-0 px-1 rounded text-[9px] tabular-nums
+                               text-muted/80 bg-surface/60"
+                  >
+                    {count}
+                  </span>
+                )}
               </button>
             </li>
           );
@@ -273,8 +296,23 @@ export function LabelviewPanel({
           const head = query.trim()
             ? `${filtered.length} of ${denom} ${noun}s${suffix}`
             : `${denom} ${noun}${denom === 1 ? "" : "s"}${suffix}`;
+          const showBar =
+            !noArtOnly && mode === "library" && filtered.length > 0;
+          const ratio = showBar ? labelledCount / filtered.length : 0;
+          const pct = Math.round(ratio * 100);
           return (
             <>
+              {showBar && (
+                <div
+                  className="mb-1 h-0.5 rounded-full bg-surface overflow-hidden"
+                  title={`${labelledCount} of ${filtered.length} labelled (${pct}%)`}
+                >
+                  <div
+                    className="h-full bg-accent transition-[width] duration-150"
+                    style={{ width: `${ratio * 100}%` }}
+                  />
+                </div>
+              )}
               {head}
               {!noArtOnly && mode === "library" && (
                 <>

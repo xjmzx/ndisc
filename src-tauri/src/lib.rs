@@ -562,24 +562,37 @@ fn html_attr_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelCount {
+    pub name: String,
+    pub count: i64,
+}
+
 // All distinct labels, ordered by release count desc (then alphabetical),
 // capped at 500 rows as a defensive ceiling. The UI applies its own display
 // cap and search filter on top of this — including single-release labels so
-// the user can assign an image to anything they own.
+// the user can assign an image to anything they own. Each row is paired with
+// its release count so the panel can render a per-label chip.
 #[tauri::command]
-fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String> {
     let conn = open(&app)?;
     let mut stmt = conn
         .prepare(
-            "SELECT label FROM releases
+            "SELECT label, COUNT(*) AS n FROM releases
              WHERE label IS NOT NULL AND label <> ''
              GROUP BY label
-             ORDER BY COUNT(*) DESC, label COLLATE NOCASE
+             ORDER BY n DESC, label COLLATE NOCASE
              LIMIT 500",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            Ok(LabelCount {
+                name: row.get::<_, String>(0)?,
+                count: row.get::<_, i64>(1)?,
+            })
+        })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows {
