@@ -63,7 +63,7 @@
     }
   },
   "genreSlugs": {
-    "_comment": "The complete set of valid `genre` tag values in v2. Slug expansions inside a v2-compatible scheme are permitted by emitter-and-reader convention (new optional slug added to this list) provided existing slugs remain stable. Renaming or removing a slug requires a v3 bump.",
+    "_comment": "The complete set of valid `genre` tag values in v2. Slug expansions inside a v2-compatible scheme are permitted by emitter-and-reader convention (new optional slug added to this list) provided existing slugs remain stable. Renaming or removing a slug requires a v3 bump. Note: `mains` vs `electronicSubs` is a visual / palette grouping (sub-slugs share the magenta hue family for chip colour); semantically all 18 slugs are pure peers — see genreInvariants.",
     "mains": [
       "classical",
       "downtempo",
@@ -89,10 +89,9 @@
     "compoundDisplayRule": "Compound slugs use hyphens on the wire (canonical) and SHOULD render with slashes in human-facing UI. One-liner: slug.replace(/-/g, '/')."
   },
   "genreInvariants": {
-    "_comment": "Cross-slot constraints. The emitter enforces these at capture time; conformant consumers SHOULD validate on read with strict-but-recoverable handling (silently drop the offending slot, keep the rest).",
+    "_comment": "Cross-slot constraints. The emitter enforces these at capture time; conformant consumers SHOULD validate on read with strict-but-recoverable handling (silently drop the offending slot, keep the rest). v2.1: all 18 slugs are pure peers — `electronic` + any electronic sub (e.g. `techno`) is permitted in the same event. Meaning composes by stacking slugs rather than implying parent semantics.",
     "slotCap": 3,
     "distinct": "All emitted `genre` slugs in a single event MUST be distinct.",
-    "noParentWithOwnSub": "An event MUST NOT carry both `electronic` and any slug in `genreSlugs.electronicSubs` — the sub already implies the parent. Sub/parent pairs from different families (e.g. `techno` + `jazz`) are valid.",
     "denseOrdering": "Slots are dense on the wire — present slugs occupy the lowest indices. A consumer receiving a sparse sequence (e.g. via a non-canonical re-emitter) SHOULD compact before indexing."
   },
   "validation": {
