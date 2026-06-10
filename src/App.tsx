@@ -76,6 +76,24 @@ const DEFAULT_RELAYS = [
   "wss://relay.primal.net",
 ];
 
+// Minimum relays required for ndisc to publish/read meaningfully. If the
+// saved relay list ever falls below this on startup (user cleared most of
+// it, persisted state corrupted), top up from the tail of DEFAULT_RELAYS —
+// the last two are the public-fallback pair (nos.lol + primal) so even a
+// totally empty saved state recovers to something functional on next launch.
+const MIN_RELAYS = 2;
+const RELAY_FALLBACKS = DEFAULT_RELAYS.slice(-MIN_RELAYS);
+
+function ensureMinRelays(relays: string[]): string[] {
+  if (relays.length >= MIN_RELAYS) return relays;
+  const out = [...relays];
+  for (const r of RELAY_FALLBACKS) {
+    if (out.length >= MIN_RELAYS) break;
+    if (!out.includes(r)) out.push(r);
+  }
+  return out;
+}
+
 const RELAYS_STORAGE_KEY = "ndisc.relays";
 const LEGACY_RELAYS_STORAGE_KEY = "disco-vault.relays";
 
@@ -190,7 +208,7 @@ export default function App() {
               /* ignore */
             }
           }
-          return migrateDamusToFizx(parsed);
+          return ensureMinRelays(migrateDamusToFizx(parsed));
         }
       } catch {
         /* try next key */
@@ -326,7 +344,7 @@ export default function App() {
 
   return (
     <ReactionsProvider npub={npub}>
-    <div className="min-h-screen p-6 max-w-[1500px] mx-auto">
+    <div className="min-h-screen pt-6 px-6 pb-2 max-w-[1500px] mx-auto">
       <header className="mb-4 px-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
           <button
@@ -449,7 +467,7 @@ export default function App() {
           ) : (
             <AddReleaseForm onAdded={reload} />
           )}
-          <div className="grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-start">
+          <div className="grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-stretch">
             <NostrPanel
               relays={relays}
               setRelays={setRelays}
@@ -484,7 +502,7 @@ export default function App() {
 
       {/* Three columns: stack info left, identity centred, db path right —
           justify-between buffers each from the next. */}
-      <footer className="mt-8 flex flex-wrap items-center justify-between
+      <footer className="mt-4 flex flex-wrap items-center justify-between
                           gap-x-8 gap-y-1 text-xs text-muted">
         <span>scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite</span>
         {npub && (
