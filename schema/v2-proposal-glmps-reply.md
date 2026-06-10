@@ -119,7 +119,7 @@ Reproduced from rev 2 with the glmps items above merged in. Items in
 
 - [x] glmps confirms the rev-2 wire shape is workable
 - [x] glmps clarifies the source of its current free-form genre filter
-- [ ] ndisc + glmps agree on emission strategy (see question above)
+- [x] ndisc + glmps agree on emission strategy → **v2-only** (see addendum below)
 - [ ] Mint `schema/release.v2.json` (do not edit v1)
 - [ ] Add `mod schema_v2` contract test in ndisc — pins the v2 wire output,
       including ordering + slot cap + invariant enforcement
@@ -141,3 +141,32 @@ Reproduced from rev 2 with the glmps items above merged in. Items in
       stacked bar)**
 - [ ] **glmps mirrors all changes across both `glmps.upleb.uk` and
       `glmps.fizx.uk` (lockstep)**
+
+---
+
+## ndisc addendum — emission strategy: v2-only
+
+**Decision:** v2-only. ndisc's `release_event()` emits 0–3 `genre` tags
+alongside the existing v1 structured tags. No NIP-12 `t`-tag proxy is added.
+v1 readers continue to parse the event correctly (additive rule), but
+surface no genre data until upgraded.
+
+**Reasoning:**
+
+1. **Known v1-reader audience is small and self-controlled.** It's
+   `glmps.fizx.uk` + `glmps.upleb.uk` (this coordination) plus `ndisc.view`
+   (the mobile PWA, also user-owned). Any other kind:31237 reader is
+   hypothetical; ndisc doesn't optimise for hypothetical consumers.
+2. **Dual emission has no clean cleanup signal.** Once `release_event()`
+   carries both paths, ndisc has no way to detect when the last v1 reader
+   has been upgraded — the dual path stays forever, accreting maintenance
+   cost for a vanishing benefit.
+3. **Additive-rule semantics are the contract.** "Tag absent → no data"
+   is the documented default for every optional tag in v1. Genre absence
+   in a v1 reader's view of a v2 event is the same condition as any
+   release that was never genre-tagged. No new failure mode.
+4. **Single-format keeps the contract test simple.** `mod schema_v2`
+   pins one wire shape; no branch-based fixtures or "dual-mode" assertions.
+
+This addendum closes the open emission-strategy question. Coordination
+checklist updated above to reflect.
