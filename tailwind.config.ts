@@ -43,7 +43,7 @@ export default {
           breaks: c("--c-g-breaks"),
           "dnb-jungle": c("--c-g-dnb-jungle"),
           "drone-noise": c("--c-g-drone-noise"),
-          "dub-techno": c("--c-g-dub-techno"),
+          dub: c("--c-g-dub"),
           electro: c("--c-g-electro"),
           "footwork-trap": c("--c-g-footwork-trap"),
           techno: c("--c-g-techno"),

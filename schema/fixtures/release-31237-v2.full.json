@@ -20,7 +20,7 @@
     ["i", "musicbrainz:release:0000-aphex-saw8592"],
     ["image", "https://i.nostr.build/example.jpg"],
     ["genre", "techno"],
-    ["genre", "dub-techno"],
+    ["genre", "dub"],
     ["genre", "downtempo"]
   ],
   "id": "<illustrative — 64-hex event id>",

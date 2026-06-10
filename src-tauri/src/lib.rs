@@ -207,7 +207,32 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     backfill_type_category(&conn)?;
     backfill_source(&conn)?;
     backfill_genre_v2(&conn)?;
+    backfill_genre_slug_renames(&conn)?;
     Ok(conn)
+}
+
+/// One-shot renames of genre slugs that were superseded between v2 minor
+/// versions. Idempotent — each UPDATE matches only rows still on the old
+/// slug, so once migrated, repeated app starts are no-ops. Affected rows
+/// will need re-publishing to update the corresponding kind:31237 events
+/// on relays (the published wire data carries the old slug verbatim until
+/// then; v2 readers should treat unknown slugs as absent per the strict-
+/// but-recoverable validation policy).
+fn backfill_genre_slug_renames(conn: &Connection) -> Result<(), String> {
+    // v2.1.1 (2026-06-10): dub-techno → dub. The compound was redundant
+    // under v2.1's pure-peer model — meaning composes by stacking, so
+    // `dub` + `techno` can be tagged independently when applicable.
+    for col in &["genre_primary", "genre_secondary", "genre_tertiary", "genre"] {
+        conn.execute(
+            &format!(
+                "UPDATE releases SET {} = 'dub' WHERE {} = 'dub-techno'",
+                col, col
+            ),
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// One-shot backfill of the v1 single-slot `genre` column into v2's
@@ -518,7 +543,7 @@ const GENRE_MAINS: &[&str] = &[
 ];
 const GENRE_ELECTRONIC_SUBS: &[&str] = &[
     "acid", "breaks", "dnb-jungle", "drone-noise",
-    "dub-techno", "electro", "footwork-trap", "techno",
+    "dub", "electro", "footwork-trap", "techno",
 ];
 
 fn is_valid_genre_slug(s: &str) -> bool {
@@ -3531,7 +3556,7 @@ mod schema_v2 {
     fn three_slots_emit_three_genre_tags_in_order() {
         let r = Release {
             genre_primary: Some("techno".into()),
-            genre_secondary: Some("dub-techno".into()),
+            genre_secondary: Some("dub".into()),
             genre_tertiary: Some("downtempo".into()),
             ..base_v2_release()
         };
@@ -3539,7 +3564,7 @@ mod schema_v2 {
         // Order is the priority order — must match field order exactly.
         assert_eq!(
             genre_tags(&ev),
-            vec!["techno", "dub-techno", "downtempo"]
+            vec!["techno", "dub", "downtempo"]
         );
     }
 
@@ -3581,7 +3606,7 @@ mod schema_v2 {
     fn validate_genre_slots_accepts_three_distinct() {
         let slots = [
             Some("techno".into()),
-            Some("dub-techno".into()),
+            Some("dub".into()),
             Some("downtempo".into()),
         ];
         assert!(validate_genre_slots(&slots).is_ok());

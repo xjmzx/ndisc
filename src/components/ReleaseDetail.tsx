@@ -91,7 +91,7 @@ const GENRE_GROUPS: { label: string; options: string[] }[] = [
       "breaks",
       "dnb-jungle",
       "drone-noise",
-      "dub-techno",
+      "dub",
       "electro",
       "footwork-trap",
       "techno",
