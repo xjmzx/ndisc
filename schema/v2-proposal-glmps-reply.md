@@ -170,3 +170,46 @@ surface no genre data until upgraded.
 
 This addendum closes the open emission-strategy question. Coordination
 checklist updated above to reflect.
+
+---
+
+## ndisc addendum 2 — flatten genre model (v2.1, post-mint)
+
+**Decision:** drop the `noParentWithOwnSub` invariant from
+`schema/release.v2.json`. All 18 slugs become pure peers — `electronic`
++ `techno` + `dub-techno` are all allowed in the same event. The
+`genreSlugs.mains` vs `genreSlugs.electronicSubs` split stays as a
+palette grouping (sub-slugs share the magenta hue family) but has no
+semantic meaning on the wire.
+
+**Why:** End user found the parent/sub mutual-exclusion rule confusing
+in the ndisc capture UI and stated the working model should be "dead
+simple — each category is a category in its own right." Meaning
+composes by stacking slugs (e.g. `dub` + `techno`), not by implying
+parent semantics.
+
+**Wire-format effect:** This is *strictly more permissive* than the
+prior v2 contract. Events emitted under v2.1 remain valid v2 events;
+the only thing that changes is that v2 readers which were strictly
+enforcing `noParentWithOwnSub` need to drop that check.
+
+**ndisc-side changes (shipping in 0.1.2-beta.6):**
+- `schema/release.v2.json` — `noParentWithOwnSub` removed, comments
+  updated to mark mains/subs as palette-only
+- `validate_genre_slots` in Rust drops the electronic-sub check; the
+  removed test is replaced with `accepts_electronic_plus_sub`
+- TS `genreGroupsForSlot` simplified to only hide already-used slugs
+  (no parent/sub gating in the dropdown)
+- Fixture `release-31237-v2.full.json` comment updated; tag values
+  unchanged
+
+**glmps-side action items:**
+- [ ] Re-vendor `schema/release.v2.json` from ndisc (SHA-256 hash
+      changes — re-pin)
+- [ ] Update `normaliseGenres` to **stop dropping `electronic` when a
+      sub is also present**. The other normalisation rules (drop
+      duplicates / unknown / 4th+ slots) stay.
+- [ ] Mirror across `glmps.fizx.uk` + `glmps.upleb.uk` (lockstep).
+
+No `release.v3.json` is needed — the change is removing a constraint,
+not changing the wire format. v2 is still v2.
