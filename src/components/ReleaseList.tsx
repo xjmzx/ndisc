@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ChevronDown,
   Disc3,
   FolderSearch,
   ImageOff,
@@ -13,6 +12,7 @@ import {
   Search,
   Tag,
   Wand2,
+  type LucideIcon,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -515,74 +515,46 @@ export function ReleaseList({
             spellCheck={false}
           />
         </div>
-        <div className="relative">
-          <FilterSelect
-            icon={<Disc3 size={14} />}
-            tooltip={
-              medium
-                ? `Medium: ${medium} (click to clear)`
-                : "Filter by medium"
-            }
-            value={medium}
-            onChange={(v) => setMedium(v as MediumFilter)}
-            options={[
-              { value: "physical", label: "physical" },
-              { value: "digital", label: "digital" },
-            ]}
-            active={!!medium}
-          />
-        </div>
-        <div className="relative">
-          <FilterSelect
-            icon={<Radio size={14} />}
-            tooltip={
-              publishedFilter
-                ? `Status: ${publishedFilter} (click to clear)`
-                : "Filter by Nostr publish state"
-            }
-            value={publishedFilter}
-            onChange={(v) => setPublishedFilter(v as "" | PublishedFilter)}
-            options={[
-              { value: "published", label: "published" },
-              { value: "unpublished", label: "unpublished" },
-            ]}
-            active={!!publishedFilter}
-          />
-        </div>
-        <div className="relative">
-          <FilterSelect
-            icon={<Tag size={14} />}
-            tooltip={
-              labelFilter
-                ? `Label: ${labelFilter === "with_label" ? "has label" : "no label"} (click to clear)`
-                : "Filter by presence of a record label"
-            }
-            value={labelFilter}
-            onChange={(v) => setLabelFilter(v as "" | LabelFilter)}
-            options={[
-              { value: "with_label", label: "has label" },
-              { value: "without_label", label: "no label" },
-            ]}
-            active={!!labelFilter}
-          />
-        </div>
-        <div className="relative">
-          <FilterSelect
-            icon={<Music size={14} />}
-            tooltip={
-              genreFilter
-                ? `Genre: ${genreFilter === "with_genre" ? "has genre" : "no genre"} (click to clear)`
-                : "Filter by presence of a genre tag"
-            }
-            value={genreFilter}
-            onChange={(v) => setGenreFilter(v as "" | GenreFilter)}
-            options={[
-              { value: "with_genre", label: "has genre" },
-              { value: "without_genre", label: "no genre" },
-            ]}
-            active={!!genreFilter}
-          />
-        </div>
+        <FilterToggle
+          Icon={Disc3}
+          value={medium}
+          onChange={(v) => setMedium(v as MediumFilter)}
+          filledValue="physical"
+          outlinedValue="digital"
+          tooltipDefault="Filter by medium — click cycles physical / digital / any"
+          tooltipFilled="Medium: physical (click for digital)"
+          tooltipOutlined="Medium: digital (click to clear)"
+        />
+        <FilterToggle
+          Icon={Radio}
+          value={publishedFilter}
+          onChange={(v) => setPublishedFilter(v as "" | PublishedFilter)}
+          filledValue="published"
+          outlinedValue="unpublished"
+          tooltipDefault="Filter by Nostr publish state — click cycles published / unpublished / any"
+          tooltipFilled="Status: published (click for unpublished)"
+          tooltipOutlined="Status: unpublished (click to clear)"
+        />
+        <FilterToggle
+          Icon={Tag}
+          value={labelFilter}
+          onChange={(v) => setLabelFilter(v as "" | LabelFilter)}
+          filledValue="with_label"
+          outlinedValue="without_label"
+          tooltipDefault="Filter by presence of a record label — click cycles has / no / any"
+          tooltipFilled="Label: has label (click for no label)"
+          tooltipOutlined="Label: no label (click to clear)"
+        />
+        <FilterToggle
+          Icon={Music}
+          value={genreFilter}
+          onChange={(v) => setGenreFilter(v as "" | GenreFilter)}
+          filledValue="with_genre"
+          outlinedValue="without_genre"
+          tooltipDefault="Filter by presence of a genre tag — click cycles has / no / any"
+          tooltipFilled="Genre: has genre (click for no genre)"
+          tooltipOutlined="Genre: no genre (click to clear)"
+        />
         <button
           onClick={() => setNeedsCoverOnly((v) => !v)}
           className={cn(
@@ -1064,65 +1036,70 @@ export function ReleaseList({
   );
 }
 
-// Compact filter dropdown — leading icon, hidden text when inactive, mint
-// accent + visible value text when active. Native <select> for keyboard a11y
-// and the OS-rendered option list; the wrapper just shapes the chrome so all
-// four filters in the header read as a uniform row of icon buttons.
-interface FilterSelectProps {
-  icon: React.ReactNode;
-  tooltip: string;
+// Tri-state icon toggle for binary-ish filters in the RELEASES header.
+// Each click cycles the value: "" → filledValue → outlinedValue → "".
+// Visual state via the icon's fill: default muted, "filled" = accent + solid,
+// "outlined" = accent + stroke only. Same w-9 footprint as the existing
+// needsCover and maintenance icon buttons so the whole row reads uniform.
+interface FilterToggleProps {
+  Icon: LucideIcon;
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-  active: boolean;
+  filledValue: string;
+  outlinedValue: string;
+  tooltipDefault: string;
+  tooltipFilled: string;
+  tooltipOutlined: string;
 }
 
-function FilterSelect({
-  icon,
-  tooltip,
+function FilterToggle({
+  Icon,
   value,
   onChange,
-  options,
-  active,
-}: FilterSelectProps) {
+  filledValue,
+  outlinedValue,
+  tooltipDefault,
+  tooltipFilled,
+  tooltipOutlined,
+}: FilterToggleProps) {
+  const state =
+    value === filledValue
+      ? "filled"
+      : value === outlinedValue
+        ? "outlined"
+        : "default";
+  const next =
+    state === "default"
+      ? filledValue
+      : state === "filled"
+        ? outlinedValue
+        : "";
+  const tooltip =
+    state === "filled"
+      ? tooltipFilled
+      : state === "outlined"
+        ? tooltipOutlined
+        : tooltipDefault;
   return (
-    <>
-      <span
-        className={cn(
-          "absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none",
-          active ? "text-bg" : "text-fg",
-        )}
-      >
-        {icon}
-      </span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        title={tooltip}
-        className={cn(
-          "appearance-none pl-7 pr-6 py-2 rounded-md text-xs",
-          "outline-none border border-transparent cursor-pointer",
-          active
-            ? "bg-accent text-bg font-semibold focus:border-fg/30"
-            : "bg-surface text-transparent focus:border-accent/50 w-9",
-        )}
-      >
-        <option value="">all</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        size={12}
-        strokeWidth={2.5}
-        className={cn(
-          "absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none",
-          active ? "text-bg" : "text-muted",
-        )}
+    <button
+      type="button"
+      onClick={() => onChange(next)}
+      title={tooltip}
+      aria-label={tooltip}
+      aria-pressed={state !== "default"}
+      className={cn(
+        "p-2 rounded-md transition-colors",
+        state === "default" &&
+          "bg-surface text-muted hover:text-fg hover:bg-surfaceHover",
+        state === "filled" && "bg-accent text-bg",
+        state === "outlined" && "bg-surface text-accent hover:bg-surfaceHover",
+      )}
+    >
+      <Icon
+        size={14}
+        fill={state === "filled" ? "currentColor" : "none"}
       />
-    </>
+    </button>
   );
 }
 
