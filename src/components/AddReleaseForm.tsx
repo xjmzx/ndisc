@@ -144,25 +144,34 @@ export function AddReleaseForm({ onAdded }: Props) {
           onChange={(v) => set("coverArtUrl", v)}
           placeholder="https://i.nostr.build/…"
         />
-        <TextArea
-          label="notes"
-          value={release.notes ?? ""}
-          onChange={(v) => set("notes", v)}
-        />
+        {/* Notes + Save share a single row — notes are rarely useful in
+            curation, the Save button taking the spare width on the right
+            keeps the form one row shorter (more space for NOSTR/LABELS/
+            LABEL below). */}
+        <label className={ROW}>
+          <span className="text-muted text-right">notes</span>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={release.notes ?? ""}
+              onChange={(e) => set("notes", e.target.value)}
+              placeholder="keep it short"
+              className={`${INPUT_CLS} flex-1`}
+              spellCheck={false}
+            />
+            <button
+              type="submit"
+              disabled={saving}
+              className="shrink-0 px-4 py-1.5 rounded-md bg-accent text-bg
+                         font-semibold hover:opacity-90 disabled:opacity-50
+                         flex items-center gap-1.5"
+            >
+              <Save size={14} /> {saving ? "saving…" : "Save"}
+            </button>
+          </div>
+        </label>
 
         {error && <div className="text-alert text-xs pl-[6rem]">{error}</div>}
-
-        <div className="flex justify-end pt-1">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-1.5 rounded-md bg-accent text-bg font-semibold
-                       hover:opacity-90 disabled:opacity-50
-                       flex items-center gap-1.5"
-          >
-            <Save size={14} /> {saving ? "saving…" : "Save"}
-          </button>
-        </div>
       </form>
     </Section>
   );
@@ -494,24 +503,3 @@ function ConditionSelect({
   );
 }
 
-function TextArea({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="grid grid-cols-[5.5rem_1fr] gap-x-3 items-start">
-      <span className="text-muted text-right pt-1">{label}</span>
-      <textarea
-        rows={2}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${INPUT_CLS} resize-none`}
-      />
-    </label>
-  );
-}
