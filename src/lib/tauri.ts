@@ -35,6 +35,7 @@ export interface Release {
 
 export type PublishedFilter = "published" | "unpublished";
 export type LabelFilter = "with_label" | "without_label";
+export type GenreFilter = "with_genre" | "without_genre";
 
 export interface Stats {
   total: number;
@@ -93,6 +94,7 @@ export async function listReleases(
   needsCover?: boolean,
   publishedFilter?: PublishedFilter,
   labelFilter?: LabelFilter,
+  genreFilter?: GenreFilter,
 ): Promise<Release[]> {
   return invoke<Release[]>("list_releases", {
     query,
@@ -100,6 +102,7 @@ export async function listReleases(
     needsCover,
     publishedFilter,
     labelFilter,
+    genreFilter,
   });
 }
 

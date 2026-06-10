@@ -673,6 +673,7 @@ fn export_markdown(
         needs_cover,
         published_filter,
         label_filter,
+        None,
     )?;
     let md = build_markdown(&releases);
     std::fs::write(&dest_path, md).map_err(|e| e.to_string())?;
@@ -857,6 +858,7 @@ fn list_releases(
     needs_cover: Option<bool>,
     published_filter: Option<String>,
     label_filter: Option<String>,
+    genre_filter: Option<String>,
 ) -> Result<Vec<Release>, String> {
     let conn = open(&app)?;
     let q = query.unwrap_or_default();
@@ -884,6 +886,15 @@ fn list_releases(
         _ => "",
     };
 
+    // "Has any genre slot set" check — slot 0 being filled is sufficient
+    // because density is enforced (no holes), so genre_primary IS NOT NULL
+    // implies at least one slot tagged.
+    let genre_clause = match genre_filter.as_deref() {
+        Some("with_genre") => "AND genre_primary IS NOT NULL AND genre_primary <> ''",
+        Some("without_genre") => "AND (genre_primary IS NULL OR genre_primary = '')",
+        _ => "",
+    };
+
     let select_sql = format!(
         "SELECT {cols}
          FROM releases
@@ -893,11 +904,13 @@ fn list_releases(
            {cover}
            {published}
            {label}
+           {genre}
          ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
         cols = RELEASE_SELECT_COLS,
         cover = cover_filter,
         published = published_clause,
         label = label_clause,
+        genre = genre_clause,
     );
     let mut stmt = conn
         .prepare(&select_sql)
