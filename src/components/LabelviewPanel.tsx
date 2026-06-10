@@ -62,15 +62,21 @@ export function LabelviewPanel({
     [distinct],
   );
 
-  // Dominant-genre lookup keyed by normalised label name. The value is the
-  // most-common non-null genre across the label's releases, computed server-
-  // side (see list_distinct_labels). Used to colour the per-row genre dot;
-  // null when the label has no genre-tagged releases.
-  const genreByName = useMemo(
+  // Top-3 dominant genres per label (ranked across all slot tags) — drives
+  // the per-row 3-cell genre strip. Server-computed in list_distinct_labels.
+  // Trailing nulls are valid (label has fewer than 3 distinct genres tagged).
+  const genresByName = useMemo(
     () =>
       new Map(
         distinct.map(
-          (d) => [normaliseName(d.name), d.dominantGenre] as const,
+          (d) =>
+            [
+              normaliseName(d.name),
+              [d.dominantGenre, d.dominantGenre2, d.dominantGenre3] as (
+                | string
+                | null
+              )[],
+            ] as const,
         ),
       ),
     [distinct],
@@ -246,11 +252,18 @@ export function LabelviewPanel({
             );
           }
           const count = countByName.get(normaliseName(name)) ?? 0;
-          const genre = genreByName.get(normaliseName(name)) ?? null;
+          const genres = genresByName.get(normaliseName(name)) ?? [
+            null,
+            null,
+            null,
+          ];
           // Compound slugs are stored hyphenated (dnb-jungle) and shown
           // with a slash for legibility (dnb/jungle).
-          const genreTitle = genre
-            ? ` · genre: ${genre.replace(/-/g, "/")}`
+          const genreLabels = genres
+            .filter((g): g is string => !!g)
+            .map((g) => g.replace(/-/g, "/"));
+          const genreTitle = genreLabels.length
+            ? ` · genres: ${genreLabels.join(" / ")}`
             : "";
           return (
             <li key={name}>
@@ -274,21 +287,28 @@ export function LabelviewPanel({
                       : "text-muted/40 shrink-0"
                   }
                 >
-                  <Check size={12} />
+                  <Check size={10} />
                 </span>
-                {/* Dominant-genre dot — 6px round, coloured by the --c-g-*
-                    var matching the genre slug. Always-rendered slot keeps
-                    name alignment stable across rows; empty rows get a
-                    transparent dot. */}
+                {/* Top-3 genre strip — three small cells coloured by the
+                    --c-g-* var matching each slot's slug. Always rendered
+                    so name alignment stays stable; empty cells are subtly
+                    outlined. Reads left-to-right as 1st/2nd/3rd by tally. */}
                 <span
                   aria-hidden="true"
-                  className="shrink-0 w-1.5 h-1.5 rounded-full"
-                  style={{
-                    backgroundColor: genre
-                      ? `rgb(var(--c-g-${genre}))`
-                      : "transparent",
-                  }}
-                />
+                  className="shrink-0 inline-flex items-center gap-px"
+                >
+                  {genres.map((g, i) => (
+                    <span
+                      key={i}
+                      className="w-1 h-2.5 rounded-sm"
+                      style={{
+                        backgroundColor: g
+                          ? `rgb(var(--c-g-${g}))`
+                          : "rgb(var(--c-surface))",
+                      }}
+                    />
+                  ))}
+                </span>
                 <span className="truncate flex-1">
                   {truncateForDisplay(name)}
                 </span>
