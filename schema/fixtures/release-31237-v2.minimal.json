@@ -1,0 +1,14 @@
+{
+  "_comment": "Minimal v2 release event — every optional column on the release was null, including all three genre slots. Identical in shape to release-31237.minimal.json (v1) — confirming v2 is a strict superset of v1: a release with no genre data emits exactly the v1 minimal form. v1 readers parse this event identically to a v1 minimal event.",
+  "kind": 31237,
+  "content": "",
+  "tags": [
+    ["d", "disco-vault:7"],
+    ["title", "Untitled"],
+    ["artist", "Unknown Artist"]
+  ],
+  "id": "<illustrative — 64-hex event id>",
+  "pubkey": "<illustrative — 64-hex author pubkey>",
+  "created_at": 1747900000,
+  "sig": "<illustrative — 128-hex signature>"
+}

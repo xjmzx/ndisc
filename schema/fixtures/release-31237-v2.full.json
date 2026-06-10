@@ -1,0 +1,30 @@
+{
+  "_comment": "Reference kind:31237 release event conforming to release.v2.json — every optional tag populated, all three genre slots used. Slot order = priority: techno is primary, dub-techno is secondary, downtempo is tertiary. Note techno + dub-techno (both electronic subs from different families: techno + dub) is permitted; what would NOT be permitted is `electronic` + `techno` (parent + own-sub).",
+  "kind": 31237,
+  "content": "First three albums, remastered.",
+  "tags": [
+    ["d", "disco-vault:42"],
+    ["title", "Selected Ambient Works 85-92"],
+    ["artist", "Aphex Twin"],
+    ["type", "music"],
+    ["category", "album"],
+    ["medium", "digital"],
+    ["format", "FLAC"],
+    ["year", "1992"],
+    ["label", "Apollo"],
+    ["catalog", "AMB3922"],
+    ["country", "UK"],
+    ["condition", "Near Mint (NM or M-)"],
+    ["source", "https://www.discogs.com/release/12345"],
+    ["i", "discogs:release:12345"],
+    ["i", "musicbrainz:release:0000-aphex-saw8592"],
+    ["image", "https://i.nostr.build/example.jpg"],
+    ["genre", "techno"],
+    ["genre", "dub-techno"],
+    ["genre", "downtempo"]
+  ],
+  "id": "<illustrative — 64-hex event id>",
+  "pubkey": "<illustrative — 64-hex author pubkey>",
+  "created_at": 1747900000,
+  "sig": "<illustrative — 128-hex signature>"
+}

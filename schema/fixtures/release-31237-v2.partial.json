@@ -1,0 +1,19 @@
+{
+  "_comment": "Partial-slot v2 release — only the primary genre slot is set, secondary and tertiary are absent. Demonstrates the dense-ordering rule: when slot 1 is the only genre, exactly one `genre` tag is emitted. Other v1-only tags are sparsely populated to keep the fixture focused on slot semantics.",
+  "kind": 31237,
+  "content": "",
+  "tags": [
+    ["d", "disco-vault:84"],
+    ["title", "Drukqs"],
+    ["artist", "Aphex Twin"],
+    ["type", "music"],
+    ["category", "album"],
+    ["year", "2001"],
+    ["label", "Warp"],
+    ["genre", "electronic"]
+  ],
+  "id": "<illustrative — 64-hex event id>",
+  "pubkey": "<illustrative — 64-hex author pubkey>",
+  "created_at": 1747900000,
+  "sig": "<illustrative — 128-hex signature>"
+}
