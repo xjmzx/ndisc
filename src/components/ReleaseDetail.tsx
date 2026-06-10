@@ -33,7 +33,7 @@ import {
   setReleaseCategory,
   setReleaseCondition,
   setReleaseCountry,
-  setReleaseGenre,
+  setReleaseGenres,
   setReleaseLabel,
   setReleaseType,
   syncCoverToDisk,
@@ -103,6 +103,36 @@ const GENRE_GROUPS: { label: string; options: string[] }[] = [
 // the DB / CSS-var slot keeps the hyphen form.
 function genreDisplay(slug: string): string {
   return slug.replace(/-/g, "/");
+}
+
+// Set of electronic sub-genres — used for the parent+own-sub gating rule.
+// Mirrors GENRE_ELECTRONIC_SUBS in src-tauri/src/lib.rs.
+const ELECTRONIC_SUBS = new Set(
+  GENRE_GROUPS.find((g) => g.label === "electronic")?.options ?? [],
+);
+
+// Filter GENRE_GROUPS for the given slot index, hiding anything that's
+// already in an earlier slot OR that would violate the no-parent+own-sub
+// invariant against an earlier slot's value.
+function genreGroupsForSlot(
+  slotIndex: number,
+  currentSlots: (string | null)[],
+): { label: string; options: string[] }[] {
+  const earlier = currentSlots
+    .slice(0, slotIndex)
+    .filter((s): s is string => !!s);
+  const excluded = new Set<string>(earlier);
+  for (const e of earlier) {
+    if (e === "electronic") {
+      ELECTRONIC_SUBS.forEach((s) => excluded.add(s));
+    } else if (ELECTRONIC_SUBS.has(e)) {
+      excluded.add("electronic");
+    }
+  }
+  return GENRE_GROUPS.map((g) => ({
+    label: g.label,
+    options: g.options.filter((o) => !excluded.has(o)),
+  }));
 }
 
 // Discogs's full condition grades. Stored verbatim so imported entries map
@@ -425,10 +455,40 @@ export function ReleaseDetail({
     onChanged({ ...release, label: v });
   }
 
-  async function onChangeGenre(v: string | null) {
+  // Changes a single genre slot. Cascade-clears later slots that are no
+  // longer valid given the new value (e.g. swap primary to `electronic` and
+  // any electronic-sub in slot 2/3 becomes invalid → cleared). Then
+  // compacts to keep density (no holes). Writes all three slots atomically
+  // via setReleaseGenres.
+  async function onChangeGenreSlot(slot: number, newValue: string | null) {
     if (!release.id) return;
-    await setReleaseGenre(release.id, v);
-    onChanged({ ...release, genre: v });
+    const slots: (string | null)[] = [
+      release.genrePrimary ?? null,
+      release.genreSecondary ?? null,
+      release.genreTertiary ?? null,
+    ];
+    slots[slot] = newValue;
+    for (let i = slot + 1; i < 3; i++) {
+      if (slots[i]) {
+        const allowed = new Set(
+          genreGroupsForSlot(i, slots).flatMap((g) => g.options),
+        );
+        if (!allowed.has(slots[i] as string)) slots[i] = null;
+      }
+    }
+    const present = slots.filter((s): s is string => !!s);
+    const dense: [string | null, string | null, string | null] = [
+      present[0] ?? null,
+      present[1] ?? null,
+      present[2] ?? null,
+    ];
+    await setReleaseGenres(release.id, dense[0], dense[1], dense[2]);
+    onChanged({
+      ...release,
+      genrePrimary: dense[0],
+      genreSecondary: dense[1],
+      genreTertiary: dense[2],
+    });
   }
 
   async function onChangeCatalogNumber(v: string | null) {
@@ -512,15 +572,51 @@ export function ReleaseDetail({
           placeholder="category"
           width="w-32"
         />
-        <EditableEnum
-          value={release.genre ?? null}
-          groups={GENRE_GROUPS}
-          onChange={onChangeGenre}
-          ariaLabel="genre"
-          displayFn={genreDisplay}
-          placeholder="genre"
-          width="w-32"
-        />
+        {(() => {
+          const slots = [
+            release.genrePrimary ?? null,
+            release.genreSecondary ?? null,
+            release.genreTertiary ?? null,
+          ];
+          return (
+            <>
+              <EditableEnum
+                value={slots[0]}
+                groups={genreGroupsForSlot(0, slots)}
+                onChange={(v) => onChangeGenreSlot(0, v)}
+                ariaLabel="primary genre"
+                displayFn={genreDisplay}
+                placeholder="genre"
+                width="w-32"
+              />
+              {/* Progressive disclosure — slot 2 only when slot 1 is set,
+                  slot 3 only when slot 2 is set. Matches the density rule
+                  visually and reduces field-row width pressure. */}
+              {slots[0] && (
+                <EditableEnum
+                  value={slots[1]}
+                  groups={genreGroupsForSlot(1, slots)}
+                  onChange={(v) => onChangeGenreSlot(1, v)}
+                  ariaLabel="secondary genre"
+                  displayFn={genreDisplay}
+                  placeholder="+ 2nd"
+                  width="w-28"
+                />
+              )}
+              {slots[1] && (
+                <EditableEnum
+                  value={slots[2]}
+                  groups={genreGroupsForSlot(2, slots)}
+                  onChange={(v) => onChangeGenreSlot(2, v)}
+                  ariaLabel="tertiary genre"
+                  displayFn={genreDisplay}
+                  placeholder="+ 3rd"
+                  width="w-28"
+                />
+              )}
+            </>
+          );
+        })()}
         <EditableText
           value={release.label ?? null}
           onChange={onChangeLabel}

@@ -77,8 +77,17 @@ pub struct Release {
     pub musicbrainz_id: Option<String>,
     pub release_type: Option<String>,
     pub category: Option<String>,
+    // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
+    // each optional, each one of the 18 valid slugs in schema/release.v2.json.
+    // See genreInvariants there: distinct slugs, no parent+own-sub, dense
+    // (no holes — a value at slot N requires every slot < N to be filled).
+    // Enforced in set_release_genres.
     #[serde(default)]
-    pub genre: Option<String>,
+    pub genre_primary: Option<String>,
+    #[serde(default)]
+    pub genre_secondary: Option<String>,
+    #[serde(default)]
+    pub genre_tertiary: Option<String>,
     #[serde(default)]
     pub last_published_at: Option<i64>,
     #[serde(default)]
@@ -186,12 +195,35 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "cover_art_url", "TEXT")?;
     ensure_column(&conn, "releases", "release_type", "TEXT")?;
     ensure_column(&conn, "releases", "category", "TEXT")?;
+    // Legacy single-slot `genre` column — pre-v2 schema. Kept as a tombstone
+    // because SQLite can't DROP COLUMN cleanly, and so the v1→v2 backfill
+    // below can find data to copy. New code MUST NOT read or write it.
     ensure_column(&conn, "releases", "genre", "TEXT")?;
+    ensure_column(&conn, "releases", "genre_primary", "TEXT")?;
+    ensure_column(&conn, "releases", "genre_secondary", "TEXT")?;
+    ensure_column(&conn, "releases", "genre_tertiary", "TEXT")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
     backfill_type_category(&conn)?;
     backfill_source(&conn)?;
+    backfill_genre_v2(&conn)?;
     Ok(conn)
+}
+
+/// One-shot backfill of the v1 single-slot `genre` column into v2's
+/// `genre_primary`. Idempotent — only copies when `genre_primary` is
+/// still NULL, so once migrated, repeated app starts are no-ops.
+fn backfill_genre_v2(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "UPDATE releases
+         SET genre_primary = genre
+         WHERE genre IS NOT NULL
+           AND genre <> ''
+           AND genre_primary IS NULL",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Converts the legacy provenance-keyword `source` values
@@ -294,10 +326,11 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
         "INSERT INTO releases
          (id, artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
-          discogs_id, musicbrainz_id, release_type, category, genre,
+          discogs_id, musicbrainz_id, release_type, category,
+          genre_primary, genre_secondary, genre_tertiary,
           last_published_at, last_published_naddr, added_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         params![
             id,
             release.artist,
@@ -318,7 +351,9 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.musicbrainz_id,
             release.release_type,
             release.category,
-            release.genre,
+            release.genre_primary,
+            release.genre_secondary,
+            release.genre_tertiary,
             release.last_published_at,
             release.last_published_naddr,
             release.added_at,
@@ -336,8 +371,10 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
         "INSERT INTO releases
          (artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
-          discogs_id, musicbrainz_id, release_type, category, genre)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+          discogs_id, musicbrainz_id, release_type, category,
+          genre_primary, genre_secondary, genre_tertiary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             release.artist,
             release.title,
@@ -357,7 +394,9 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
             release.musicbrainz_id,
             release.release_type,
             release.category,
-            release.genre,
+            release.genre_primary,
+            release.genre_secondary,
+            release.genre_tertiary,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -468,19 +507,100 @@ fn set_release_condition(
     Ok(())
 }
 
+// Genre slug enums — mirror schema/release.v2.json `genreSlugs`. Held here
+// as the canonical source for validation; release.v2.json is the wire spec.
+const GENRE_MAINS: &[&str] = &[
+    "classical", "downtempo", "electronic", "experimental", "funk",
+    "jazz", "pop", "reggae", "rock", "soundtrack",
+];
+const GENRE_ELECTRONIC_SUBS: &[&str] = &[
+    "acid", "breaks", "dnb-jungle", "drone-noise",
+    "dub-techno", "electro", "footwork-trap", "techno",
+];
+
+fn is_valid_genre_slug(s: &str) -> bool {
+    GENRE_MAINS.iter().any(|&g| g == s)
+        || GENRE_ELECTRONIC_SUBS.iter().any(|&g| g == s)
+}
+
+fn is_electronic_sub(s: &str) -> bool {
+    GENRE_ELECTRONIC_SUBS.iter().any(|&g| g == s)
+}
+
+/// Enforces the v2 invariants from schema/release.v2.json `genreInvariants`:
+/// each non-null slot is one of the 18 valid slugs; all non-null slots are
+/// distinct; cannot combine `electronic` with any electronic sub-genre;
+/// dense ordering (no holes — slot N+1 set requires slot N set).
+fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {
+    // Each non-null slot must be a known slug.
+    for (i, s) in slots.iter().enumerate() {
+        if let Some(v) = s {
+            if !is_valid_genre_slug(v) {
+                return Err(format!("slot {}: unknown genre slug '{}'", i, v));
+            }
+        }
+    }
+
+    // Density.
+    let mut seen_empty = false;
+    for (i, s) in slots.iter().enumerate() {
+        match s {
+            None => seen_empty = true,
+            Some(_) if seen_empty => {
+                return Err(format!(
+                    "slot {}: slots must be dense (cannot skip an earlier slot)",
+                    i
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+
+    // Distinct.
+    let mut present: Vec<&str> = Vec::new();
+    for s in slots.iter().flatten() {
+        if present.contains(&s.as_str()) {
+            return Err(format!("duplicate genre slug '{}'", s));
+        }
+        present.push(s.as_str());
+    }
+
+    // No parent + own-sub (electronic + electronic sub-genre).
+    let has_electronic = present.iter().any(|&s| s == "electronic");
+    let has_sub = present.iter().any(|&s| is_electronic_sub(s));
+    if has_electronic && has_sub {
+        return Err(
+            "cannot combine `electronic` with any electronic sub-genre — pick one"
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
-fn set_release_genre(
+fn set_release_genres(
     app: tauri::AppHandle,
     release_id: i64,
-    value: Option<String>,
+    primary: Option<String>,
+    secondary: Option<String>,
+    tertiary: Option<String>,
 ) -> Result<(), String> {
-    let normalized = normalize_field(value);
+    let slots: [Option<String>; 3] = [
+        normalize_field(primary),
+        normalize_field(secondary),
+        normalize_field(tertiary),
+    ];
+    validate_genre_slots(&slots)?;
     let conn = open(&app)?;
     conn.execute(
         "UPDATE releases
-         SET genre = ?1, updated_at = strftime('%s','now')
-         WHERE id = ?2",
-        params![normalized, release_id],
+         SET genre_primary = ?1,
+             genre_secondary = ?2,
+             genre_tertiary = ?3,
+             updated_at = strftime('%s','now')
+         WHERE id = ?4",
+        params![slots[0], slots[1], slots[2], release_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -601,36 +721,38 @@ pub struct LabelCount {
 #[tauri::command]
 fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String> {
     let conn = open(&app)?;
-    // Aggregate label rows + most-common non-null genre per label. The
-    // dominant-genre subquery groups by (label, genre), ranks by tally
-    // desc with genre asc as the deterministic tie-breaker, then picks
-    // the top row per label. Labels with no genre data anywhere keep
-    // dominant_genre NULL.
+    // Aggregate label rows + most-common primary genre per label. v2 rule:
+    // label dominance is computed from genre_primary only (see schema/
+    // release.v2.json "Aggregation rule" — weighting secondary/tertiary
+    // is reserved for v2.1+). Subquery groups by (label, genre_primary),
+    // ranks by tally desc with genre asc as the deterministic tie-breaker,
+    // then picks the top row per label. Labels with no primary-genre data
+    // anywhere keep dominant_genre NULL.
     let mut stmt = conn
         .prepare(
             "WITH genre_tally AS (
-               SELECT label, genre, COUNT(*) AS gn
+               SELECT label, genre_primary AS g, COUNT(*) AS gn
                FROM releases
                WHERE label IS NOT NULL AND label <> ''
-                 AND genre IS NOT NULL AND genre <> ''
-               GROUP BY label, genre
+                 AND genre_primary IS NOT NULL AND genre_primary <> ''
+               GROUP BY label, genre_primary
              ),
              ranked AS (
-               SELECT label, genre,
+               SELECT label, g,
                  ROW_NUMBER() OVER (
                    PARTITION BY label
-                   ORDER BY gn DESC, genre COLLATE NOCASE
+                   ORDER BY gn DESC, g COLLATE NOCASE
                  ) AS rk
                FROM genre_tally
              ),
              dominant AS (
-               SELECT label, genre FROM ranked WHERE rk = 1
+               SELECT label, g FROM ranked WHERE rk = 1
              )
-             SELECT r.label, COUNT(*) AS n, d.genre AS dominant_genre
+             SELECT r.label, COUNT(*) AS n, d.g AS dominant_genre
              FROM releases r
              LEFT JOIN dominant d ON d.label = r.label
              WHERE r.label IS NOT NULL AND r.label <> ''
-             GROUP BY r.label, d.genre
+             GROUP BY r.label, d.g
              ORDER BY n DESC, r.label COLLATE NOCASE
              LIMIT 500",
         )
@@ -674,9 +796,11 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         cover_art_url: row.get(18)?,
         release_type: row.get(19)?,
         category: row.get(20)?,
-        genre: row.get(21)?,
-        last_published_at: row.get(22)?,
-        last_published_naddr: row.get(23)?,
+        genre_primary: row.get(21)?,
+        genre_secondary: row.get(22)?,
+        genre_tertiary: row.get(23)?,
+        last_published_at: row.get(24)?,
+        last_published_naddr: row.get(25)?,
     })
 }
 
@@ -684,7 +808,8 @@ const RELEASE_SELECT_COLS: &str =
     "id, artist, title, year, medium, format, label, catalog_number,
      country, condition, notes, source, file_path, cover_art_path,
      discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
-     release_type, category, genre, last_published_at, last_published_naddr";
+     release_type, category, genre_primary, genre_secondary, genre_tertiary,
+     last_published_at, last_published_naddr";
 
 #[tauri::command]
 fn list_releases(
@@ -1518,6 +1643,20 @@ fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
     }
     if let Some(url) = r.cover_art_url.as_deref() {
         push_tag(&mut tags, "image", url)?;
+    }
+
+    // v2: 0–3 ordered `genre` tags, slot 0 → 2. Order on the wire IS the
+    // priority order (first = primary). Density is enforced upstream by
+    // set_release_genres so we just emit what's set; a Some in slot N+1
+    // without a Some in slot N never lands in the DB.
+    for slot in [
+        r.genre_primary.as_deref(),
+        r.genre_secondary.as_deref(),
+        r.genre_tertiary.as_deref(),
+    ] {
+        if let Some(g) = slot {
+            push_tag(&mut tags, "genre", g)?;
+        }
     }
 
     let content = r.notes.clone().unwrap_or_default();
@@ -3108,7 +3247,7 @@ pub fn run() {
             set_release_condition,
             set_release_label,
             set_release_catalog_number,
-            set_release_genre,
+            set_release_genres,
             list_distinct_labels,
             export_markdown,
             list_releases,
@@ -3172,7 +3311,9 @@ mod schema_v1 {
             musicbrainz_id: None,
             release_type: None,
             category: None,
-            genre: None,
+            genre_primary: None,
+            genre_secondary: None,
+            genre_tertiary: None,
             last_published_at: None,
             last_published_naddr: None,
             added_at: None,
@@ -3284,6 +3425,206 @@ mod schema_v1 {
         };
         let ev = release_event(&Keys::generate(), &r).unwrap();
         assert_eq!(tag_value(&ev, "source"), None);
+    }
+
+    // v2 minimal must be byte-equivalent to v1 minimal: a release with no
+    // genre slots set emits the same tag set as v1 with the same fields
+    // empty. This is the additive-rule guarantee.
+    #[test]
+    fn v2_minimal_is_indistinguishable_from_v1_minimal() {
+        let ev = release_event(&Keys::generate(), &base_release()).unwrap();
+        assert_eq!(tag_names(&ev), vec!["artist", "d", "title"]);
+        // No genre tag when all three slots are None.
+        assert!(
+            ev.tags
+                .iter()
+                .filter(|t| t.as_slice().first().map(|s| s.as_str()) == Some("genre"))
+                .count()
+                == 0
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema contract test — kind:31237 release event v2 (schema/release.v2.json)
+// ---------------------------------------------------------------------------
+// Pins release_event()'s v2-specific output to the v2 wire contract shared
+// with the glmps viewers. v2 is additive over v1: the only new tag is
+// `genre` (0-3 repeatable, ordered). A failure here means v2 emission has
+// drifted: that is a coordinated v3 bump, never a test edit.
+//
+// schema_v1 above still covers the no-genre case as the historic fixture;
+// the two modules together cover the rollout window.
+#[cfg(test)]
+mod schema_v2 {
+    use super::*;
+
+    fn base_v2_release() -> Release {
+        Release {
+            id: Some(42),
+            artist: "Aphex Twin".into(),
+            title: "Selected Ambient Works 85-92".into(),
+            year: None,
+            medium: None,
+            format: None,
+            label: None,
+            catalog_number: None,
+            country: None,
+            condition: None,
+            notes: None,
+            source: None,
+            file_path: None,
+            cover_art_path: None,
+            cover_art_url: None,
+            discogs_id: None,
+            musicbrainz_id: None,
+            release_type: None,
+            category: None,
+            genre_primary: None,
+            genre_secondary: None,
+            genre_tertiary: None,
+            last_published_at: None,
+            last_published_naddr: None,
+            added_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn genre_tags(ev: &Event) -> Vec<String> {
+        ev.tags
+            .iter()
+            .filter_map(|t| {
+                let s = t.as_slice();
+                if s.len() >= 2 && s[0] == "genre" {
+                    Some(s[1].clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_slot_emits_one_genre_tag() {
+        let r = Release {
+            genre_primary: Some("techno".into()),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        assert_eq!(genre_tags(&ev), vec!["techno"]);
+    }
+
+    #[test]
+    fn three_slots_emit_three_genre_tags_in_order() {
+        let r = Release {
+            genre_primary: Some("techno".into()),
+            genre_secondary: Some("dub-techno".into()),
+            genre_tertiary: Some("downtempo".into()),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        // Order is the priority order — must match field order exactly.
+        assert_eq!(
+            genre_tags(&ev),
+            vec!["techno", "dub-techno", "downtempo"]
+        );
+    }
+
+    #[test]
+    fn two_slots_emit_two_genre_tags_in_order() {
+        let r = Release {
+            genre_primary: Some("electronic".into()),
+            genre_secondary: Some("jazz".into()),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        assert_eq!(genre_tags(&ev), vec!["electronic", "jazz"]);
+    }
+
+    #[test]
+    fn compound_slug_emitted_hyphenated_not_slash() {
+        let r = Release {
+            genre_primary: Some("dnb-jungle".into()),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        // Wire form is always hyphenated; slash form is a UI render rule.
+        assert_eq!(genre_tags(&ev), vec!["dnb-jungle"]);
+    }
+
+    #[test]
+    fn validate_genre_slots_accepts_zero_slots() {
+        let slots = [None, None, None];
+        assert!(validate_genre_slots(&slots).is_ok());
+    }
+
+    #[test]
+    fn validate_genre_slots_accepts_primary_only() {
+        let slots = [Some("techno".into()), None, None];
+        assert!(validate_genre_slots(&slots).is_ok());
+    }
+
+    #[test]
+    fn validate_genre_slots_accepts_three_distinct() {
+        let slots = [
+            Some("techno".into()),
+            Some("dub-techno".into()),
+            Some("downtempo".into()),
+        ];
+        assert!(validate_genre_slots(&slots).is_ok());
+    }
+
+    #[test]
+    fn validate_genre_slots_rejects_unknown_slug() {
+        let slots = [Some("hyperpop".into()), None, None];
+        assert!(validate_genre_slots(&slots).is_err());
+    }
+
+    #[test]
+    fn validate_genre_slots_rejects_duplicate() {
+        let slots = [
+            Some("techno".into()),
+            Some("techno".into()),
+            None,
+        ];
+        assert!(validate_genre_slots(&slots).is_err());
+    }
+
+    #[test]
+    fn validate_genre_slots_rejects_electronic_plus_own_sub() {
+        let slots = [
+            Some("electronic".into()),
+            Some("techno".into()),
+            None,
+        ];
+        assert!(validate_genre_slots(&slots).is_err());
+    }
+
+    #[test]
+    fn validate_genre_slots_rejects_hole_at_slot_0() {
+        let slots = [None, Some("techno".into()), None];
+        assert!(validate_genre_slots(&slots).is_err());
+    }
+
+    #[test]
+    fn validate_genre_slots_rejects_hole_at_slot_1() {
+        let slots = [
+            Some("techno".into()),
+            None,
+            Some("jazz".into()),
+        ];
+        assert!(validate_genre_slots(&slots).is_err());
+    }
+
+    #[test]
+    fn validate_genre_slots_accepts_unrelated_parent_sub_pair() {
+        // techno is an electronic sub; jazz is an unrelated main. Allowed.
+        let slots = [
+            Some("techno".into()),
+            Some("jazz".into()),
+            None,
+        ];
+        assert!(validate_genre_slots(&slots).is_ok());
     }
 }
 

@@ -20,7 +20,13 @@ export interface Release {
   musicbrainzId?: string | null;
   releaseType?: string | null;
   category?: string | null;
-  genre?: string | null;
+  // v2: three ordered genre slots (primary / secondary / tertiary). Each
+  // slot is one of the 18 valid slugs (see schema/release.v2.json) or null.
+  // Invariants (distinct, no parent+own-sub, dense) enforced by
+  // setReleaseGenres in the backend.
+  genrePrimary?: string | null;
+  genreSecondary?: string | null;
+  genreTertiary?: string | null;
   lastPublishedAt?: number | null;
   lastPublishedNaddr?: string | null;
   addedAt?: number | null;
@@ -143,11 +149,18 @@ export async function setReleaseLabel(
   return invoke("set_release_label", { releaseId, value });
 }
 
-export async function setReleaseGenre(
+export async function setReleaseGenres(
   releaseId: number,
-  value: string | null,
+  primary: string | null,
+  secondary: string | null,
+  tertiary: string | null,
 ): Promise<void> {
-  return invoke("set_release_genre", { releaseId, value });
+  return invoke("set_release_genres", {
+    releaseId,
+    primary,
+    secondary,
+    tertiary,
+  });
 }
 
 export async function setReleaseCatalogNumber(
