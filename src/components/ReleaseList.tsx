@@ -4,11 +4,14 @@ import {
   Disc3,
   FolderSearch,
   ImageOff,
+  Music,
   MoreVertical,
+  Radio,
   RefreshCw,
   SatelliteDish,
   ScanLine,
   Search,
+  Tag,
   Wand2,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -26,6 +29,7 @@ import {
   updateReleasePath,
   type ExtractSummary,
   type ImportProgress,
+  type GenreFilter,
   type LabelFilter,
   type LibraryScanSummary,
   type OrphanEvent,
@@ -44,6 +48,7 @@ export interface FilterContext {
   needsCoverOnly: boolean;
   publishedFilter: PublishedFilter | null;
   labelFilter: LabelFilter | null;
+  genreFilter: GenreFilter | null;
   count: number;
 }
 
@@ -70,6 +75,7 @@ export function ReleaseList({
   const [publishedFilter, setPublishedFilter] =
     useState<"" | PublishedFilter>("");
   const [labelFilter, setLabelFilter] = useState<"" | LabelFilter>("");
+  const [genreFilter, setGenreFilter] = useState<"" | GenreFilter>("");
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -392,6 +398,7 @@ export function ReleaseList({
         needsCoverOnly ? true : undefined,
         publishedFilter || undefined,
         labelFilter || undefined,
+        genreFilter || undefined,
       );
       setItems(list);
     } catch (e) {
@@ -404,7 +411,7 @@ export function ReleaseList({
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, medium, needsCoverOnly, publishedFilter, labelFilter]);
+  }, [reloadKey, medium, needsCoverOnly, publishedFilter, labelFilter, genreFilter]);
 
   // Bubble filter state + visible-items count up so other panels (like the
   // Nostr publish-library button) can render contextual UI.
@@ -416,6 +423,7 @@ export function ReleaseList({
       needsCoverOnly,
       publishedFilter: publishedFilter === "" ? null : publishedFilter,
       labelFilter: labelFilter === "" ? null : labelFilter,
+      genreFilter: genreFilter === "" ? null : genreFilter,
       count: items.length,
     });
   }, [
@@ -424,6 +432,7 @@ export function ReleaseList({
     needsCoverOnly,
     publishedFilter,
     labelFilter,
+    genreFilter,
     items.length,
     onFilterChange,
   ]);
@@ -507,65 +516,71 @@ export function ReleaseList({
           />
         </div>
         <div className="relative">
-          <select
-            value={medium}
-            onChange={(e) => setMedium(e.target.value as MediumFilter)}
-            title="Filter by medium"
-            className="appearance-none pl-2.5 pr-7 py-2 rounded-md bg-accent text-bg
-                       text-xs font-semibold outline-none border border-transparent
-                       focus:border-fg/30 cursor-pointer"
-          >
-            <option value="">Media</option>
-            <option value="physical">physical</option>
-            <option value="digital">digital</option>
-          </select>
-          <ChevronDown
-            size={12}
-            strokeWidth={2.5}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-bg
-                       pointer-events-none"
-          />
-        </div>
-        <div className="relative">
-          <select
-            value={publishedFilter}
-            onChange={(e) =>
-              setPublishedFilter(e.target.value as "" | PublishedFilter)
+          <FilterSelect
+            icon={<Disc3 size={14} />}
+            tooltip={
+              medium
+                ? `Medium: ${medium} (click to clear)`
+                : "Filter by medium"
             }
-            title="Filter by Nostr publish state"
-            className="appearance-none pl-2.5 pr-7 py-2 rounded-md bg-surface
-                       text-fg text-xs outline-none border border-transparent
-                       focus:border-accent/50 cursor-pointer"
-          >
-            <option value="">Status</option>
-            <option value="published">published</option>
-            <option value="unpublished">unpublished</option>
-          </select>
-          <ChevronDown
-            size={12}
-            strokeWidth={2.5}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted
-                       pointer-events-none"
+            value={medium}
+            onChange={(v) => setMedium(v as MediumFilter)}
+            options={[
+              { value: "physical", label: "physical" },
+              { value: "digital", label: "digital" },
+            ]}
+            active={!!medium}
           />
         </div>
         <div className="relative">
-          <select
+          <FilterSelect
+            icon={<Radio size={14} />}
+            tooltip={
+              publishedFilter
+                ? `Status: ${publishedFilter} (click to clear)`
+                : "Filter by Nostr publish state"
+            }
+            value={publishedFilter}
+            onChange={(v) => setPublishedFilter(v as "" | PublishedFilter)}
+            options={[
+              { value: "published", label: "published" },
+              { value: "unpublished", label: "unpublished" },
+            ]}
+            active={!!publishedFilter}
+          />
+        </div>
+        <div className="relative">
+          <FilterSelect
+            icon={<Tag size={14} />}
+            tooltip={
+              labelFilter
+                ? `Label: ${labelFilter === "with_label" ? "has label" : "no label"} (click to clear)`
+                : "Filter by presence of a record label"
+            }
             value={labelFilter}
-            onChange={(e) => setLabelFilter(e.target.value as "" | LabelFilter)}
-            title="Filter by presence of a record label"
-            className="appearance-none pl-2.5 pr-7 py-2 rounded-md bg-surface
-                       text-fg text-xs outline-none border border-transparent
-                       focus:border-accent/50 cursor-pointer"
-          >
-            <option value="">Label</option>
-            <option value="with_label">has label</option>
-            <option value="without_label">no label</option>
-          </select>
-          <ChevronDown
-            size={12}
-            strokeWidth={2.5}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted
-                       pointer-events-none"
+            onChange={(v) => setLabelFilter(v as "" | LabelFilter)}
+            options={[
+              { value: "with_label", label: "has label" },
+              { value: "without_label", label: "no label" },
+            ]}
+            active={!!labelFilter}
+          />
+        </div>
+        <div className="relative">
+          <FilterSelect
+            icon={<Music size={14} />}
+            tooltip={
+              genreFilter
+                ? `Genre: ${genreFilter === "with_genre" ? "has genre" : "no genre"} (click to clear)`
+                : "Filter by presence of a genre tag"
+            }
+            value={genreFilter}
+            onChange={(v) => setGenreFilter(v as "" | GenreFilter)}
+            options={[
+              { value: "with_genre", label: "has genre" },
+              { value: "without_genre", label: "no genre" },
+            ]}
+            active={!!genreFilter}
           />
         </div>
         <button
@@ -1046,6 +1061,68 @@ export function ReleaseList({
         })}
       </ul>
     </Section>
+  );
+}
+
+// Compact filter dropdown — leading icon, hidden text when inactive, mint
+// accent + visible value text when active. Native <select> for keyboard a11y
+// and the OS-rendered option list; the wrapper just shapes the chrome so all
+// four filters in the header read as a uniform row of icon buttons.
+interface FilterSelectProps {
+  icon: React.ReactNode;
+  tooltip: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  active: boolean;
+}
+
+function FilterSelect({
+  icon,
+  tooltip,
+  value,
+  onChange,
+  options,
+  active,
+}: FilterSelectProps) {
+  return (
+    <>
+      <span
+        className={cn(
+          "absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none",
+          active ? "text-bg" : "text-fg",
+        )}
+      >
+        {icon}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        title={tooltip}
+        className={cn(
+          "appearance-none pl-7 pr-6 py-2 rounded-md text-xs",
+          "outline-none border border-transparent cursor-pointer",
+          active
+            ? "bg-accent text-bg font-semibold focus:border-fg/30"
+            : "bg-surface text-transparent focus:border-accent/50 w-9",
+        )}
+      >
+        <option value="">all</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        size={12}
+        strokeWidth={2.5}
+        className={cn(
+          "absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none",
+          active ? "text-bg" : "text-muted",
+        )}
+      />
+    </>
   );
 }
 

@@ -205,6 +205,7 @@ export default function App() {
     needsCoverOnly: false,
     publishedFilter: null,
     labelFilter: null,
+    genreFilter: null,
     count: 0,
   });
 
