@@ -105,30 +105,16 @@ function genreDisplay(slug: string): string {
   return slug.replace(/-/g, "/");
 }
 
-// Set of electronic sub-genres — used for the parent+own-sub gating rule.
-// Mirrors GENRE_ELECTRONIC_SUBS in src-tauri/src/lib.rs.
-const ELECTRONIC_SUBS = new Set(
-  GENRE_GROUPS.find((g) => g.label === "electronic")?.options ?? [],
-);
-
-// Filter GENRE_GROUPS for the given slot index, hiding anything that's
-// already in an earlier slot OR that would violate the no-parent+own-sub
-// invariant against an earlier slot's value.
+// Filter GENRE_GROUPS for the given slot index, hiding anything already
+// chosen in an earlier slot. v2.1: all 18 slugs are pure peers — no
+// parent+sub gating; meaning composes by stacking slugs.
 function genreGroupsForSlot(
   slotIndex: number,
   currentSlots: (string | null)[],
 ): { label: string; options: string[] }[] {
-  const earlier = currentSlots
-    .slice(0, slotIndex)
-    .filter((s): s is string => !!s);
-  const excluded = new Set<string>(earlier);
-  for (const e of earlier) {
-    if (e === "electronic") {
-      ELECTRONIC_SUBS.forEach((s) => excluded.add(s));
-    } else if (ELECTRONIC_SUBS.has(e)) {
-      excluded.add("electronic");
-    }
-  }
+  const excluded = new Set<string>(
+    currentSlots.slice(0, slotIndex).filter((s): s is string => !!s),
+  );
   return GENRE_GROUPS.map((g) => ({
     label: g.label,
     options: g.options.filter((o) => !excluded.has(o)),
@@ -572,6 +558,27 @@ export function ReleaseDetail({
           placeholder="category"
           width="w-32"
         />
+        <EditableText
+          value={release.label ?? null}
+          onChange={onChangeLabel}
+          ariaLabel="label"
+          placeholder="label"
+          width="w-40"
+        />
+        <EditableText
+          value={release.catalogNumber ?? null}
+          onChange={onChangeCatalogNumber}
+          ariaLabel="catalog"
+          placeholder="catalog"
+          width="w-28"
+        />
+        <EditableText
+          value={release.country ?? null}
+          onChange={onChangeCountry}
+          ariaLabel="country"
+          placeholder="country"
+          width="w-32"
+        />
         {(() => {
           const slots = [
             release.genrePrimary ?? null,
@@ -617,27 +624,6 @@ export function ReleaseDetail({
             </>
           );
         })()}
-        <EditableText
-          value={release.label ?? null}
-          onChange={onChangeLabel}
-          ariaLabel="label"
-          placeholder="label"
-          width="w-40"
-        />
-        <EditableText
-          value={release.catalogNumber ?? null}
-          onChange={onChangeCatalogNumber}
-          ariaLabel="catalog"
-          placeholder="catalog"
-          width="w-28"
-        />
-        <EditableText
-          value={release.country ?? null}
-          onChange={onChangeCountry}
-          ariaLabel="country"
-          placeholder="country"
-          width="w-32"
-        />
         <EditableEnum
           value={release.condition ?? null}
           options={CONDITION_OPTIONS}
@@ -857,7 +843,7 @@ function NotesField({ value }: { value: string | null }) {
     <div
       title={shown ? `notes: ${shown}` : "no notes set"}
       aria-label="notes"
-      className="w-[26rem] max-w-full h-6 inline-flex items-center gap-1.5
+      className="w-[12rem] max-w-full h-6 inline-flex items-center gap-1.5
                  px-1.5 rounded bg-surface/40 border border-surface/60
                  text-fg/90"
     >

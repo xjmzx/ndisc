@@ -509,6 +509,9 @@ fn set_release_condition(
 
 // Genre slug enums — mirror schema/release.v2.json `genreSlugs`. Held here
 // as the canonical source for validation; release.v2.json is the wire spec.
+// The mains/subs split is a visual / palette grouping only — semantically
+// all 18 slugs are pure peers and may be freely combined (see v2.1 update
+// in genreInvariants).
 const GENRE_MAINS: &[&str] = &[
     "classical", "downtempo", "electronic", "experimental", "funk",
     "jazz", "pop", "reggae", "rock", "soundtrack",
@@ -523,14 +526,10 @@ fn is_valid_genre_slug(s: &str) -> bool {
         || GENRE_ELECTRONIC_SUBS.iter().any(|&g| g == s)
 }
 
-fn is_electronic_sub(s: &str) -> bool {
-    GENRE_ELECTRONIC_SUBS.iter().any(|&g| g == s)
-}
-
 /// Enforces the v2 invariants from schema/release.v2.json `genreInvariants`:
 /// each non-null slot is one of the 18 valid slugs; all non-null slots are
-/// distinct; cannot combine `electronic` with any electronic sub-genre;
-/// dense ordering (no holes — slot N+1 set requires slot N set).
+/// distinct; dense ordering (no holes — slot N+1 set requires slot N set).
+/// No parent+sub gate as of v2.1 — `electronic` + `techno` is valid.
 fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {
     // Each non-null slot must be a known slug.
     for (i, s) in slots.iter().enumerate() {
@@ -563,16 +562,6 @@ fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {
             return Err(format!("duplicate genre slug '{}'", s));
         }
         present.push(s.as_str());
-    }
-
-    // No parent + own-sub (electronic + electronic sub-genre).
-    let has_electronic = present.iter().any(|&s| s == "electronic");
-    let has_sub = present.iter().any(|&s| is_electronic_sub(s));
-    if has_electronic && has_sub {
-        return Err(
-            "cannot combine `electronic` with any electronic sub-genre — pick one"
-                .into(),
-        );
     }
 
     Ok(())
@@ -3591,13 +3580,15 @@ mod schema_v2 {
     }
 
     #[test]
-    fn validate_genre_slots_rejects_electronic_plus_own_sub() {
+    fn validate_genre_slots_accepts_electronic_plus_sub() {
+        // v2.1: pure peers — `electronic` + `techno` is allowed; meaning
+        // composes by stacking slugs.
         let slots = [
             Some("electronic".into()),
             Some("techno".into()),
             None,
         ];
-        assert!(validate_genre_slots(&slots).is_err());
+        assert!(validate_genre_slots(&slots).is_ok());
     }
 
     #[test]
@@ -3617,8 +3608,8 @@ mod schema_v2 {
     }
 
     #[test]
-    fn validate_genre_slots_accepts_unrelated_parent_sub_pair() {
-        // techno is an electronic sub; jazz is an unrelated main. Allowed.
+    fn validate_genre_slots_accepts_cross_family_pair() {
+        // techno (electronic sub) + jazz (different main) — peers.
         let slots = [
             Some("techno".into()),
             Some("jazz".into()),
