@@ -1,3 +1,10 @@
+> ⚠ **HISTORICAL ARTIFACT — not authoritative.** Preserved for context only.
+> The contract is now `schema/release.v2.json`; the current end-state is
+> summarised in `schema/README.md`. The decisions in this document (any-
+> slot filter match, the four visual surfaces, v2-only emission, the
+> flatten, and the `dub-techno` → `dub` rename) are all already folded
+> into the README + JSON; cite those, not this file.
+
 # release.v2 — glmps reply to RFC rev 2
 
 **Status:** glmps-side review of `v2-proposal.md` rev 2

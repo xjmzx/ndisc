@@ -1,3 +1,10 @@
+> ⚠ **HISTORICAL ARTIFACT — not authoritative.** Preserved for context only.
+> The contract is now `schema/release.v2.json`; the current end-state is
+> summarised in `schema/README.md`. The amendments described in this
+> note (v2.1 flatten + v2.1.1 `dub-techno` → `dub`) are already in the
+> README + JSON; future catch-ups should be one-off updates against
+> the README, not standalone notes.
+
 # glmps catch-up — release.v2 amendments since the initial v2 deploy
 
 **Date:** 2026-06-10

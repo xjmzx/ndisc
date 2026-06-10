@@ -1,3 +1,9 @@
+> ⚠ **HISTORICAL ARTIFACT — not authoritative.** Preserved for context only.
+> The contract is now `schema/release.v2.json`; the current end-state is
+> summarised in `schema/README.md`. Two amendments landed after this RFC
+> was written (v2.1 flatten, v2.1.1 `dub-techno` → `dub`); cite the
+> README + JSON, not this file.
+
 # release.v2 — proposal (RFC, rev 2)
 
 **Status:** draft / awaiting glmps-side review
