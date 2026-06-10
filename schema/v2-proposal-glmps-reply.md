@@ -213,3 +213,52 @@ enforcing `noParentWithOwnSub` need to drop that check.
 
 No `release.v3.json` is needed — the change is removing a constraint,
 not changing the wire format. v2 is still v2.
+
+---
+
+## ndisc addendum 3 — rename `dub-techno` → `dub` (v2.1.1, post-mint)
+
+**Decision:** rename the electronic sub-genre slug `dub-techno` to plain
+`dub`. The compound form was redundant under v2.1's pure-peer model —
+meaning composes by stacking, so a release that's both dub-y and techno-y
+can be tagged `dub` + `techno` together.
+
+**Why:** End user found the compound slug awkward in the picker, and the
+v2.1 flatten already supplies the composition mechanism (stack two slugs).
+Single-token slugs are cleaner; no functional loss.
+
+**Wire-format effect:** This IS a slug rename, which the v2 contract's
+change policy technically reserves for a v3 bump. Treating as an in-place
+v2.1.1 amendment instead because the rollout is fresh (less than a day
+old), only one release in the local DB was tagged with the old slug, and
+both ends are coordinated (no third-party readers to worry about).
+
+**ndisc-side changes (shipping in 0.1.2-beta.8):**
+- `schema/release.v2.json` — `genreSlugs.electronicSubs` swaps
+  `dub-techno` for `dub`
+- CSS var `--c-g-dub-techno` → `--c-g-dub`; same in Tailwind config
+- `GENRE_ELECTRONIC_SUBS` in Rust + `GENRE_GROUPS` in TS swap the entry
+- `schema_v2::three_slots_emit_three_genre_tags_in_order` test refreshed
+- Fixture `release-31237-v2.full.json` tags + comment updated
+- `backfill_genre_slug_renames(&conn)` migration in `open()` — one-shot
+  idempotent `UPDATE releases SET genre_* = 'dub' WHERE genre_* =
+  'dub-techno'`. Affected releases (just one — Africa Hitech "Blen EP")
+  will need re-publishing to refresh the wire data.
+
+**glmps-side action items:**
+- [ ] Re-vendor `schema/release.v2.json` (hash changes)
+- [ ] Update CSS var name + Tailwind config entry (`dub-techno` → `dub`)
+- [ ] Update `lib/genre.ts` slug constants
+- [ ] Update `genreLabel`'s slash-display logic — `dub` is no longer
+      compound, so no special handling needed (the existing
+      `replace(/-/g, "/")` is idempotent for it)
+- [ ] Strict v2.0 readers that already saw a `dub-techno` event on a
+      relay should treat it as an unknown slug per the strict-but-
+      recoverable validation policy; once ndisc re-publishes that event,
+      the new `dub` value lands
+- [ ] Mirror across `glmps.fizx.uk` + `glmps.upleb.uk` (lockstep)
+
+Future renames in this minor series can follow the same
+`backfill_genre_slug_renames` pattern in ndisc + an entry in this
+addendum stream; any wider slug churn (rename/remove >1 slug, or
+reshuffle existing semantics) should mint v3.
