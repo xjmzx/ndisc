@@ -33,6 +33,7 @@ import {
   setReleaseCategory,
   setReleaseCondition,
   setReleaseCountry,
+  setReleaseGenre,
   setReleaseLabel,
   setReleaseType,
   syncCoverToDisk,
@@ -61,6 +62,48 @@ const CATEGORY_OPTIONS = [
   "bootleg",
   "miscellaneous",
 ];
+
+// Values match the --c-g-* CSS-var slot names so the LABELS dot can use
+// the genre verbatim: `style: { backgroundColor: rgb(var(--c-g-${g})) }`.
+// 10 main genres + 8 electronic sub-genres. Compound sub-genres are stored
+// hyphenated (dnb-jungle) and displayed with a slash (dnb/jungle) via the
+// genreDisplay helper below.
+const GENRE_GROUPS: { label: string; options: string[] }[] = [
+  {
+    label: "main",
+    options: [
+      "classical",
+      "downtempo",
+      "electronic",
+      "experimental",
+      "funk",
+      "jazz",
+      "pop",
+      "reggae",
+      "rock",
+      "soundtrack",
+    ],
+  },
+  {
+    label: "electronic",
+    options: [
+      "acid",
+      "breaks",
+      "dnb-jungle",
+      "drone-noise",
+      "dub-techno",
+      "electro",
+      "footwork-trap",
+      "techno",
+    ],
+  },
+];
+
+// Hyphenated compound slugs render with a slash for UX legibility while
+// the DB / CSS-var slot keeps the hyphen form.
+function genreDisplay(slug: string): string {
+  return slug.replace(/-/g, "/");
+}
 
 // Discogs's full condition grades. Stored verbatim so imported entries map
 // cleanly. The collapsed display abbreviates to just the parenthetical grade.
@@ -382,6 +425,12 @@ export function ReleaseDetail({
     onChanged({ ...release, label: v });
   }
 
+  async function onChangeGenre(v: string | null) {
+    if (!release.id) return;
+    await setReleaseGenre(release.id, v);
+    onChanged({ ...release, genre: v });
+  }
+
   async function onChangeCatalogNumber(v: string | null) {
     if (!release.id) return;
     await setReleaseCatalogNumber(release.id, v);
@@ -461,6 +510,15 @@ export function ReleaseDetail({
           onChange={onChangeCategory}
           ariaLabel="category"
           placeholder="category"
+          width="w-32"
+        />
+        <EditableEnum
+          value={release.genre ?? null}
+          groups={GENRE_GROUPS}
+          onChange={onChangeGenre}
+          ariaLabel="genre"
+          displayFn={genreDisplay}
+          placeholder="genre"
           width="w-32"
         />
         <EditableText
@@ -717,7 +775,9 @@ function NotesField({ value }: { value: string | null }) {
 
 interface EditableEnumProps {
   value: string | null;
-  options: string[];
+  // Flat option list OR grouped via <optgroup> — exactly one is provided.
+  options?: string[];
+  groups?: { label: string; options: string[] }[];
   onChange: (v: string | null) => Promise<void> | void;
   ariaLabel?: string;
   displayFn?: (s: string) => string;
@@ -728,6 +788,7 @@ interface EditableEnumProps {
 function EditableEnum({
   value,
   options,
+  groups,
   onChange,
   ariaLabel,
   displayFn,
@@ -768,11 +829,21 @@ function EditableEnum({
                     cursor-pointer disabled:opacity-50 appearance-none`}
       >
         <option value="">{placeholder}</option>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {displayFn ? displayFn(o) : o}
-          </option>
-        ))}
+        {groups
+          ? groups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.options.map((o) => (
+                  <option key={o} value={o}>
+                    {displayFn ? displayFn(o) : o}
+                  </option>
+                ))}
+              </optgroup>
+            ))
+          : (options ?? []).map((o) => (
+              <option key={o} value={o}>
+                {displayFn ? displayFn(o) : o}
+              </option>
+            ))}
       </select>
     );
   }

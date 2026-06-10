@@ -78,6 +78,8 @@ pub struct Release {
     pub release_type: Option<String>,
     pub category: Option<String>,
     #[serde(default)]
+    pub genre: Option<String>,
+    #[serde(default)]
     pub last_published_at: Option<i64>,
     #[serde(default)]
     pub last_published_naddr: Option<String>,
@@ -184,6 +186,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "cover_art_url", "TEXT")?;
     ensure_column(&conn, "releases", "release_type", "TEXT")?;
     ensure_column(&conn, "releases", "category", "TEXT")?;
+    ensure_column(&conn, "releases", "genre", "TEXT")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
     backfill_type_category(&conn)?;
@@ -291,10 +294,10 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
         "INSERT INTO releases
          (id, artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
-          discogs_id, musicbrainz_id, release_type, category,
+          discogs_id, musicbrainz_id, release_type, category, genre,
           last_published_at, last_published_naddr, added_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         params![
             id,
             release.artist,
@@ -315,6 +318,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.musicbrainz_id,
             release.release_type,
             release.category,
+            release.genre,
             release.last_published_at,
             release.last_published_naddr,
             release.added_at,
@@ -332,8 +336,8 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
         "INSERT INTO releases
          (artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
-          discogs_id, musicbrainz_id, release_type, category)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+          discogs_id, musicbrainz_id, release_type, category, genre)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             release.artist,
             release.title,
@@ -353,6 +357,7 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
             release.musicbrainz_id,
             release.release_type,
             release.category,
+            release.genre,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -464,6 +469,24 @@ fn set_release_condition(
 }
 
 #[tauri::command]
+fn set_release_genre(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: Option<String>,
+) -> Result<(), String> {
+    let normalized = normalize_field(value);
+    let conn = open(&app)?;
+    conn.execute(
+        "UPDATE releases
+         SET genre = ?1, updated_at = strftime('%s','now')
+         WHERE id = ?2",
+        params![normalized, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn set_release_label(
     app: tauri::AppHandle,
     release_id: i64,
@@ -567,6 +590,7 @@ fn html_attr_escape(s: &str) -> String {
 pub struct LabelCount {
     pub name: String,
     pub count: i64,
+    pub dominant_genre: Option<String>,
 }
 
 // All distinct labels, ordered by release count desc (then alphabetical),
@@ -577,12 +601,37 @@ pub struct LabelCount {
 #[tauri::command]
 fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String> {
     let conn = open(&app)?;
+    // Aggregate label rows + most-common non-null genre per label. The
+    // dominant-genre subquery groups by (label, genre), ranks by tally
+    // desc with genre asc as the deterministic tie-breaker, then picks
+    // the top row per label. Labels with no genre data anywhere keep
+    // dominant_genre NULL.
     let mut stmt = conn
         .prepare(
-            "SELECT label, COUNT(*) AS n FROM releases
-             WHERE label IS NOT NULL AND label <> ''
-             GROUP BY label
-             ORDER BY n DESC, label COLLATE NOCASE
+            "WITH genre_tally AS (
+               SELECT label, genre, COUNT(*) AS gn
+               FROM releases
+               WHERE label IS NOT NULL AND label <> ''
+                 AND genre IS NOT NULL AND genre <> ''
+               GROUP BY label, genre
+             ),
+             ranked AS (
+               SELECT label, genre,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY label
+                   ORDER BY gn DESC, genre COLLATE NOCASE
+                 ) AS rk
+               FROM genre_tally
+             ),
+             dominant AS (
+               SELECT label, genre FROM ranked WHERE rk = 1
+             )
+             SELECT r.label, COUNT(*) AS n, d.genre AS dominant_genre
+             FROM releases r
+             LEFT JOIN dominant d ON d.label = r.label
+             WHERE r.label IS NOT NULL AND r.label <> ''
+             GROUP BY r.label, d.genre
+             ORDER BY n DESC, r.label COLLATE NOCASE
              LIMIT 500",
         )
         .map_err(|e| e.to_string())?;
@@ -591,6 +640,7 @@ fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String
             Ok(LabelCount {
                 name: row.get::<_, String>(0)?,
                 count: row.get::<_, i64>(1)?,
+                dominant_genre: row.get::<_, Option<String>>(2)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -624,8 +674,9 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         cover_art_url: row.get(18)?,
         release_type: row.get(19)?,
         category: row.get(20)?,
-        last_published_at: row.get(21)?,
-        last_published_naddr: row.get(22)?,
+        genre: row.get(21)?,
+        last_published_at: row.get(22)?,
+        last_published_naddr: row.get(23)?,
     })
 }
 
@@ -633,7 +684,7 @@ const RELEASE_SELECT_COLS: &str =
     "id, artist, title, year, medium, format, label, catalog_number,
      country, condition, notes, source, file_path, cover_art_path,
      discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
-     release_type, category, last_published_at, last_published_naddr";
+     release_type, category, genre, last_published_at, last_published_naddr";
 
 #[tauri::command]
 fn list_releases(
@@ -3057,6 +3108,7 @@ pub fn run() {
             set_release_condition,
             set_release_label,
             set_release_catalog_number,
+            set_release_genre,
             list_distinct_labels,
             export_markdown,
             list_releases,
@@ -3120,6 +3172,7 @@ mod schema_v1 {
             musicbrainz_id: None,
             release_type: None,
             category: None,
+            genre: None,
             last_published_at: None,
             last_published_naddr: None,
             added_at: None,

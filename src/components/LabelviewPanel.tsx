@@ -62,6 +62,20 @@ export function LabelviewPanel({
     [distinct],
   );
 
+  // Dominant-genre lookup keyed by normalised label name. The value is the
+  // most-common non-null genre across the label's releases, computed server-
+  // side (see list_distinct_labels). Used to colour the per-row genre dot;
+  // null when the label has no genre-tagged releases.
+  const genreByName = useMemo(
+    () =>
+      new Map(
+        distinct.map(
+          (d) => [normaliseName(d.name), d.dominantGenre] as const,
+        ),
+      ),
+    [distinct],
+  );
+
   // Orphans: entries in ndisc.labels whose name doesn't match any release
   // label. They never surface in the release-driven library list, so without
   // this view the only cleanup path is to wait for the LABEL carousel to
@@ -232,6 +246,12 @@ export function LabelviewPanel({
             );
           }
           const count = countByName.get(normaliseName(name)) ?? 0;
+          const genre = genreByName.get(normaliseName(name)) ?? null;
+          // Compound slugs are stored hyphenated (dnb-jungle) and shown
+          // with a slash for legibility (dnb/jungle).
+          const genreTitle = genre
+            ? ` · genre: ${genre.replace(/-/g, "/")}`
+            : "";
           return (
             <li key={name}>
               <button
@@ -241,8 +261,8 @@ export function LabelviewPanel({
                 }
                 title={
                   hasImage
-                    ? `Edit image for ${name} — ${count} release${count === 1 ? "" : "s"}`
-                    : `Supply image for ${name} — ${count} release${count === 1 ? "" : "s"}`
+                    ? `Edit image for ${name} — ${count} release${count === 1 ? "" : "s"}${genreTitle}`
+                    : `Supply image for ${name} — ${count} release${count === 1 ? "" : "s"}${genreTitle}`
                 }
                 className="w-full flex items-center gap-2 px-2 py-1
                            rounded hover:bg-surface text-left text-xs"
@@ -256,6 +276,19 @@ export function LabelviewPanel({
                 >
                   <Check size={12} />
                 </span>
+                {/* Dominant-genre dot — 6px round, coloured by the --c-g-*
+                    var matching the genre slug. Always-rendered slot keeps
+                    name alignment stable across rows; empty rows get a
+                    transparent dot. */}
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: genre
+                      ? `rgb(var(--c-g-${genre}))`
+                      : "transparent",
+                  }}
+                />
                 <span className="truncate flex-1">
                   {truncateForDisplay(name)}
                 </span>

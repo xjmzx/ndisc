@@ -20,6 +20,7 @@ export interface Release {
   musicbrainzId?: string | null;
   releaseType?: string | null;
   category?: string | null;
+  genre?: string | null;
   lastPublishedAt?: number | null;
   lastPublishedNaddr?: string | null;
   addedAt?: number | null;
@@ -142,6 +143,13 @@ export async function setReleaseLabel(
   return invoke("set_release_label", { releaseId, value });
 }
 
+export async function setReleaseGenre(
+  releaseId: number,
+  value: string | null,
+): Promise<void> {
+  return invoke("set_release_genre", { releaseId, value });
+}
+
 export async function setReleaseCatalogNumber(
   releaseId: number,
   value: string | null,
@@ -152,6 +160,7 @@ export async function setReleaseCatalogNumber(
 export interface LabelCount {
   name: string;
   count: number;
+  dominantGenre: string | null;
 }
 
 export async function listDistinctLabels(): Promise<LabelCount[]> {
