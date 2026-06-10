@@ -37,7 +37,9 @@ export function Section({
         {right && <div className="ml-auto text-fg/80">{right}</div>}
       </header>
       {children != null && children !== false && (
-        <div className="text-sm text-fg/90">{children}</div>
+        <div className="text-sm text-fg/90 flex-1 flex flex-col">
+          {children}
+        </div>
       )}
     </section>
   );
