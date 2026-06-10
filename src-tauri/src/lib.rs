@@ -699,7 +699,13 @@ fn html_attr_escape(s: &str) -> String {
 pub struct LabelCount {
     pub name: String,
     pub count: i64,
+    // Top-3 most-tagged genres for this label, ranked across all slots
+    // (primary/secondary/tertiary treated as equivalent tallies). Ties
+    // broken alphabetically. Slot N is None when the label has fewer than
+    // N distinct genres tagged across its releases.
     pub dominant_genre: Option<String>,
+    pub dominant_genre_2: Option<String>,
+    pub dominant_genre_3: Option<String>,
 }
 
 // All distinct labels, ordered by release count desc (then alphabetical),
@@ -710,21 +716,29 @@ pub struct LabelCount {
 #[tauri::command]
 fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String> {
     let conn = open(&app)?;
-    // Aggregate label rows + most-common primary genre per label. v2 rule:
-    // label dominance is computed from genre_primary only (see schema/
-    // release.v2.json "Aggregation rule" — weighting secondary/tertiary
-    // is reserved for v2.1+). Subquery groups by (label, genre_primary),
-    // ranks by tally desc with genre asc as the deterministic tie-breaker,
-    // then picks the top row per label. Labels with no primary-genre data
-    // anywhere keep dominant_genre NULL.
+    // Aggregate label rows + top-3 most-tagged genres per label, across
+    // ALL slots (primary/secondary/tertiary treated as equivalent tallies).
+    // Each release contributes 1-3 slot-tags to its label's pool; we tally,
+    // rank by count desc with alphabetical tie-break, then pivot the top
+    // three ranks into three named columns for the IPC payload. Labels with
+    // no genre data anywhere keep all three dominant_* slots NULL.
     let mut stmt = conn
         .prepare(
-            "WITH genre_tally AS (
-               SELECT label, genre_primary AS g, COUNT(*) AS gn
-               FROM releases
-               WHERE label IS NOT NULL AND label <> ''
-                 AND genre_primary IS NOT NULL AND genre_primary <> ''
-               GROUP BY label, genre_primary
+            "WITH slot_tags AS (
+               SELECT label, genre_primary AS g FROM releases
+                 WHERE label IS NOT NULL AND label <> ''
+                   AND genre_primary IS NOT NULL AND genre_primary <> ''
+               UNION ALL
+               SELECT label, genre_secondary FROM releases
+                 WHERE label IS NOT NULL AND label <> ''
+                   AND genre_secondary IS NOT NULL AND genre_secondary <> ''
+               UNION ALL
+               SELECT label, genre_tertiary FROM releases
+                 WHERE label IS NOT NULL AND label <> ''
+                   AND genre_tertiary IS NOT NULL AND genre_tertiary <> ''
+             ),
+             tally AS (
+               SELECT label, g, COUNT(*) AS gn FROM slot_tags GROUP BY label, g
              ),
              ranked AS (
                SELECT label, g,
@@ -732,16 +746,24 @@ fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String
                    PARTITION BY label
                    ORDER BY gn DESC, g COLLATE NOCASE
                  ) AS rk
-               FROM genre_tally
+               FROM tally
              ),
-             dominant AS (
-               SELECT label, g FROM ranked WHERE rk = 1
+             top3 AS (
+               SELECT
+                 label,
+                 MAX(CASE WHEN rk = 1 THEN g END) AS g1,
+                 MAX(CASE WHEN rk = 2 THEN g END) AS g2,
+                 MAX(CASE WHEN rk = 3 THEN g END) AS g3
+               FROM ranked WHERE rk <= 3 GROUP BY label
              )
-             SELECT r.label, COUNT(*) AS n, d.g AS dominant_genre
+             SELECT r.label, COUNT(*) AS n,
+                    t.g1 AS dominant_genre,
+                    t.g2 AS dominant_genre_2,
+                    t.g3 AS dominant_genre_3
              FROM releases r
-             LEFT JOIN dominant d ON d.label = r.label
+             LEFT JOIN top3 t ON t.label = r.label
              WHERE r.label IS NOT NULL AND r.label <> ''
-             GROUP BY r.label, d.g
+             GROUP BY r.label, t.g1, t.g2, t.g3
              ORDER BY n DESC, r.label COLLATE NOCASE
              LIMIT 500",
         )
@@ -752,6 +774,8 @@ fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String
                 name: row.get::<_, String>(0)?,
                 count: row.get::<_, i64>(1)?,
                 dominant_genre: row.get::<_, Option<String>>(2)?,
+                dominant_genre_2: row.get::<_, Option<String>>(3)?,
+                dominant_genre_3: row.get::<_, Option<String>>(4)?,
             })
         })
         .map_err(|e| e.to_string())?;

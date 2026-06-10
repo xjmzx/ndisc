@@ -173,7 +173,13 @@ export async function setReleaseCatalogNumber(
 export interface LabelCount {
   name: string;
   count: number;
+  // Top-3 most-tagged genres for this label, across all slots (slot 0/1/2
+  // tags treated as equivalent tallies); ranked by count desc with
+  // alphabetical tie-break. Slot N is null when the label has fewer than
+  // N distinct genres tagged across its releases.
   dominantGenre: string | null;
+  dominantGenre2: string | null;
+  dominantGenre3: string | null;
 }
 
 export async function listDistinctLabels(): Promise<LabelCount[]> {
