@@ -300,7 +300,7 @@ function StackedBarCard({
 
 // --- RankedRowsCard (Country + Label) ---------------------------------------
 
-const ROWS_PER_PAGE = 12;
+const ROWS_PER_PAGE = 8;
 
 interface RankedRowsCardProps {
   title: string;
