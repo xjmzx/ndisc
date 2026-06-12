@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { RotateCw, FolderOpen, FilePlus, Lock, LogOut } from "lucide-react";
+import {
+  RotateCw,
+  FolderOpen,
+  FilePlus,
+  Lock,
+  LogOut,
+  LineChart,
+} from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   ask,
@@ -12,6 +19,7 @@ import { ReleaseDetail } from "./components/ReleaseDetail";
 import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
+import { StatsView } from "./components/StatsView";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
 import { clearStaleBundleUrls } from "./lib/labelSeed";
 import {
@@ -227,6 +235,11 @@ export default function App() {
     count: 0,
   });
 
+  // Top-level view switch. Stats replaces the 3-panel library grid; the top
+  // nav (title, library stats chip, toolbar) persists across views. Phase 3
+  // wires the LineChart toolbar button to flip this state.
+  const [view, setView] = useState<"library" | "stats">("library");
+
   useEffect(() => {
     initDb()
       .then(setDbPath)
@@ -441,64 +454,85 @@ export default function App() {
               </div>
             </>
           )}
+
+          {/* stats group — digital (cyan) cluster, distinct from mauve/auburn */}
+          <span className="w-px h-6 bg-surface shrink-0" aria-hidden="true" />
+          <ToolbarIconButton
+            tone="digital"
+            pressed={view === "stats"}
+            title={
+              view === "stats"
+                ? "Return to library"
+                : "View library stats"
+            }
+            onClick={() =>
+              setView((v) => (v === "stats" ? "library" : "stats"))
+            }
+          >
+            <LineChart size={14} />
+          </ToolbarIconButton>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
-        <div className="grid grid-cols-1 gap-2 content-start">
-          {lib.active && <LibraryFlowPanel lib={lib} />}
-          <ReleaseList
-            reloadKey={reloadKey}
-            selected={selected}
-            onSelect={selectRelease}
-            onFilterChange={setFilterContext}
-            relays={relays}
-          />
-        </div>
-        <div className="grid grid-cols-1 gap-2 content-start">
-          {selected ? (
-            <ReleaseDetail
-              release={selected}
-              relays={relays}
-              onDeleted={reload}
-              onChanged={handleReleaseChanged}
-              showUndoToast={showUndoToast}
-            />
-          ) : (
-            <AddReleaseForm onAdded={reload} />
-          )}
-          <div className="grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-stretch">
-            <NostrPanel
-              relays={relays}
-              setRelays={setRelays}
-              filterContext={filterContext}
-              npub={npub}
-              onIdentityChanged={onIdentityChanged}
-            />
-            <LabelviewPanel
-              labels={labels}
-              setLabels={setLabels}
+      {view === "library" ? (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
+          <div className="grid grid-cols-1 gap-2 content-start">
+            {lib.active && <LibraryFlowPanel lib={lib} />}
+            <ReleaseList
               reloadKey={reloadKey}
-              onPick={promptAddLabel}
-            />
-            <LabelPanel
-              labels={labels}
-              setLabels={setLabels}
               selected={selected}
-              onClearAll={clearAllLabels}
+              onSelect={selectRelease}
+              onFilterChange={setFilterContext}
               relays={relays}
-              formOpen={labelFormOpen}
-              setFormOpen={setLabelFormOpen}
-              formName={labelFormName}
-              setFormName={setLabelFormName}
-              formUrl={labelFormUrl}
-              setFormUrl={setLabelFormUrl}
-              formSite={labelFormSite}
-              setFormSite={setLabelFormSite}
             />
           </div>
+          <div className="grid grid-cols-1 gap-2 content-start">
+            {selected ? (
+              <ReleaseDetail
+                release={selected}
+                relays={relays}
+                onDeleted={reload}
+                onChanged={handleReleaseChanged}
+                showUndoToast={showUndoToast}
+              />
+            ) : (
+              <AddReleaseForm onAdded={reload} />
+            )}
+            <div className="grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-stretch">
+              <NostrPanel
+                relays={relays}
+                setRelays={setRelays}
+                filterContext={filterContext}
+                npub={npub}
+                onIdentityChanged={onIdentityChanged}
+              />
+              <LabelviewPanel
+                labels={labels}
+                setLabels={setLabels}
+                reloadKey={reloadKey}
+                onPick={promptAddLabel}
+              />
+              <LabelPanel
+                labels={labels}
+                setLabels={setLabels}
+                selected={selected}
+                onClearAll={clearAllLabels}
+                relays={relays}
+                formOpen={labelFormOpen}
+                setFormOpen={setLabelFormOpen}
+                formName={labelFormName}
+                setFormName={setLabelFormName}
+                formUrl={labelFormUrl}
+                setFormUrl={setLabelFormUrl}
+                formSite={labelFormSite}
+                setFormSite={setLabelFormSite}
+              />
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <StatsView reloadKey={reloadKey} />
+      )}
 
       {/* Three columns: stack info left, identity centred, db path right —
           justify-between buffers each from the next. */}

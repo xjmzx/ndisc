@@ -46,6 +46,25 @@ export interface Stats {
   yearMax: number | null;
 }
 
+// Multi-dimension library composition for the Stats view. Each breakdown
+// is a list of { value, count } rows. Year rows hold the year as text
+// ("1968") — parse to int if you need positions on a sparkline. Sorted
+// server-side: count DESC + alpha tiebreak for genre/country/medium/label,
+// year ASC for year. Future dimensions (e.g. a price rollup mirroring
+// Discogs) drop in as new sibling fields without changing BreakdownRow.
+export interface BreakdownRow {
+  value: string;
+  count: number;
+}
+
+export interface LibraryBreakdown {
+  genre: BreakdownRow[];
+  country: BreakdownRow[];
+  year: BreakdownRow[];
+  medium: BreakdownRow[];
+  label: BreakdownRow[];
+}
+
 export interface ImportSummary {
   scanned: number;
   imported: number;
@@ -211,6 +230,10 @@ export async function exportMarkdown(
 
 export async function getStats(): Promise<Stats> {
   return invoke<Stats>("get_stats");
+}
+
+export async function getLibraryBreakdown(): Promise<LibraryBreakdown> {
+  return invoke<LibraryBreakdown>("get_library_breakdown");
 }
 
 export async function scanDirectory(root: string): Promise<ScanReport> {
