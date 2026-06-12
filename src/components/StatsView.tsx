@@ -502,7 +502,7 @@ function YearCard({ rows, className }: YearCardProps) {
             return (
               <div
                 key={g.decade}
-                className="flex items-end gap-px"
+                className="flex items-end gap-px h-full"
                 style={{ flexGrow: g.years.length, flexBasis: 0 }}
               >
                 {g.years.map((d) => (
