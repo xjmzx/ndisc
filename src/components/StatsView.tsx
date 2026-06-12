@@ -52,13 +52,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-      <StackedBarCard
-        title="Genre"
-        rows={genre}
-        colorFor={(v) => `rgb(var(--c-g-${v}))`}
-        displayFor={genreDisplay}
-        scalingExponent={0.7}
-      />
+      {/* Row 1: Medium | Year */}
       <StackedBarCard
         title="Medium"
         rows={medium}
@@ -66,6 +60,8 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         displayFor={mediumLabel}
         scalingExponent={1.0}
       />
+      <YearCard rows={year} />
+      {/* Row 2: Format | Genre */}
       <StackedBarCard
         title="Format"
         rows={format}
@@ -73,7 +69,14 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         displayFor={formatLabel}
         scalingExponent={1.0}
       />
-      <YearCard rows={year} />
+      <StackedBarCard
+        title="Genre"
+        rows={genre}
+        colorFor={(v) => `rgb(var(--c-g-${v}))`}
+        displayFor={genreDisplay}
+        scalingExponent={0.7}
+      />
+      {/* Row 3: Country | Label */}
       <RankedRowsCard
         title="Country"
         rows={country}
