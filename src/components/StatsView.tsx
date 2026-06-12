@@ -181,6 +181,14 @@ function pct(count: number, totalCount: number): string {
   return p >= 10 ? `${Math.round(p)}%` : `${p.toFixed(1)}%`;
 }
 
+// Interpolate a per-decade tint along the mauve → digital axis using
+// CSS color-mix so both themes adapt: fizx renders plum → cyan, upleb
+// renders gold → bright-orange. Single-decade case returns pure mauve.
+function decadeTint(index: number, total: number): string {
+  const pct = total <= 1 ? 0 : (index / (total - 1)) * 100;
+  return `color-mix(in srgb, rgb(var(--c-mauve)), rgb(var(--c-digital)) ${pct}%)`;
+}
+
 // --- StackedBarCard (Genre + Medium + Format) -------------------------------
 
 interface StackedBarCardProps {
@@ -512,26 +520,40 @@ function YearCard({ rows, className }: YearCardProps) {
           ))}
         </div>
         {/* Decade lattice — each segment flex-grows by year count so it
-            aligns under its segment of the sparkline. */}
+            aligns under its segment of the sparkline. A per-decade tint
+            is interpolated across the mauve→digital axis (fizx: plum→cyan;
+            upleb: gold→bright-orange) so the lattice reads as a
+            chronological gradient. Tint paints a thin top strip + the
+            count number; the cell bg stays dark for legibility. */}
         <div
           className="flex h-7 gap-px rounded-sm overflow-hidden"
           aria-label="releases per decade"
         >
-          {decadeList.map((d) => (
-            <div
-              key={d.decade}
-              className="bg-surface flex flex-col items-center justify-center
-                         text-[10px] font-mono leading-tight overflow-hidden
-                         px-1"
-              style={{ flexGrow: d.years, flexBasis: 0 }}
-              title={`${d.decade}s: ${d.count.toLocaleString()}`}
-            >
-              <span className="text-muted truncate">{d.decade}s</span>
-              <span className="text-accent tabular-nums">
-                {d.count.toLocaleString()}
-              </span>
-            </div>
-          ))}
+          {decadeList.map((d, i) => {
+            const tint = decadeTint(i, decadeList.length);
+            return (
+              <div
+                key={d.decade}
+                className="relative bg-surface flex flex-col items-center
+                           justify-center text-[10px] font-mono leading-tight
+                           overflow-hidden px-1"
+                style={{ flexGrow: d.years, flexBasis: 0 }}
+                title={`${d.decade}s: ${d.count.toLocaleString()}`}
+              >
+                <span
+                  className="absolute top-0 left-0 right-0 h-1"
+                  style={{ background: tint }}
+                  aria-hidden="true"
+                />
+                <span className="text-muted truncate mt-0.5">
+                  {d.decade}s
+                </span>
+                <span className="tabular-nums" style={{ color: tint }}>
+                  {d.count.toLocaleString()}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </Section>
