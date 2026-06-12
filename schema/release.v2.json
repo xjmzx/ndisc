@@ -65,7 +65,7 @@
   "genreSlugs": {
     "_comment": "The complete set of valid `genre` tag values in v2. Slug expansions inside a v2-compatible scheme are permitted by emitter-and-reader convention (new optional slug added to this list) provided existing slugs remain stable. Renaming or removing a slug requires a v3 bump. Note: `mains` vs `electronicSubs` is a visual / palette grouping (sub-slugs share the magenta hue family for chip colour); semantically all 18 slugs are pure peers — see genreInvariants.",
     "mains": [
-      "classical",
+      "classical-folk",
       "downtempo",
       "electronic",
       "experimental",

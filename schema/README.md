@@ -32,7 +32,7 @@ flagging it as non-authoritative; do not cite them as spec.
                                  SHA-256 pinned in repo, lockstep across sites
 ```
 
-## End-state summary (as of v2.1.1, 2026-06-10)
+## End-state summary (as of v2.1.2, 2026-06-12)
 
 For glmps's catch-up: this section captures the current contract state in
 plain language. The wire spec in `release.v2.json` is authoritative; this
@@ -53,7 +53,7 @@ addition is a repeatable optional `genre` tag.
 - **Each value** is one of 18 valid slugs:
 
 ```
-mains:           classical, downtempo, electronic, experimental, funk,
+mains:           classical-folk, downtempo, electronic, experimental, funk,
                  jazz, pop, reggae, rock, soundtrack
 electronic subs: acid, breaks, dnb-jungle, drone-noise, dub, electro,
                  footwork-trap, techno
@@ -80,7 +80,7 @@ Same triplet values on both ends:
 
 ```
 mains
-  --c-g-classical:     232 220 195   --c-g-jazz:        199 127  78
+  --c-g-classical-folk:232 220 195   --c-g-jazz:        199 127  78
   --c-g-downtempo:     122  74 140   --c-g-pop:         255 165 201
   --c-g-electronic:    255  95 186   --c-g-reggae:       90 138  79
   --c-g-experimental:  106 168 168   --c-g-rock:        176  57  46
@@ -96,10 +96,10 @@ electronic subs (magenta hue family — lightness/saturation only)
 
 ### Compound slug display
 
-Four sub-slugs are compound (`dnb-jungle`, `drone-noise`, `footwork-trap`).
-Stored hyphenated on the wire; rendered in human-facing UI with the slash
-form via `slug.replace(/-/g, "/")`. The helper is idempotent for non-
-compound slugs.
+Five slugs are compound (`classical-folk` in mains; `dnb-jungle`,
+`drone-noise`, `footwork-trap` in subs). Stored hyphenated on the wire;
+rendered in human-facing UI with the slash form via
+`slug.replace(/-/g, "/")`. The helper is idempotent for non-compound slugs.
 
 ### Kind 5 deletion (unchanged)
 
@@ -129,9 +129,10 @@ amendments without forcing a v3 bump:
 - **Additive slug additions** inside `genreSlugs` — new optional slug
   appended; existing slugs unchanged.
 - **Single-slug renames** within the v2.1.x series (e.g. v2.1.1
-  `dub-techno` → `dub`). Ndisc-side migration is a one-shot
-  `UPDATE` in `backfill_genre_slug_renames`; glmps re-vendors. Affected
-  releases need re-publishing for the wire data to refresh.
+  `dub-techno` → `dub`; v2.1.2 `classical` → `classical-folk`). Ndisc-side
+  migration is a one-shot `UPDATE` in `backfill_genre_slug_renames`;
+  glmps re-vendors. Affected releases need re-publishing for the wire data
+  to refresh.
 - **Constraint relaxations** (e.g. v2.1 dropping `noParentWithOwnSub`) —
   strictly more permissive, all v2.0 emitters remain valid.
 
