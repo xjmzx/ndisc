@@ -24,14 +24,21 @@ Both ends are free to choose the pixel sizes that suit their viewport.
 
 ### `genre-distribution`
 
-Stacked horizontal bar showing share of a release set by primary genre.
+Stacked horizontal bar showing share of a release set by genre.
 
-- **Reads:** `release.genres[0]` (primary slot)
-- **Aggregation:** count-by-primary — each release contributes exactly once
+- **Reads:** `release.genres[0..2]` (all populated slots)
+- **Aggregation:** count-by-any-slot — a release with N distinct slugs
+  contributes N tallies (one per slug). Consistent with v2.1's pure-peer
+  model: secondary and tertiary genres are equally part of a release's
+  sound, so they contribute equally to library composition counts.
+  Slot order is preserved on the wire as emission priority, but isn't
+  privileged for stats rollups.
 - **Palette:** `--c-g-<slug>`
 - **Scaling note:** sub-linear by default so the dominant slug doesn't
-  drown the tail. glmps uses `k = 0.5` (square root). ndisc may pick its own.
-- **Implemented in:** glmps `GenreBar` (`src/components/GenreBar.tsx`)
+  drown the tail. glmps uses `k = 0.5` (square root). ndisc uses
+  `k = 0.7`. Each project picks its own.
+- **Implemented in:** glmps `GenreBar` (`src/components/GenreBar.tsx`);
+  ndisc `StatsView` Genre card (`src/components/StatsView.tsx`)
 
 ### `genre-multi-slot-indicator`
 
@@ -46,40 +53,52 @@ Per-release chip showing up to three slot-ordered slugs.
 
 ### `genre-dominant-of-set`
 
-Single colour (or top-N) summarising a labelled subset's primary slugs.
+Single colour (or top-N) summarising a labelled subset's genre slugs.
 
-- **Reads:** `release.genres[0]` across a subset (e.g. all releases on a
-  label, in a year, on a format)
-- **Aggregation:** count-by-primary, then modal (or top-N ranked)
+- **Reads:** `release.genres[0..2]` across a subset (e.g. all releases
+  on a label, in a year, on a format)
+- **Aggregation:** count-by-any-slot, then modal (or top-N ranked).
+  Same justification as `genre-distribution` above — pure-peer slot
+  model, no slot privileging.
 - **Palette:** `--c-g-<slug>`
 - **Scaling note:** n/a (point label)
-- **Implemented in:** glmps `LabelCycler` (top-3 dots beside label name)
+- **Implemented in:** glmps `LabelCycler` (top-3 dots beside label name);
+  ndisc `LabelviewPanel` (top-3 dots per row, via the
+  `list_distinct_labels` CTE)
 
 ---
 
-## Format family — ndisc-side, to populate
+## Format family
 
 ### `format-distribution`
 
 - **Reads:** `release.format` collapsed to a display bucket. The bucket
-  map is project-specific (`formatGroup()` in glmps consolidates to 8
-  buckets; ndisc may differ).
+  map is project-specific — `formatGroup()` in glmps consolidates to 8
+  buckets; ndisc's `bucket_format()` (in `src-tauri/src/lib.rs`) maps
+  to 9: `lossless`, `lossy`, `vinyl_12`, `vinyl_10`, `vinyl_7`, `cd`,
+  `cassette`, `box`, `other_physical`. Bucket sets diverging is fine —
+  no shared contract.
 - **Aggregation:** count-by-bucket
-- **Palette:** *(propose `--c-f-<bucket>` if a shared palette is wanted;
-  document under README's "Shared palette" section before adding here)*
-- **Implemented in:** ndisc *(to fill)*
+- **Palette:** project-specific. ndisc reuses system tokens (`ok` for
+  lossless, `warn` for lossy, a `mauve`-shaded ramp for vinyl tiers,
+  an `auburn`-shaded ramp for the other-physical sub-tiers). No
+  shared `--c-f-<bucket>` palette family yet — defer until both ends
+  have ship-ready visuals and want lockstep colours.
+- **Implemented in:** ndisc `StatsView` Format card
+  (`src/components/StatsView.tsx`)
 
 ---
 
-## Medium family — ndisc-side, to populate
+## Medium family
 
 ### `medium-distribution`
 
 - **Reads:** `release.medium` (`physical` | `digital` | absent)
 - **Aggregation:** count-by-medium
-- **Palette:** *(both ends already render physical/digital in distinct
-  colours; propose reusing those tokens rather than minting new ones)*
-- **Implemented in:** ndisc *(to fill)*
+- **Palette:** physical → `--c-mauve`, digital → `--c-digital`. Both
+  ends are free to reuse those tokens; no need to mint new ones.
+- **Implemented in:** ndisc `StatsView` Medium card
+  (`src/components/StatsView.tsx`)
 
 ---
 
@@ -88,9 +107,11 @@ Single colour (or top-N) summarising a labelled subset's primary slugs.
 - **Slug-keyed palette:** charts that colour by a v2 genre slug pull from
   `rgb(var(--c-g-<slug>))` — never inline hex. Palette amendments
   (e.g. v2.1.3 `electronic` → grey) propagate via the CSS var.
-- **Aggregation defaults:** library stats use primary-only counts; filter
-  predicates use any-slot match. Split per `v2-proposal-glmps-reply.md`
-  (historical), applies across both ends.
+- **Aggregation defaults:** library stats and filter predicates BOTH use
+  any-slot counts. v2.1's pure-peer model removed the semantic gap
+  between primary and the other slots; designating a primary for stats
+  rollups would just smuggle that gap back in. Slot order on the wire
+  is still emission priority — but it isn't privileged in aggregation.
 - **Tuning autonomy:** scaling curves, heights, gaps, paddings, and the
   width of bars are project-specific. Don't try to match pixels — match
   semantics.
