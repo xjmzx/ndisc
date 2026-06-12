@@ -64,14 +64,14 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         colorFor={mediumColor}
         scalingExponent={1.0}
       />
-      <YearCard rows={year} />
-      <RankedRowsCard title="Country" rows={country} topN={15} />
+      <YearCard rows={year} className="md:col-span-2" />
       <RankedRowsCard
-        title="Label"
-        rows={label}
-        topN={20}
-        className="md:col-span-2"
+        title="Country"
+        rows={country}
+        topN={15}
+        scalingExponent={0.7}
       />
+      <RankedRowsCard title="Label" rows={label} topN={20} />
     </div>
   );
 }
@@ -203,6 +203,11 @@ interface RankedRowsCardProps {
   title: string;
   rows: BreakdownRow[];
   topN: number;
+  // Sub-linear (< 1) softens bar widths so a dominant top row doesn't crush
+  // the tail's visual readability — same trick the glmps GenreBar uses.
+  // Counts and percentages in the row text stay honest; only the bar fill
+  // is cosmetically scaled. Default 1.0 for the linear, honest reading.
+  scalingExponent?: number;
   className?: string;
 }
 
@@ -210,6 +215,7 @@ function RankedRowsCard({
   title,
   rows,
   topN,
+  scalingExponent = 1.0,
   className,
 }: RankedRowsCardProps) {
   const totalCount = total(rows);
@@ -221,6 +227,12 @@ function RankedRowsCard({
   // of THAT, not of the long tail — keeps the visual contrast useful when
   // the head and tail counts differ by an order of magnitude.
   const maxVisible = head.length > 0 ? head[0].count : 1;
+  const widthPctFor = (count: number) =>
+    maxVisible === 0
+      ? 0
+      : (Math.pow(count, scalingExponent) /
+          Math.pow(maxVisible, scalingExponent)) *
+        100;
 
   return (
     <Section
@@ -244,7 +256,7 @@ function RankedRowsCard({
               label={r.value}
               count={r.count}
               totalCount={totalCount}
-              widthPct={(r.count / maxVisible) * 100}
+              widthPct={widthPctFor(r.count)}
             />
           ))}
           {tail.length > 0 && (
@@ -252,7 +264,7 @@ function RankedRowsCard({
               label={`Other (${tail.length})`}
               count={tailCount}
               totalCount={totalCount}
-              widthPct={(tailCount / maxVisible) * 100}
+              widthPct={widthPctFor(tailCount)}
               muted
             />
           )}
