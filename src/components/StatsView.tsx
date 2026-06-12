@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Section } from "./Section";
 import {
   getLibraryBreakdown,
@@ -47,7 +48,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
     );
   }
 
-  const { genre, country, year, format, label } = state.data;
+  const { genre, country, year, medium, format, label } = state.data;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -59,20 +60,31 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         scalingExponent={0.7}
       />
       <StackedBarCard
+        title="Medium"
+        rows={medium}
+        colorFor={mediumColor}
+        displayFor={mediumLabel}
+        scalingExponent={1.0}
+      />
+      <StackedBarCard
         title="Format"
         rows={format}
         colorFor={formatColor}
         displayFor={formatLabel}
         scalingExponent={1.0}
       />
-      <YearCard rows={year} className="md:col-span-2" />
+      <YearCard rows={year} />
       <RankedRowsCard
         title="Country"
         rows={country}
-        topN={15}
+        reloadKey={reloadKey}
         scalingExponent={0.7}
       />
-      <RankedRowsCard title="Label" rows={label} topN={20} />
+      <RankedRowsCard
+        title="Label"
+        rows={label}
+        reloadKey={reloadKey}
+      />
     </div>
   );
 }
@@ -85,18 +97,45 @@ function genreDisplay(slug: string): string {
   return slug.replace(/-/g, "/");
 }
 
-// Tone mapping for the 4 Format-quality buckets. Semantic colour choices:
-// lossless reads as the "preserved" tier (ok green), lossy as "compromised"
-// digital (warn amber, less alarming than alert), vinyl as the warm
-// classic-physical tier (mauve), other physical as residual (muted).
+function mediumColor(value: string): string {
+  switch (value) {
+    case "physical":
+      return "rgb(var(--c-mauve))";
+    case "digital":
+      return "rgb(var(--c-digital))";
+    default:
+      return "rgb(var(--c-muted))";
+  }
+}
+
+function mediumLabel(value: string): string {
+  if (value === "physical") return "Physical";
+  if (value === "digital") return "Digital";
+  return value;
+}
+
+// Tone mapping for the 9 Format buckets. Two semantic anchors (lossless=ok,
+// lossy=warn) for the digital tier, then a mauve hue family for vinyl (size
+// tiers descending in saturation) and an auburn hue family for the residual
+// physical sub-tiers (CD / cassette / box).
 function formatColor(value: string): string {
   switch (value) {
     case "lossless":
       return "rgb(var(--c-ok))";
     case "lossy":
       return "rgb(var(--c-warn))";
-    case "vinyl":
+    case "vinyl_12":
       return "rgb(var(--c-mauve))";
+    case "vinyl_10":
+      return "rgb(var(--c-mauve) / 0.7)";
+    case "vinyl_7":
+      return "rgb(var(--c-mauve) / 0.45)";
+    case "cd":
+      return "rgb(var(--c-auburn))";
+    case "cassette":
+      return "rgb(var(--c-auburn) / 0.7)";
+    case "box":
+      return "rgb(var(--c-auburn) / 0.45)";
     case "other_physical":
       return "rgb(var(--c-muted))";
     default:
@@ -104,16 +143,24 @@ function formatColor(value: string): string {
   }
 }
 
-// Human-facing labels for the format buckets. Wire form stays snake_case
-// per the bucket_format() Rust contract.
 function formatLabel(value: string): string {
   switch (value) {
     case "lossless":
       return "Lossless";
     case "lossy":
       return "Lossy";
-    case "vinyl":
-      return "Vinyl";
+    case "vinyl_12":
+      return "Vinyl 12″";
+    case "vinyl_10":
+      return "Vinyl 10″";
+    case "vinyl_7":
+      return "Vinyl 7″";
+    case "cd":
+      return "CD";
+    case "cassette":
+      return "Cassette";
+    case "box":
+      return "Box set";
     case "other_physical":
       return "Other physical";
     default:
@@ -131,7 +178,7 @@ function pct(count: number, totalCount: number): string {
   return p >= 10 ? `${Math.round(p)}%` : `${p.toFixed(1)}%`;
 }
 
-// --- StackedBarCard (Genre + Medium) ----------------------------------------
+// --- StackedBarCard (Genre + Medium + Format) -------------------------------
 
 interface StackedBarCardProps {
   title: string;
@@ -139,7 +186,7 @@ interface StackedBarCardProps {
   colorFor: (value: string) => string;
   displayFor?: (value: string) => string;
   // Sub-linear (< 1) softens dominant slugs so the tail stays readable;
-  // linear (= 1) is honest for small categorical sets like medium.
+  // linear (= 1) is honest for small categorical sets.
   scalingExponent: number;
   className?: string;
 }
@@ -223,14 +270,18 @@ function StackedBarCard({
 
 // --- RankedRowsCard (Country + Label) ---------------------------------------
 
+const ROWS_PER_PAGE = 12;
+
 interface RankedRowsCardProps {
   title: string;
   rows: BreakdownRow[];
-  topN: number;
+  // Re-fetch trigger from the parent. When it changes (after a refresh /
+  // import / publish), the card resets to page 0 so the user doesn't land
+  // on a now-invalid trailing page.
+  reloadKey: number;
   // Sub-linear (< 1) softens bar widths so a dominant top row doesn't crush
-  // the tail's visual readability — same trick the glmps GenreBar uses.
-  // Counts and percentages in the row text stay honest; only the bar fill
-  // is cosmetically scaled. Default 1.0 for the linear, honest reading.
+  // the tail's visual readability. Counts and percentages in the row text
+  // stay honest; only the bar fill is cosmetically scaled. Default 1.0.
   scalingExponent?: number;
   className?: string;
 }
@@ -238,25 +289,38 @@ interface RankedRowsCardProps {
 function RankedRowsCard({
   title,
   rows,
-  topN,
+  reloadKey,
   scalingExponent = 1.0,
   className,
 }: RankedRowsCardProps) {
   const totalCount = total(rows);
-  const head = rows.slice(0, topN);
-  const tail = rows.slice(topN);
-  const tailCount = tail.reduce((a, r) => a + r.count, 0);
-  // Bar width is relative to the largest visible row (head[0]), so the top
-  // entry's bar always reads as full and the rest are honest proportions
-  // of THAT, not of the long tail — keeps the visual contrast useful when
-  // the head and tail counts differ by an order of magnitude.
-  const maxVisible = head.length > 0 ? head[0].count : 1;
+  const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+  const [page, setPage] = useState(0);
+
+  // Reset to page 0 on reload — the list shape may have changed underneath.
+  useEffect(() => {
+    setPage(0);
+  }, [reloadKey]);
+
+  // Clamp page if rows shrink without a reloadKey bump.
+  const safePage = Math.min(page, totalPages - 1);
+  const start = safePage * ROWS_PER_PAGE;
+  const end = Math.min(start + ROWS_PER_PAGE, rows.length);
+  const visible = rows.slice(start, end);
+
+  // Bar widths are absolute (relative to the catalogue's #1 row) so that
+  // paginating reads honestly — page 2's bars genuinely look smaller than
+  // page 1's because they ARE smaller. Sub-linear scaling helps when the
+  // head dominates by an order of magnitude.
+  const headCount = rows.length > 0 ? rows[0].count : 1;
   const widthPctFor = (count: number) =>
-    maxVisible === 0
+    headCount === 0
       ? 0
       : (Math.pow(count, scalingExponent) /
-          Math.pow(maxVisible, scalingExponent)) *
+          Math.pow(headCount, scalingExponent)) *
         100;
+
+  const showPager = totalPages > 1;
 
   return (
     <Section
@@ -273,55 +337,82 @@ function RankedRowsCard({
       {rows.length === 0 ? (
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
-        <ul className="text-xs font-mono space-y-1">
-          {head.map((r) => (
-            <RankedRow
-              key={r.value}
-              label={r.value}
-              count={r.count}
-              totalCount={totalCount}
-              widthPct={widthPctFor(r.count)}
-            />
-          ))}
-          {tail.length > 0 && (
-            <RankedRow
-              label={`Other (${tail.length})`}
-              count={tailCount}
-              totalCount={totalCount}
-              widthPct={widthPctFor(tailCount)}
-              muted
-            />
+        <div className="flex flex-col gap-2 flex-1">
+          <ul className="text-xs font-mono space-y-1">
+            {visible.map((r, i) => (
+              <RankedRow
+                key={r.value}
+                rank={start + i + 1}
+                label={r.value}
+                count={r.count}
+                totalCount={totalCount}
+                widthPct={widthPctFor(r.count)}
+              />
+            ))}
+          </ul>
+          {showPager && (
+            <div
+              className="mt-auto flex items-center justify-end gap-2
+                         pt-1 text-[10px] font-mono text-muted tabular-nums"
+            >
+              <span>
+                {start + 1}–{end} of {rows.length.toLocaleString()}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={safePage === 0}
+                title="Previous page"
+                aria-label="Previous page"
+                className="p-1 rounded hover:bg-surface
+                           disabled:opacity-30 disabled:cursor-not-allowed
+                           text-muted hover:text-accent transition-colors"
+              >
+                <ChevronLeft size={12} />
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPage((p) => Math.min(totalPages - 1, p + 1))
+                }
+                disabled={safePage >= totalPages - 1}
+                title="Next page"
+                aria-label="Next page"
+                className="p-1 rounded hover:bg-surface
+                           disabled:opacity-30 disabled:cursor-not-allowed
+                           text-muted hover:text-accent transition-colors"
+              >
+                <ChevronRight size={12} />
+              </button>
+            </div>
           )}
-        </ul>
+        </div>
       )}
     </Section>
   );
 }
 
 function RankedRow({
+  rank,
   label,
   count,
   totalCount,
   widthPct,
-  muted,
 }: {
+  rank: number;
   label: string;
   count: number;
   totalCount: number;
   widthPct: number;
-  muted?: boolean;
 }) {
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_3.5rem_2.5rem] items-center gap-2 tabular-nums">
+    <li className="grid grid-cols-[1.5rem_minmax(0,1fr)_3.5rem_2.5rem] items-center gap-2 tabular-nums">
+      <span className="text-muted text-right text-[10px]">{rank}.</span>
       <div className="min-w-0">
-        <div
-          className={`truncate ${muted ? "text-muted italic" : "text-fg/85"}`}
-        >
-          {label}
-        </div>
+        <div className="truncate text-fg/85">{label}</div>
         <div className="h-0.5 mt-0.5 rounded-full bg-surface overflow-hidden">
           <div
-            className={`h-full ${muted ? "bg-muted/60" : "bg-accent"} transition-[width] duration-150`}
+            className="h-full bg-accent transition-[width] duration-150"
             style={{ width: `${widthPct}%` }}
           />
         </div>
