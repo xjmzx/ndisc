@@ -82,6 +82,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         rows={country}
         reloadKey={reloadKey}
         scalingExponent={0.7}
+        gradient
       />
       <RankedRowsCard
         title="Label"
@@ -181,10 +182,11 @@ function pct(count: number, totalCount: number): string {
   return p >= 10 ? `${Math.round(p)}%` : `${p.toFixed(1)}%`;
 }
 
-// Interpolate a per-decade tint along the mauve → digital axis using
+// Interpolate a positional tint along the mauve → digital theme axis using
 // CSS color-mix so both themes adapt: fizx renders plum → cyan, upleb
-// renders gold → bright-orange. Single-decade case returns pure mauve.
-function decadeTint(index: number, total: number): string {
+// renders gold → bright-orange. Index 0 = pure mauve, last index = pure
+// digital. Single-item case returns pure mauve.
+function gradientTint(index: number, total: number): string {
   const pct = total <= 1 ? 0 : (index / (total - 1)) * 100;
   return `color-mix(in srgb, rgb(var(--c-mauve)), rgb(var(--c-digital)) ${pct}%)`;
 }
@@ -294,6 +296,11 @@ interface RankedRowsCardProps {
   // the tail's visual readability. Counts and percentages in the row text
   // stay honest; only the bar fill is cosmetically scaled. Default 1.0.
   scalingExponent?: number;
+  // When true, each row's bar fill is tinted along the mauve → digital
+  // gradient by its global rank (1 → first, rows.length → last). Reads as
+  // a vertical chronology across pagination — page 1's bars start mauve;
+  // the last page's land at digital.
+  gradient?: boolean;
   className?: string;
 }
 
@@ -302,6 +309,7 @@ function RankedRowsCard({
   rows,
   reloadKey,
   scalingExponent = 1.0,
+  gradient = false,
   className,
 }: RankedRowsCardProps) {
   const totalCount = total(rows);
@@ -350,16 +358,20 @@ function RankedRowsCard({
       ) : (
         <div className="flex flex-col gap-2 flex-1">
           <ul className="text-xs font-mono space-y-1">
-            {visible.map((r, i) => (
-              <RankedRow
-                key={r.value}
-                rank={start + i + 1}
-                label={r.value}
-                count={r.count}
-                totalCount={totalCount}
-                widthPct={widthPctFor(r.count)}
-              />
-            ))}
+            {visible.map((r, i) => {
+              const rank = start + i + 1;
+              return (
+                <RankedRow
+                  key={r.value}
+                  rank={rank}
+                  label={r.value}
+                  count={r.count}
+                  totalCount={totalCount}
+                  widthPct={widthPctFor(r.count)}
+                  tint={gradient ? gradientTint(rank - 1, rows.length) : undefined}
+                />
+              );
+            })}
           </ul>
           {showPager && (
             <div
@@ -409,12 +421,16 @@ function RankedRow({
   count,
   totalCount,
   widthPct,
+  tint,
 }: {
   rank: number;
   label: string;
   count: number;
   totalCount: number;
   widthPct: number;
+  // When set, used as the bar fill color (overrides bg-accent). Comes from
+  // the parent's positional gradientTint() in gradient mode.
+  tint?: string;
 }) {
   return (
     <li className="grid grid-cols-[1.5rem_minmax(0,1fr)_3.5rem_2.5rem] items-center gap-2 tabular-nums">
@@ -423,8 +439,11 @@ function RankedRow({
         <div className="truncate text-fg/85">{label}</div>
         <div className="h-0.5 mt-0.5 rounded-full bg-surface overflow-hidden">
           <div
-            className="h-full bg-accent transition-[width] duration-150"
-            style={{ width: `${widthPct}%` }}
+            className={`h-full transition-[width] duration-150 ${tint ? "" : "bg-accent"}`}
+            style={{
+              width: `${widthPct}%`,
+              ...(tint ? { backgroundColor: tint } : {}),
+            }}
           />
         </div>
       </div>
@@ -498,7 +517,7 @@ function YearCard({ rows, className }: YearCardProps) {
           aria-label="releases per year"
         >
           {decadeGroups.map((g, i) => {
-            const tint = decadeTint(i, decadeGroups.length);
+            const tint = gradientTint(i, decadeGroups.length);
             return (
               <div
                 key={g.decade}
