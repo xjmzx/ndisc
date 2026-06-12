@@ -485,6 +485,13 @@ interface YearCardProps {
   className?: string;
 }
 
+// Rolling window for the YEAR card. The chart always spans the last
+// YEAR_WINDOW years up to (and including) the current calendar year, so
+// releases drift off the left edge as time passes. Today=2026 → window
+// is 1977–2026. Releases tagged earlier than the window are silently
+// excluded from this chart; they still show up everywhere else.
+const YEAR_WINDOW = 50;
+
 function YearCard({ rows, className }: YearCardProps) {
   // Parse "1968" → 1968; ignore unparseable rows defensively.
   const parsed: { year: number; count: number }[] = rows
@@ -499,9 +506,17 @@ function YearCard({ rows, className }: YearCardProps) {
     );
   }
 
-  const minYear = parsed[0].year;
-  const maxYear = parsed[parsed.length - 1].year;
-  const lookup = new Map(parsed.map((r) => [r.year, r.count]));
+  const currentYear = new Date().getFullYear();
+  const windowStart = currentYear - YEAR_WINDOW + 1;
+  const maxYear = currentYear;
+  const minYear = windowStart;
+  // Keep only in-window years for the lookup; out-of-window data is
+  // dropped from this chart by design.
+  const lookup = new Map(
+    parsed
+      .filter((p) => p.year >= windowStart && p.year <= currentYear)
+      .map((p) => [p.year, p.count]),
+  );
 
   // Group by decade — each group holds the densified year sequence for
   // that decade. Densifying ensures every year in the visible range gets
