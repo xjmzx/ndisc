@@ -75,6 +75,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         colorFor={(v) => `rgb(var(--c-g-${v}))`}
         displayFor={genreDisplay}
         scalingExponent={0.7}
+        unit="tally"
       />
       {/* Row 3: Country | Label */}
       <RankedRowsCard
@@ -218,6 +219,11 @@ interface StackedBarCardProps {
   // Sub-linear (< 1) softens dominant slugs so the tail stays readable;
   // linear (= 1) is honest for small categorical sets.
   scalingExponent: number;
+  // Suffix appended after the total in the right header. Pass "tally"
+  // when the chart's count can exceed the release count (e.g. Genre,
+  // where a release contributes a tally per slot). Pass "" when the
+  // count is 1:1 with releases (Medium, Format).
+  unit?: string;
   className?: string;
 }
 
@@ -227,6 +233,7 @@ function StackedBarCard({
   colorFor,
   displayFor = (v) => v,
   scalingExponent,
+  unit = "",
   className,
 }: StackedBarCardProps) {
   const totalCount = total(rows);
@@ -244,7 +251,8 @@ function StackedBarCard({
       title={title}
       right={
         <span className="text-xs text-muted font-mono">
-          {totalCount.toLocaleString()} tally
+          {totalCount.toLocaleString()}
+          {unit && ` ${unit}`}
         </span>
       }
       className={className}
