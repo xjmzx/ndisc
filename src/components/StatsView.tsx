@@ -88,7 +88,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         title="Label"
         rows={label}
         reloadKey={reloadKey}
-        tintFor={(row) => labelTierTint(row.count)}
+        tintFor={(_row, rank, total) => labelTierTint(rank, total)}
       />
     </div>
   );
@@ -192,18 +192,20 @@ function gradientTint(index: number, total: number): string {
   return `color-mix(in srgb, rgb(var(--c-mauve)), rgb(var(--c-digital)) ${pct}%)`;
 }
 
-// 4-tier count-based palette for labels. Each label deterministically
-// lands in a tier by release count, so new labels arrive at the muted
-// tail and graduate as they accumulate. Thresholds fit the typical
-// long-tail label distribution: ~55% single-release tail, a thinner
-// core of 10+-release labels at the top. Palette runs hot → cool →
-// neutral as count drops, so the highest tier reads as the most
-// saturated and distinct from the default accent fill.
-function labelTierTint(count: number): string {
-  if (count >= 10) return "rgb(var(--c-auburn))"; // core — saturated warm
-  if (count >= 5) return "rgb(var(--c-mauve))"; // frequent — warm secondary
-  if (count >= 2) return "rgb(var(--c-digital))"; // common — cool tertiary
-  return "rgb(var(--c-muted))"; // tail (count=1) — neutral
+// Positional gradient for labels, chunked every 5 ranks. Each group of 5
+// adjacent ranks shares a tint, with successive groups stepping one
+// position further along the mauve → digital theme axis. For ~354 labels
+// that's ~71 distinct steps — fine enough to cycle visibly as you
+// paginate, coarse enough to read as deliberate bands rather than
+// imperceptible per-row noise.
+//
+// The chunk size is the tuning knob — smaller chunk = more shifts.
+const LABEL_CHUNK_SIZE = 5;
+
+function labelTierTint(rank: number, total: number): string {
+  const groupIndex = Math.floor((rank - 1) / LABEL_CHUNK_SIZE);
+  const totalGroups = Math.max(1, Math.ceil(total / LABEL_CHUNK_SIZE));
+  return gradientTint(groupIndex, totalGroups);
 }
 
 // --- StackedBarCard (Genre + Medium + Format) -------------------------------
