@@ -995,6 +995,130 @@ fn get_stats(app: tauri::AppHandle) -> Result<Stats, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Library breakdown — multi-dimension composition for the Stats view
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BreakdownRow {
+    /// The bucket label. Always serialised as a string so the IPC payload
+    /// stays uniform across breakdowns; year rows hold the year as text
+    /// ("1968"). Frontend parses if it needs the integer.
+    pub value: String,
+    pub count: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryBreakdown {
+    /// Genre share across all 3 slots — a release tagged with N distinct
+    /// genres contributes N tallies (matches the v2.1 pure-peer model where
+    /// secondary/tertiary slugs carry the same weight as primary).
+    pub genre: Vec<BreakdownRow>,
+    /// Country composition; rows with NULL/empty country are dropped.
+    pub country: Vec<BreakdownRow>,
+    /// Year composition; rows with NULL year are dropped. Sorted ASC so the
+    /// frontend sparkline can iterate left-to-right.
+    pub year: Vec<BreakdownRow>,
+    /// Medium composition (physical / digital / …); NULL/empty dropped.
+    pub medium: Vec<BreakdownRow>,
+    /// Label composition; NULL/empty dropped. Full list — the frontend
+    /// decides on a top-N cap and "Other (N)" collapse for the chart.
+    pub label: Vec<BreakdownRow>,
+}
+
+/// Returns the full library composition across five dimensions in a single
+/// call. Each row is `(value, count)`. Sorted by count DESC (tie-broken
+/// alphabetically) for genre/country/medium/label, and by year ASC for year.
+///
+/// This is the data source for the Stats view (`<StatsView />`). Future
+/// dimensions (e.g. a price/value rollup mirroring Discogs) slot in as new
+/// fields on `LibraryBreakdown` without changing the row shape.
+#[tauri::command]
+fn get_library_breakdown(app: tauri::AppHandle) -> Result<LibraryBreakdown, String> {
+    let conn = open(&app)?;
+    library_breakdown_from_conn(&conn)
+}
+
+/// Connection-level implementation of `get_library_breakdown`, factored out
+/// so the SQL can be exercised against an in-memory DB in tests without
+/// requiring a Tauri AppHandle.
+fn library_breakdown_from_conn(conn: &Connection) -> Result<LibraryBreakdown, String> {
+    let collect = |sql: &str| -> Result<Vec<BreakdownRow>, String> {
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(BreakdownRow {
+                    value: r.get::<_, String>(0)?,
+                    count: r.get::<_, i64>(1)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    };
+
+    // Genre: UNION ALL across the three slot columns, then tally. Pure-peer
+    // model — a release tagged classical-folk + downtempo + experimental
+    // contributes one tally to each.
+    let genre = collect(
+        "WITH slot_tags AS (
+           SELECT genre_primary   AS g FROM releases WHERE genre_primary   IS NOT NULL AND genre_primary   <> ''
+           UNION ALL
+           SELECT genre_secondary AS g FROM releases WHERE genre_secondary IS NOT NULL AND genre_secondary <> ''
+           UNION ALL
+           SELECT genre_tertiary  AS g FROM releases WHERE genre_tertiary  IS NOT NULL AND genre_tertiary  <> ''
+         )
+         SELECT g, COUNT(*) AS n
+         FROM slot_tags
+         GROUP BY g
+         ORDER BY n DESC, g ASC",
+    )?;
+
+    let country = collect(
+        "SELECT country, COUNT(*) AS n
+         FROM releases
+         WHERE country IS NOT NULL AND country <> ''
+         GROUP BY country
+         ORDER BY n DESC, country ASC",
+    )?;
+
+    // Year stored as INTEGER; cast to TEXT for the uniform row shape.
+    let year = collect(
+        "SELECT CAST(year AS TEXT), COUNT(*) AS n
+         FROM releases
+         WHERE year IS NOT NULL
+         GROUP BY year
+         ORDER BY year ASC",
+    )?;
+
+    let medium = collect(
+        "SELECT medium, COUNT(*) AS n
+         FROM releases
+         WHERE medium IS NOT NULL AND medium <> ''
+         GROUP BY medium
+         ORDER BY n DESC, medium ASC",
+    )?;
+
+    let label = collect(
+        "SELECT label, COUNT(*) AS n
+         FROM releases
+         WHERE label IS NOT NULL AND label <> ''
+         GROUP BY label
+         ORDER BY n DESC, label ASC",
+    )?;
+
+    Ok(LibraryBreakdown {
+        genre,
+        country,
+        year,
+        medium,
+        label,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Interop: refresh metadata from disk; sync published cover URL to local file
 // ---------------------------------------------------------------------------
 
@@ -3317,6 +3441,7 @@ pub fn run() {
             delete_reaction,
             publish_labels,
             get_stats,
+            get_library_breakdown,
             scan_directory,
             import_directory,
             scan_discogs_csv,
@@ -3688,6 +3813,137 @@ mod schema_v2 {
             None,
         ];
         assert!(validate_genre_slots(&slots).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod stats {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// Spin up an in-memory DB with a `releases` table that mirrors the
+    /// columns `library_breakdown_from_conn` reads. Only the columns the
+    /// SQL touches need to exist; the production migration is irrelevant
+    /// for breakdown testing.
+    fn seed_conn(rows: &[(&str, &str, Option<i32>, &str, &str, Option<&str>, Option<&str>, Option<&str>)]) -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE releases (
+               artist          TEXT NOT NULL,
+               title           TEXT NOT NULL,
+               year            INTEGER,
+               medium          TEXT,
+               country         TEXT,
+               label           TEXT,
+               genre_primary   TEXT,
+               genre_secondary TEXT,
+               genre_tertiary  TEXT
+             );",
+        )
+        .unwrap();
+        for (artist, title, year, medium, country, label, gp, gs) in rows {
+            // (artist, title, year, medium, country, label, genre_primary, genre_secondary)
+            // For tests we don't exercise genre_tertiary directly; pass NULL.
+            conn.execute(
+                "INSERT INTO releases (artist, title, year, medium, country, label,
+                                       genre_primary, genre_secondary, genre_tertiary)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+                params![artist, title, year, medium, country, label, gp, gs],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn empty_db_yields_empty_breakdowns() {
+        let conn = seed_conn(&[]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        assert!(b.genre.is_empty());
+        assert!(b.country.is_empty());
+        assert!(b.year.is_empty());
+        assert!(b.medium.is_empty());
+        assert!(b.label.is_empty());
+    }
+
+    #[test]
+    fn genre_aggregates_across_slots_and_sorts_desc() {
+        // electronic shows up 3x across slots, downtempo 2x, jazz 1x.
+        let conn = seed_conn(&[
+            ("A", "1", Some(2020), "digital", "UK", Some("L1"), Some("electronic"), Some("downtempo")),
+            ("B", "2", Some(2021), "digital", "UK", Some("L1"), Some("electronic"), None),
+            ("C", "3", Some(2022), "digital", "UK", Some("L2"), Some("electronic"), Some("downtempo")),
+            ("D", "4", Some(2023), "physical", "US", Some("L2"), Some("jazz"), None),
+        ]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        let v: Vec<_> = b.genre.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        assert_eq!(v, vec![("electronic", 3), ("downtempo", 2), ("jazz", 1)]);
+    }
+
+    #[test]
+    fn genre_skips_null_and_empty_slots() {
+        let conn = seed_conn(&[
+            ("A", "1", None, "digital", "UK", None, Some("techno"), Some("")),
+            ("B", "2", None, "digital", "UK", None, None, None),
+        ]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        let v: Vec<_> = b.genre.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        // Empty string in secondary must NOT become a "" row.
+        assert_eq!(v, vec![("techno", 1)]);
+    }
+
+    #[test]
+    fn country_drops_null_and_empty() {
+        let conn = seed_conn(&[
+            ("A", "1", None, "digital", "UK", None, None, None),
+            ("B", "2", None, "digital", "US", None, None, None),
+            ("C", "3", None, "digital", "UK", None, None, None),
+            ("D", "4", None, "digital", "",   None, None, None),
+            ("E", "5", None, "digital", "",   None, None, None),
+        ]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        let v: Vec<_> = b.country.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        assert_eq!(v, vec![("UK", 2), ("US", 1)]);
+    }
+
+    #[test]
+    fn year_sorted_ascending_and_nulls_dropped() {
+        let conn = seed_conn(&[
+            ("A", "1", Some(2020), "digital", "UK", None, None, None),
+            ("B", "2", Some(1968), "digital", "UK", None, None, None),
+            ("C", "3", None,       "digital", "UK", None, None, None),
+            ("D", "4", Some(2020), "digital", "UK", None, None, None),
+            ("E", "5", Some(1992), "digital", "UK", None, None, None),
+        ]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        let v: Vec<_> = b.year.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        assert_eq!(v, vec![("1968", 1), ("1992", 1), ("2020", 2)]);
+    }
+
+    #[test]
+    fn medium_and_label_sorted_desc_with_alpha_tiebreak() {
+        let conn = seed_conn(&[
+            ("A", "1", None, "digital",  "UK", Some("Warp"),         None, None),
+            ("B", "2", None, "digital",  "UK", Some("Warp"),         None, None),
+            ("C", "3", None, "physical", "UK", Some("Apollo"),       None, None),
+            ("D", "4", None, "physical", "UK", Some("Apollo"),       None, None),
+            ("E", "5", None, "digital",  "UK", Some("Rephlex"),      None, None),
+        ]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        // medium: digital=3, physical=2 (desc by count)
+        let m: Vec<_> = b.medium.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        assert_eq!(m, vec![("digital", 3), ("physical", 2)]);
+        // label: Warp=2, Apollo=2 (tie -> alpha) then Rephlex=1.
+        let l: Vec<_> = b.label.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        assert_eq!(l, vec![("Apollo", 2), ("Warp", 2), ("Rephlex", 1)]);
+    }
+
+    #[test]
+    fn breakdown_row_serialises_camel_case() {
+        // Pin the IPC shape: { value, count } as plain camelCase.
+        let row = BreakdownRow { value: "techno".into(), count: 42 };
+        let json = serde_json::to_string(&row).unwrap();
+        assert_eq!(json, r#"{"value":"techno","count":42}"#);
     }
 }
 
