@@ -61,7 +61,9 @@ export interface LibraryBreakdown {
   genre: BreakdownRow[];
   country: BreakdownRow[];
   year: BreakdownRow[];
-  medium: BreakdownRow[];
+  // Format-quality buckets: "lossless" | "lossy" | "vinyl" | "other_physical"
+  // Bucketing happens server-side via bucket_format() — see Rust lib.rs.
+  format: BreakdownRow[];
   label: BreakdownRow[];
 }
 

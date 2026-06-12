@@ -47,7 +47,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
     );
   }
 
-  const { genre, country, year, medium, label } = state.data;
+  const { genre, country, year, format, label } = state.data;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -59,9 +59,10 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         scalingExponent={0.7}
       />
       <StackedBarCard
-        title="Medium"
-        rows={medium}
-        colorFor={mediumColor}
+        title="Format"
+        rows={format}
+        colorFor={formatColor}
+        displayFor={formatLabel}
         scalingExponent={1.0}
       />
       <YearCard rows={year} className="md:col-span-2" />
@@ -84,16 +85,39 @@ function genreDisplay(slug: string): string {
   return slug.replace(/-/g, "/");
 }
 
-// Tone mapping for the small Medium palette. Schema only really uses
-// "physical" and "digital"; anything else falls back to a muted neutral.
-function mediumColor(value: string): string {
+// Tone mapping for the 4 Format-quality buckets. Semantic colour choices:
+// lossless reads as the "preserved" tier (ok green), lossy as "compromised"
+// digital (warn amber, less alarming than alert), vinyl as the warm
+// classic-physical tier (mauve), other physical as residual (muted).
+function formatColor(value: string): string {
   switch (value) {
-    case "physical":
+    case "lossless":
+      return "rgb(var(--c-ok))";
+    case "lossy":
+      return "rgb(var(--c-warn))";
+    case "vinyl":
       return "rgb(var(--c-mauve))";
-    case "digital":
-      return "rgb(var(--c-digital))";
+    case "other_physical":
+      return "rgb(var(--c-muted))";
     default:
       return "rgb(var(--c-muted))";
+  }
+}
+
+// Human-facing labels for the format buckets. Wire form stays snake_case
+// per the bucket_format() Rust contract.
+function formatLabel(value: string): string {
+  switch (value) {
+    case "lossless":
+      return "Lossless";
+    case "lossy":
+      return "Lossy";
+    case "vinyl":
+      return "Vinyl";
+    case "other_physical":
+      return "Other physical";
+    default:
+      return value;
   }
 }
 

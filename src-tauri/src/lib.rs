@@ -1020,8 +1020,12 @@ pub struct LibraryBreakdown {
     /// Year composition; rows with NULL year are dropped. Sorted ASC so the
     /// frontend sparkline can iterate left-to-right.
     pub year: Vec<BreakdownRow>,
-    /// Medium composition (physical / digital / …); NULL/empty dropped.
-    pub medium: Vec<BreakdownRow>,
+    /// Format-quality composition. The varied per-release `format` strings
+    /// (e.g. `"FLAC 16/44.1"`, `"MP3 320"`, `"12\", EP, Ltd"`) are bucketed
+    /// into 4 tiers by `bucket_format()`: `lossless`, `lossy`, `vinyl`,
+    /// `other_physical`. Rows with NULL/empty format are dropped (not
+    /// counted as a bucket). Sorted by count DESC.
+    pub format: Vec<BreakdownRow>,
     /// Label composition; NULL/empty dropped. Full list — the frontend
     /// decides on a top-N cap and "Other (N)" collapse for the chart.
     pub label: Vec<BreakdownRow>,
@@ -1093,13 +1097,38 @@ fn library_breakdown_from_conn(conn: &Connection) -> Result<LibraryBreakdown, St
          ORDER BY year ASC",
     )?;
 
-    let medium = collect(
-        "SELECT medium, COUNT(*) AS n
-         FROM releases
-         WHERE medium IS NOT NULL AND medium <> ''
-         GROUP BY medium
-         ORDER BY n DESC, medium ASC",
-    )?;
+    // Format tiers: bucket the per-release `format` string into a small
+    // set of quality categories. Done in Rust rather than CASE-WHEN SQL
+    // because the bucketing rules are easier to read and test as a
+    // dedicated function (see `bucket_format`).
+    let mut format_counts: std::collections::HashMap<&'static str, i64> =
+        std::collections::HashMap::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT format, COUNT(*) AS n
+             FROM releases
+             WHERE format IS NOT NULL AND format <> ''
+             GROUP BY format",
+        )
+        .map_err(|e| e.to_string())?;
+    let raw = stmt
+        .query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in raw {
+        let (fmt, n) = row.map_err(|e| e.to_string())?;
+        *format_counts.entry(bucket_format(&fmt)).or_insert(0) += n;
+    }
+    let mut format: Vec<BreakdownRow> = format_counts
+        .into_iter()
+        .map(|(k, n)| BreakdownRow {
+            value: k.to_string(),
+            count: n,
+        })
+        .collect();
+    // Sort: count DESC, then alpha asc for stable tie-break.
+    format.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
 
     let label = collect(
         "SELECT label, COUNT(*) AS n
@@ -1113,9 +1142,47 @@ fn library_breakdown_from_conn(conn: &Connection) -> Result<LibraryBreakdown, St
         genre,
         country,
         year,
-        medium,
+        format,
         label,
     })
+}
+
+/// Bucket a raw `format` string into one of four quality tiers. Rules
+/// (checked in order):
+///   1. Contains a lossless stream marker (`FLAC`, `AIFF`, `ALAC`, `AIF `)
+///      → `"lossless"`. Catches composite strings like `8xFile, FLAC, Comp`.
+///   2. Contains a lossy stream marker (`MP3`, `OGG`, `AAC`, `WMA`) →
+///      `"lossy"`. MP3 dominates the data but the lossy bucket covers the
+///      family.
+///   3. Starts with a vinyl size token (`12"`, `7"`, `10"`, `LP`, `2xLP`,
+///      `3xLP`, `4xLP`, `2x12"`, `3x12"`, `2x10"`) → `"vinyl"`.
+///   4. Anything else (`Cass`, `CD`, `Box`, `Flexi`, …) → `"other_physical"`.
+/// Case-insensitive; the contains checks run on an uppercased copy.
+fn bucket_format(format: &str) -> &'static str {
+    let upper = format.to_uppercase();
+    if upper.contains("FLAC")
+        || upper.contains("AIFF")
+        || upper.contains("ALAC")
+        || upper.contains("AIF ")
+    {
+        return "lossless";
+    }
+    if upper.contains("MP3")
+        || upper.contains("OGG")
+        || upper.contains("AAC")
+        || upper.contains("WMA")
+    {
+        return "lossy";
+    }
+    let trimmed = format.trim_start();
+    const VINYL_PREFIXES: &[&str] = &[
+        "12\"", "7\"", "10\"", "LP", "2xLP", "3xLP", "4xLP", "2x12\"", "3x12\"",
+        "2x10\"",
+    ];
+    if VINYL_PREFIXES.iter().any(|p| trimmed.starts_with(p)) {
+        return "vinyl";
+    }
+    "other_physical"
 }
 
 // ---------------------------------------------------------------------------
@@ -3825,14 +3892,14 @@ mod stats {
     /// columns `library_breakdown_from_conn` reads. Only the columns the
     /// SQL touches need to exist; the production migration is irrelevant
     /// for breakdown testing.
-    fn seed_conn(rows: &[(&str, &str, Option<i32>, &str, &str, Option<&str>, Option<&str>, Option<&str>)]) -> Connection {
+    fn seed_conn(rows: &[(&str, &str, Option<i32>, Option<&str>, &str, Option<&str>, Option<&str>, Option<&str>)]) -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE releases (
                artist          TEXT NOT NULL,
                title           TEXT NOT NULL,
                year            INTEGER,
-               medium          TEXT,
+               format          TEXT,
                country         TEXT,
                label           TEXT,
                genre_primary   TEXT,
@@ -3841,14 +3908,14 @@ mod stats {
              );",
         )
         .unwrap();
-        for (artist, title, year, medium, country, label, gp, gs) in rows {
-            // (artist, title, year, medium, country, label, genre_primary, genre_secondary)
+        for (artist, title, year, format, country, label, gp, gs) in rows {
+            // (artist, title, year, format, country, label, genre_primary, genre_secondary)
             // For tests we don't exercise genre_tertiary directly; pass NULL.
             conn.execute(
-                "INSERT INTO releases (artist, title, year, medium, country, label,
+                "INSERT INTO releases (artist, title, year, format, country, label,
                                        genre_primary, genre_secondary, genre_tertiary)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
-                params![artist, title, year, medium, country, label, gp, gs],
+                params![artist, title, year, format, country, label, gp, gs],
             )
             .unwrap();
         }
@@ -3862,7 +3929,7 @@ mod stats {
         assert!(b.genre.is_empty());
         assert!(b.country.is_empty());
         assert!(b.year.is_empty());
-        assert!(b.medium.is_empty());
+        assert!(b.format.is_empty());
         assert!(b.label.is_empty());
     }
 
@@ -3870,10 +3937,10 @@ mod stats {
     fn genre_aggregates_across_slots_and_sorts_desc() {
         // electronic shows up 3x across slots, downtempo 2x, jazz 1x.
         let conn = seed_conn(&[
-            ("A", "1", Some(2020), "digital", "UK", Some("L1"), Some("electronic"), Some("downtempo")),
-            ("B", "2", Some(2021), "digital", "UK", Some("L1"), Some("electronic"), None),
-            ("C", "3", Some(2022), "digital", "UK", Some("L2"), Some("electronic"), Some("downtempo")),
-            ("D", "4", Some(2023), "physical", "US", Some("L2"), Some("jazz"), None),
+            ("A", "1", Some(2020), None, "UK", Some("L1"), Some("electronic"), Some("downtempo")),
+            ("B", "2", Some(2021), None, "UK", Some("L1"), Some("electronic"), None),
+            ("C", "3", Some(2022), None, "UK", Some("L2"), Some("electronic"), Some("downtempo")),
+            ("D", "4", Some(2023), None, "US", Some("L2"), Some("jazz"),       None),
         ]);
         let b = library_breakdown_from_conn(&conn).unwrap();
         let v: Vec<_> = b.genre.iter().map(|r| (r.value.as_str(), r.count)).collect();
@@ -3883,8 +3950,8 @@ mod stats {
     #[test]
     fn genre_skips_null_and_empty_slots() {
         let conn = seed_conn(&[
-            ("A", "1", None, "digital", "UK", None, Some("techno"), Some("")),
-            ("B", "2", None, "digital", "UK", None, None, None),
+            ("A", "1", None, None, "UK", None, Some("techno"), Some("")),
+            ("B", "2", None, None, "UK", None, None,           None),
         ]);
         let b = library_breakdown_from_conn(&conn).unwrap();
         let v: Vec<_> = b.genre.iter().map(|r| (r.value.as_str(), r.count)).collect();
@@ -3895,11 +3962,11 @@ mod stats {
     #[test]
     fn country_drops_null_and_empty() {
         let conn = seed_conn(&[
-            ("A", "1", None, "digital", "UK", None, None, None),
-            ("B", "2", None, "digital", "US", None, None, None),
-            ("C", "3", None, "digital", "UK", None, None, None),
-            ("D", "4", None, "digital", "",   None, None, None),
-            ("E", "5", None, "digital", "",   None, None, None),
+            ("A", "1", None, None, "UK", None, None, None),
+            ("B", "2", None, None, "US", None, None, None),
+            ("C", "3", None, None, "UK", None, None, None),
+            ("D", "4", None, None, "",   None, None, None),
+            ("E", "5", None, None, "",   None, None, None),
         ]);
         let b = library_breakdown_from_conn(&conn).unwrap();
         let v: Vec<_> = b.country.iter().map(|r| (r.value.as_str(), r.count)).collect();
@@ -3909,11 +3976,11 @@ mod stats {
     #[test]
     fn year_sorted_ascending_and_nulls_dropped() {
         let conn = seed_conn(&[
-            ("A", "1", Some(2020), "digital", "UK", None, None, None),
-            ("B", "2", Some(1968), "digital", "UK", None, None, None),
-            ("C", "3", None,       "digital", "UK", None, None, None),
-            ("D", "4", Some(2020), "digital", "UK", None, None, None),
-            ("E", "5", Some(1992), "digital", "UK", None, None, None),
+            ("A", "1", Some(2020), None, "UK", None, None, None),
+            ("B", "2", Some(1968), None, "UK", None, None, None),
+            ("C", "3", None,       None, "UK", None, None, None),
+            ("D", "4", Some(2020), None, "UK", None, None, None),
+            ("E", "5", Some(1992), None, "UK", None, None, None),
         ]);
         let b = library_breakdown_from_conn(&conn).unwrap();
         let v: Vec<_> = b.year.iter().map(|r| (r.value.as_str(), r.count)).collect();
@@ -3921,21 +3988,79 @@ mod stats {
     }
 
     #[test]
-    fn medium_and_label_sorted_desc_with_alpha_tiebreak() {
+    fn label_sorted_desc_with_alpha_tiebreak() {
         let conn = seed_conn(&[
-            ("A", "1", None, "digital",  "UK", Some("Warp"),         None, None),
-            ("B", "2", None, "digital",  "UK", Some("Warp"),         None, None),
-            ("C", "3", None, "physical", "UK", Some("Apollo"),       None, None),
-            ("D", "4", None, "physical", "UK", Some("Apollo"),       None, None),
-            ("E", "5", None, "digital",  "UK", Some("Rephlex"),      None, None),
+            ("A", "1", None, None, "UK", Some("Warp"),    None, None),
+            ("B", "2", None, None, "UK", Some("Warp"),    None, None),
+            ("C", "3", None, None, "UK", Some("Apollo"),  None, None),
+            ("D", "4", None, None, "UK", Some("Apollo"),  None, None),
+            ("E", "5", None, None, "UK", Some("Rephlex"), None, None),
         ]);
         let b = library_breakdown_from_conn(&conn).unwrap();
-        // medium: digital=3, physical=2 (desc by count)
-        let m: Vec<_> = b.medium.iter().map(|r| (r.value.as_str(), r.count)).collect();
-        assert_eq!(m, vec![("digital", 3), ("physical", 2)]);
-        // label: Warp=2, Apollo=2 (tie -> alpha) then Rephlex=1.
+        // Warp=2, Apollo=2 (tie -> alpha) then Rephlex=1.
         let l: Vec<_> = b.label.iter().map(|r| (r.value.as_str(), r.count)).collect();
         assert_eq!(l, vec![("Apollo", 2), ("Warp", 2), ("Rephlex", 1)]);
+    }
+
+    #[test]
+    fn format_buckets_aggregate_through_sql() {
+        let conn = seed_conn(&[
+            ("A", "1", None, Some("FLAC 16/44.1"),  "UK", None, None, None),
+            ("B", "2", None, Some("FLAC 24/96"),    "UK", None, None, None),
+            ("C", "3", None, Some("MP3 320"),       "UK", None, None, None),
+            ("D", "4", None, Some("MP3 192"),       "UK", None, None, None),
+            ("E", "5", None, Some("MP3 128"),       "UK", None, None, None),
+            ("F", "6", None, Some("12\", EP, Ltd"), "UK", None, None, None),
+            ("G", "7", None, Some("LP, Album"),     "UK", None, None, None),
+            ("H", "8", None, Some("CD, Ltd, Dig"),  "UK", None, None, None),
+            ("I", "9", None, Some("Cass, Mixed"),   "UK", None, None, None),
+            // NULL format must drop from the aggregate, not bucket.
+            ("J", "10", None, None,                 "UK", None, None, None),
+        ]);
+        let b = library_breakdown_from_conn(&conn).unwrap();
+        let f: Vec<_> = b.format.iter().map(|r| (r.value.as_str(), r.count)).collect();
+        // lossy=3, lossless=2, vinyl=2, other_physical=2 — count DESC, alpha tiebreak.
+        assert_eq!(
+            f,
+            vec![
+                ("lossy", 3),
+                ("lossless", 2),
+                ("other_physical", 2),
+                ("vinyl", 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn bucket_format_classifies_real_strings() {
+        // Lossless: FLAC / AIFF / ALAC / AIF — even inside composite strings.
+        assert_eq!(bucket_format("FLAC 16/44.1"), "lossless");
+        assert_eq!(bucket_format("FLAC 24/96"), "lossless");
+        assert_eq!(bucket_format("AIFF 16/44.1"), "lossless");
+        assert_eq!(bucket_format("AIF 16/44.1"), "lossless");
+        assert_eq!(bucket_format("8xFile, FLAC, Album, Comp"), "lossless");
+        assert_eq!(bucket_format("4xFile, ALAC"), "lossless");
+        // Lossy: MP3 / OGG / AAC / WMA — any bitrate, any descriptor.
+        assert_eq!(bucket_format("MP3 320"), "lossy");
+        assert_eq!(bucket_format("MP3 128"), "lossy");
+        assert_eq!(bucket_format("MP3 24/48"), "lossy");
+        // Vinyl: size-token prefix.
+        assert_eq!(bucket_format("12\""), "vinyl");
+        assert_eq!(bucket_format("12\", EP, Ltd"), "vinyl");
+        assert_eq!(bucket_format("7\", Single, Ltd"), "vinyl");
+        assert_eq!(bucket_format("10\""), "vinyl");
+        assert_eq!(bucket_format("LP, Album"), "vinyl");
+        assert_eq!(bucket_format("2xLP, Album"), "vinyl");
+        assert_eq!(bucket_format("3xLP, Comp"), "vinyl");
+        assert_eq!(bucket_format("2x12\", Album"), "vinyl");
+        // Other physical: cassette, CD, box, flexi.
+        assert_eq!(bucket_format("Cass, Mixed"), "other_physical");
+        assert_eq!(bucket_format("CD, Ltd, Dig"), "other_physical");
+        assert_eq!(bucket_format("Box, Ltd, Num"), "other_physical");
+        assert_eq!(
+            bucket_format("Flexi, 7\", S/Sided, Single, Whi"),
+            "other_physical"
+        );
     }
 
     #[test]
