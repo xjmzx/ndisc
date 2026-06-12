@@ -2,17 +2,27 @@
 
 ndisc publishes its discography to Nostr; the glmps web viewers
 (`glmps.fizx.uk` / `glmps.upleb.uk`) consume it. This directory is the
-**single canonical home** of the wire contract between them.
+**single canonical home** of the wire contract between them, plus the
+shared visual / interaction language for sister ndisc-suite apps.
 
-The two living documents are:
+Living documents:
 
-- **`release.v2.json`** — current canonical contract, frozen-with-amendments
-  (additive-only). All emission and consumption code lives off this file.
-- **`release.v1.json`** — historic, frozen verbatim; v2 readers do NOT need it.
+- **`release.v2.json`** — current canonical wire contract for release
+  events (kind 31237) and deletions (kind 5). Frozen-with-amendments
+  (additive-only).
+- **`release.v1.json`** — historic, frozen verbatim; v2 readers do NOT
+  need it.
+- **`labels.v1.json`** — wire contract for the record-label image
+  library event (kind 31238). Unfrozen until ndisc ships publishing.
+- **`visualisations.md`** — sidecar to the JSON contracts. Documents
+  the *semantic* layer of each chart (which field, which aggregation,
+  which palette) shared between ndisc, glmps, and sister suite apps.
+  Pixel dimensions are project-specific.
 
 Everything else in this directory (`v2-proposal.md`,
-`v2-proposal-glmps-reply.md`, `glmps-catchup-2026-06-10.md`) is preserved
-**conversation history** of how v2 came together. Each carries a banner
+`v2-proposal-glmps-reply.md`, `glmps-catchup-2026-06-10.md`,
+`glmps-proposal-electronic-grey-2026-06-12.md`) is preserved
+**conversation history** of how v2 took shape. Each carries a banner
 flagging it as non-authoritative; do not cite them as spec.
 
 ## How it fits together
@@ -30,6 +40,16 @@ flagging it as non-authoritative; do not cite them as spec.
      └─ vendored verbatim by ─►  glmps, both sites
                                  assert-parse + freeze check on every build;
                                  SHA-256 pinned in repo, lockstep across sites
+
+  schema/visualisations.md          ← living chart-semantics sidecar
+     │
+     ├─ ndisc implements ──►  StatsView (Genre, Medium, Format, Year,
+     │                        Country, Label) + LabelviewPanel
+     │
+     ├─ glmps  implements ──►  GenreBar + GenreDotChip + LabelCycler
+     │
+     └─ sister apps may  ──►  vendor specific chart entries to keep
+                              visual/interaction language consistent
 ```
 
 ## End-state summary (as of v2.1.3, 2026-06-12)
@@ -106,6 +126,23 @@ rendered in human-facing UI with the slash form via
 NIP-09 deletion shape from v1 is reused verbatim. See `release.v2.json`
 for the exact fields.
 
+### Filtering & aggregation
+
+For any consumer code that reads emitted events:
+
+- **Genre filter predicates** ("show all releases tagged X") match on
+  **any slot** — primary, secondary, or tertiary all qualify.
+- **Library-stat aggregations** ("share of the catalogue by genre")
+  also use **any-slot counting** — a release with N distinct slugs
+  contributes N tallies. Consistent with v2.1's pure-peer model: slot
+  order on the wire is emission priority, but isn't privileged in
+  aggregation or filtering.
+- **Deletions** must be applied client-side regardless of relay
+  behaviour — some relays (e.g. Primal) don't enforce kind:5 server-side.
+
+Full chart-level detail (which field each chart reads, which palette,
+scaling defaults) lives in `visualisations.md`.
+
 ## Source of truth & the contract tests
 
 ndisc's code — `src-tauri/src/lib.rs`, `release_event()` — is what actually
@@ -148,11 +185,38 @@ Consumers vendor a copy of `release.v2.json`; this repo's copy is
 canonical and wins on any discrepancy. SHA-256 should be pinned on the
 consumer side so any drift is caught at build time.
 
+## Sister-suite consumers
+
+Other ndisc-suite apps (`ndisc.smpl`, `ndisc.blobtree`, `ndisc.view`,
+…) may incorporate the design language documented here without
+inheriting the whole stack. What's worth pulling:
+
+- **Palette tokens** — the `--c-g-<slug>` CSS-var family for genres,
+  plus the system tokens (`accent`, `mauve`, `auburn`, `digital`, `ok`,
+  `warn`, `alert`, `muted`) are the foundation of the shared visual
+  language across the suite. Both fizx and upleb themes resolve them.
+- **Chart semantics** — `visualisations.md` is the contract for
+  *which field drives a chart, which aggregation, which palette*.
+  Pixel sizes and scaling constants are tuned per project (see the
+  Tuning autonomy clause in that doc).
+- **Slot semantics** — the any-slot filtering + aggregation rule
+  (above) applies to any suite app that surfaces genre.
+- **Compound-slug display** — `slug.replace(/-/g, "/")` is the
+  one-liner used everywhere (`classical/folk`, `dnb/jungle`, etc.).
+
+What NOT to vendor: the `release.v2.json` wire spec — only ndisc and
+glmps need that. Sister apps that read user-facing displays from a
+single source (the desktop app's SQLite, an export, or the published
+relays) can lift palette + chart semantics without pinning the JSON
+itself.
+
 ## Files
 
-- `release.v2.json` — the frozen-with-amendments canonical wire spec
-- `release.v1.json` — frozen historic; v2 readers don't need it but it's
-  retained for archeological purposes
+- `release.v2.json` — frozen-with-amendments canonical wire spec
+- `release.v1.json` — frozen historic; v2 readers don't need it
+- `labels.v1.json` — record-label image library wire spec (unfrozen
+  until ndisc ships publishing)
+- `visualisations.md` — chart semantics sidecar
 - `fixtures/` — reference events:
   - `release-31237.full.json` — v1 maximal
   - `release-31237.minimal.json` — v1 minimal
@@ -172,6 +236,8 @@ shape. They remain on disk for reference but are not authoritative:
   (rename)
 - `glmps-catchup-2026-06-10.md` — distilled action list at the v2.1.1
   cutover
+- `glmps-proposal-electronic-grey-2026-06-12.md` — proposal that became
+  v2.1.3 (electronic magenta → grey)
 
 The current state captured above supersedes all of them. If they conflict
 with this README or with `release.v2.json`, this README + the JSON win.
