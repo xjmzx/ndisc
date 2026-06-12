@@ -446,7 +446,6 @@ interface YearCardProps {
 }
 
 function YearCard({ rows, className }: YearCardProps) {
-  const totalCount = total(rows);
   // Parse "1968" → 1968; ignore unparseable rows defensively.
   const parsed: { year: number; count: number }[] = rows
     .map((r) => ({ year: Number(r.value), count: r.count }))
@@ -462,98 +461,78 @@ function YearCard({ rows, className }: YearCardProps) {
 
   const minYear = parsed[0].year;
   const maxYear = parsed[parsed.length - 1].year;
-  // Densify: fill missing years with count 0 so the sparkline columns line
-  // up one-per-year and the decade lattice underneath shares the same width
-  // allocation without arithmetic gymnastics.
-  const dense: { year: number; count: number }[] = [];
   const lookup = new Map(parsed.map((r) => [r.year, r.count]));
-  for (let y = minYear; y <= maxYear; y++) {
-    dense.push({ year: y, count: lookup.get(y) ?? 0 });
-  }
-  const maxCount = Math.max(...dense.map((d) => d.count), 1);
 
-  // Group by decade for the lattice. Each decade segment's flex-grow is
-  // proportional to the number of years it spans within [minYear, maxYear].
-  const decades = new Map<number, { years: number; count: number }>();
-  for (const d of dense) {
-    const decade = Math.floor(d.year / 10) * 10;
-    const entry = decades.get(decade) ?? { years: 0, count: 0 };
-    entry.years += 1;
-    entry.count += d.count;
-    decades.set(decade, entry);
+  // Group by decade — each group holds the densified year sequence for
+  // that decade. Densifying ensures every year in the visible range gets
+  // a bar slot (zero-height when empty), so the bar grid stays
+  // dimensionally aligned with the decade labels underneath.
+  const decadeGroups: {
+    decade: number;
+    years: { year: number; count: number }[];
+  }[] = [];
+  for (let y = minYear; y <= maxYear; y++) {
+    const dec = Math.floor(y / 10) * 10;
+    const tail = decadeGroups[decadeGroups.length - 1];
+    if (!tail || tail.decade !== dec) {
+      decadeGroups.push({ decade: dec, years: [] });
+    }
+    decadeGroups[decadeGroups.length - 1].years.push({
+      year: y,
+      count: lookup.get(y) ?? 0,
+    });
   }
-  const decadeList = Array.from(decades.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([decade, info]) => ({
-      decade,
-      years: info.years,
-      count: info.count,
-    }));
+  const maxCount = Math.max(
+    ...decadeGroups.flatMap((g) => g.years.map((y) => y.count)),
+    1,
+  );
 
   return (
-    <Section
-      title="Year"
-      right={
-        <span className="text-xs text-muted font-mono">
-          {minYear}–{maxYear} · {totalCount.toLocaleString()} total
-        </span>
-      }
-      className={className}
-    >
-      <div className="space-y-1">
-        {/* Per-year sparkline. Each bar takes one flex column; height ∝
-            count, scaled to the busiest year. Empty years render an invisible
-            column so the lattice underneath stays aligned. */}
+    <Section title="Year" className={className}>
+      <div className="flex flex-col gap-1">
+        {/* Bars: one per year, coloured by their decade. The colour shift
+            at each decade boundary is reinforced by a small inter-decade
+            gap (gap-1.5) so the breaks read as deliberate. */}
         <div
-          className="flex items-end h-12 gap-px"
+          className="flex items-end h-14 gap-1.5"
           aria-label="releases per year"
         >
-          {dense.map((d) => (
-            <div
-              key={d.year}
-              className="flex-1 min-w-[2px] bg-accent rounded-sm"
-              style={{
-                height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
-              }}
-              title={`${d.year}: ${d.count.toLocaleString()}`}
-            />
-          ))}
-        </div>
-        {/* Decade lattice — each segment flex-grows by year count so it
-            aligns under its segment of the sparkline. A per-decade tint
-            is interpolated across the mauve→digital axis (fizx: plum→cyan;
-            upleb: gold→bright-orange) so the lattice reads as a
-            chronological gradient. Tint paints a thin top strip + the
-            count number; the cell bg stays dark for legibility. */}
-        <div
-          className="flex h-7 gap-px rounded-sm overflow-hidden"
-          aria-label="releases per decade"
-        >
-          {decadeList.map((d, i) => {
-            const tint = decadeTint(i, decadeList.length);
+          {decadeGroups.map((g, i) => {
+            const tint = decadeTint(i, decadeGroups.length);
             return (
               <div
-                key={d.decade}
-                className="relative bg-surface flex flex-col items-center
-                           justify-center text-[10px] font-mono leading-tight
-                           overflow-hidden px-1"
-                style={{ flexGrow: d.years, flexBasis: 0 }}
-                title={`${d.decade}s: ${d.count.toLocaleString()}`}
+                key={g.decade}
+                className="flex items-end gap-px"
+                style={{ flexGrow: g.years.length, flexBasis: 0 }}
               >
-                <span
-                  className="absolute top-0 left-0 right-0 h-1"
-                  style={{ background: tint }}
-                  aria-hidden="true"
-                />
-                <span className="text-muted truncate mt-0.5">
-                  {d.decade}s
-                </span>
-                <span className="tabular-nums" style={{ color: tint }}>
-                  {d.count.toLocaleString()}
-                </span>
+                {g.years.map((d) => (
+                  <div
+                    key={d.year}
+                    className="flex-1 min-w-[2px] rounded-sm"
+                    style={{
+                      height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
+                      backgroundColor: tint,
+                    }}
+                    title={`${d.year}: ${d.count.toLocaleString()}`}
+                  />
+                ))}
               </div>
             );
           })}
+        </div>
+        {/* Decade labels with thin vertical division lines between groups. */}
+        <div className="flex text-[10px] font-mono text-muted">
+          {decadeGroups.map((g, i) => (
+            <div
+              key={g.decade}
+              className={`text-center py-0.5 ${
+                i > 0 ? "border-l border-fg/15" : ""
+              }`}
+              style={{ flexGrow: g.years.length, flexBasis: 0 }}
+            >
+              {g.decade}s
+            </div>
+          ))}
         </div>
       </div>
     </Section>
