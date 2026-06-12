@@ -254,7 +254,7 @@ function StackedBarCard({
       ) : (
         <div className="space-y-3">
           <div
-            className="flex h-3 gap-px overflow-hidden rounded-sm bg-surface"
+            className="flex h-3 gap-0.5 overflow-hidden rounded-sm bg-surface"
             aria-label={`${title} composition`}
           >
             {segments.map(({ row, widthPct }) => (
