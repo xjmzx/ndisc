@@ -196,12 +196,14 @@ function gradientTint(index: number, total: number): string {
 // lands in a tier by release count, so new labels arrive at the muted
 // tail and graduate as they accumulate. Thresholds fit the typical
 // long-tail label distribution: ~55% single-release tail, a thinner
-// core of 10+-release labels at the top.
+// core of 10+-release labels at the top. Palette runs hot → cool →
+// neutral as count drops, so the highest tier reads as the most
+// saturated and distinct from the default accent fill.
 function labelTierTint(count: number): string {
-  if (count >= 10) return "rgb(var(--c-accent))"; // core
-  if (count >= 5) return "rgb(var(--c-mauve))"; // frequent
-  if (count >= 2) return "rgb(var(--c-digital))"; // common
-  return "rgb(var(--c-muted))"; // tail (count=1)
+  if (count >= 10) return "rgb(var(--c-auburn))"; // core — saturated warm
+  if (count >= 5) return "rgb(var(--c-mauve))"; // frequent — warm secondary
+  if (count >= 2) return "rgb(var(--c-digital))"; // common — cool tertiary
+  return "rgb(var(--c-muted))"; // tail (count=1) — neutral
 }
 
 // --- StackedBarCard (Genre + Medium + Format) -------------------------------
