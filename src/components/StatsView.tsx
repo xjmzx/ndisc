@@ -82,12 +82,13 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         rows={country}
         reloadKey={reloadKey}
         scalingExponent={0.7}
-        gradient
+        tintFor={(_row, rank, total) => gradientTint(rank - 1, total)}
       />
       <RankedRowsCard
         title="Label"
         rows={label}
         reloadKey={reloadKey}
+        tintFor={(row) => labelTierTint(row.count)}
       />
     </div>
   );
@@ -189,6 +190,18 @@ function pct(count: number, totalCount: number): string {
 function gradientTint(index: number, total: number): string {
   const pct = total <= 1 ? 0 : (index / (total - 1)) * 100;
   return `color-mix(in srgb, rgb(var(--c-mauve)), rgb(var(--c-digital)) ${pct}%)`;
+}
+
+// 4-tier count-based palette for labels. Each label deterministically
+// lands in a tier by release count, so new labels arrive at the muted
+// tail and graduate as they accumulate. Thresholds fit the typical
+// long-tail label distribution: ~55% single-release tail, a thinner
+// core of 10+-release labels at the top.
+function labelTierTint(count: number): string {
+  if (count >= 10) return "rgb(var(--c-accent))"; // core
+  if (count >= 5) return "rgb(var(--c-mauve))"; // frequent
+  if (count >= 2) return "rgb(var(--c-digital))"; // common
+  return "rgb(var(--c-muted))"; // tail (count=1)
 }
 
 // --- StackedBarCard (Genre + Medium + Format) -------------------------------
@@ -296,11 +309,15 @@ interface RankedRowsCardProps {
   // the tail's visual readability. Counts and percentages in the row text
   // stay honest; only the bar fill is cosmetically scaled. Default 1.0.
   scalingExponent?: number;
-  // When true, each row's bar fill is tinted along the mauve → digital
-  // gradient by its global rank (1 → first, rows.length → last). Reads as
-  // a vertical chronology across pagination — page 1's bars start mauve;
-  // the last page's land at digital.
-  gradient?: boolean;
+  // Per-row bar fill colour. When set, called for each visible row with
+  // the row's data plus its 1-based global rank and the total row count.
+  // Returns a CSS colour string (or undefined to fall back to bg-accent).
+  // Used for Country's positional gradient + Label's count-tier palette.
+  tintFor?: (
+    row: BreakdownRow,
+    rank: number,
+    total: number,
+  ) => string | undefined;
   className?: string;
 }
 
@@ -309,7 +326,7 @@ function RankedRowsCard({
   rows,
   reloadKey,
   scalingExponent = 1.0,
-  gradient = false,
+  tintFor,
   className,
 }: RankedRowsCardProps) {
   const totalCount = total(rows);
@@ -368,7 +385,7 @@ function RankedRowsCard({
                   count={r.count}
                   totalCount={totalCount}
                   widthPct={widthPctFor(r.count)}
-                  tint={gradient ? gradientTint(rank - 1, rows.length) : undefined}
+                  tint={tintFor ? tintFor(r, rank, rows.length) : undefined}
                 />
               );
             })}
