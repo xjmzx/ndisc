@@ -222,10 +222,20 @@ fn backfill_genre_slug_renames(conn: &Connection) -> Result<(), String> {
     // v2.1.1 (2026-06-10): dub-techno → dub. The compound was redundant
     // under v2.1's pure-peer model — meaning composes by stacking, so
     // `dub` + `techno` can be tagged independently when applicable.
+    // v2.1.2 (2026-06-12): classical → classical-folk. Streamlines a
+    // wider main-genre umbrella that incorporates folk under the same slot.
     for col in &["genre_primary", "genre_secondary", "genre_tertiary", "genre"] {
         conn.execute(
             &format!(
                 "UPDATE releases SET {} = 'dub' WHERE {} = 'dub-techno'",
+                col, col
+            ),
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            &format!(
+                "UPDATE releases SET {} = 'classical-folk' WHERE {} = 'classical'",
                 col, col
             ),
             [],
@@ -538,7 +548,7 @@ fn set_release_condition(
 // all 18 slugs are pure peers and may be freely combined (see v2.1 update
 // in genreInvariants).
 const GENRE_MAINS: &[&str] = &[
-    "classical", "downtempo", "electronic", "experimental", "funk",
+    "classical-folk", "downtempo", "electronic", "experimental", "funk",
     "jazz", "pop", "reggae", "rock", "soundtrack",
 ];
 const GENRE_ELECTRONIC_SUBS: &[&str] = &[

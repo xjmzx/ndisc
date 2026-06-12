@@ -27,7 +27,7 @@
   /* Genre palette — shared with glmps. Mid-saturation hues that sit
      alongside the system tokens above without competing with them. Same
      values across fizx and upleb themes (the genre layer is theme-neutral). */
-  --c-g-classical:     232 220 195;
+  --c-g-classical-folk: 232 220 195;
   --c-g-downtempo:     122  74 140;
   --c-g-electronic:    255  95 186;
   --c-g-experimental:  106 168 168;
@@ -38,8 +38,8 @@
   --c-g-rock:          176  57  46;
   --c-g-soundtrack:    100 137 184;
   /* Electronic sub-genres — same magenta hue family, lightness/saturation
-     only. Compound names (dnb-jungle, drone-noise, dub-techno, footwork-
-     trap) store hyphenated; UI may render the slash form. */
+     only. Compound names (dnb-jungle, drone-noise, footwork-trap) store
+     hyphenated; UI may render the slash form. */
   --c-g-acid:          255  66 200;
   --c-g-breaks:        230  77 168;
   --c-g-dnb-jungle:    160  39 135;
@@ -67,7 +67,7 @@
   --c-auburn: 178 96 58;
 
   /* Genre palette — identical to :root; theme-neutral. */
-  --c-g-classical:     232 220 195;
+  --c-g-classical-folk: 232 220 195;
   --c-g-downtempo:     122  74 140;
   --c-g-electronic:    255  95 186;
   --c-g-experimental:  106 168 168;

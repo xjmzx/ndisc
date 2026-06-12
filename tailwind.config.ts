@@ -29,7 +29,7 @@ export default {
         // Genre palette — shared with glmps. Use as bg-g-electronic,
         // text-g-jazz, etc. Sub-genres slot under their parent hue.
         g: {
-          classical: c("--c-g-classical"),
+          "classical-folk": c("--c-g-classical-folk"),
           downtempo: c("--c-g-downtempo"),
           electronic: c("--c-g-electronic"),
           experimental: c("--c-g-experimental"),

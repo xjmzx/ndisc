@@ -72,7 +72,7 @@ const GENRE_GROUPS: { label: string; options: string[] }[] = [
   {
     label: "main",
     options: [
-      "classical",
+      "classical-folk",
       "downtempo",
       "electronic",
       "experimental",
