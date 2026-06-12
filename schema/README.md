@@ -32,7 +32,7 @@ flagging it as non-authoritative; do not cite them as spec.
                                  SHA-256 pinned in repo, lockstep across sites
 ```
 
-## End-state summary (as of v2.1.2, 2026-06-12)
+## End-state summary (as of v2.1.3, 2026-06-12)
 
 For glmps's catch-up: this section captures the current contract state in
 plain language. The wire spec in `release.v2.json` is authoritative; this
@@ -82,11 +82,11 @@ Same triplet values on both ends:
 mains
   --c-g-classical-folk:232 220 195   --c-g-jazz:        199 127  78
   --c-g-downtempo:     122  74 140   --c-g-pop:         255 165 201
-  --c-g-electronic:    255  95 186   --c-g-reggae:       90 138  79
+  --c-g-electronic:    140 140 140   --c-g-reggae:       90 138  79
   --c-g-experimental:  106 168 168   --c-g-rock:        176  57  46
   --c-g-funk:          232 178  55   --c-g-soundtrack:  100 137 184
 
-electronic subs (magenta hue family — lightness/saturation only)
+electronic subs (magenta hue family — cohesive among themselves; no parent hue link)
   --c-g-acid:          255  66 200   --c-g-electro:       255 111 184
   --c-g-breaks:        230  77 168   --c-g-footwork-trap: 255 133 200
   --c-g-dnb-jungle:    160  39 135   --c-g-techno:        214  58 153
@@ -135,6 +135,10 @@ amendments without forcing a v3 bump:
   to refresh.
 - **Constraint relaxations** (e.g. v2.1 dropping `noParentWithOwnSub`) —
   strictly more permissive, all v2.0 emitters remain valid.
+- **Palette triplet updates** (e.g. v2.1.3 `electronic` magenta → grey).
+  Visual-only; the palette is documented in this README but not in
+  `release.v2.json`, so no JSON edit, no SHA re-pin, no fixture refresh.
+  Both ends mirror the new CSS-var value.
 
 Anything else — adding/removing/renaming a non-slug tag, changing tag
 semantics, reordering rules, breaking ordering — is a **coordinated v3
