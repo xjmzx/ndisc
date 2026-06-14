@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Section } from "./Section";
+import { genreDisplay } from "../lib/genre";
 import {
   getLibraryBreakdown,
   type LibraryBreakdown,
@@ -11,6 +12,16 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; data: LibraryBreakdown }
   | { kind: "error"; message: string };
+
+// Aggressive sub-linear exponent for the bars that tend to have ONE runaway
+// category: Genre (electronic dominates) and Country (the user's home country
+// dominates). At k≈0.33 the leader renders ~2× the next-nearest rather than
+// its true multiple (UK is ~9.75× US by count but ~2.1× by bar), and the long
+// tail lifts into visibility. It's an intentional visual distortion — the
+// numeric counts/percentages beside each bar stay honest. Tuning knob; lower =
+// flatter. Per-project autonomy per schema/visualisations.md (glmps uses its
+// own). Charts with small, balanced category sets (Medium, Format) stay at 1.0.
+const DOMINANT_SKEW = 0.33;
 
 // The Stats view replaces the 3-panel library grid when active. It owns its
 // own data fetch and re-fetches when `reloadKey` changes so newly added /
@@ -74,20 +85,25 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         rows={genre}
         colorFor={(v) => `rgb(var(--c-g-${v}))`}
         displayFor={genreDisplay}
-        scalingExponent={0.7}
+        scalingExponent={DOMINANT_SKEW}
       />
-      {/* Row 3: Country | Label */}
+      {/* Row 3: Country | Label — both run two columns (16/page) so the
+          long tails of countries and labels are browsable without endless
+          paging. Country shares the aggressive DOMINANT_SKEW so a home-
+          country monopoly (here UK) doesn't crush the rest. */}
       <RankedRowsCard
         title="Country"
         rows={country}
         reloadKey={reloadKey}
-        scalingExponent={0.7}
+        scalingExponent={DOMINANT_SKEW}
+        columns={2}
         tintFor={(_row, rank, total) => gradientTint(rank - 1, total)}
       />
       <RankedRowsCard
         title="Label"
         rows={label}
         reloadKey={reloadKey}
+        columns={2}
         tintFor={(_row, rank, total) => labelTierTint(rank, total)}
       />
     </div>
@@ -95,12 +111,6 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
 }
 
 // --- helpers ----------------------------------------------------------------
-
-// Display compound slugs with a slash (`classical-folk` → `classical/folk`).
-// Idempotent on non-compound slugs. Mirrors the helper in ReleaseDetail.tsx.
-function genreDisplay(slug: string): string {
-  return slug.replace(/-/g, "/");
-}
 
 function mediumColor(value: string): string {
   switch (value) {
@@ -300,7 +310,9 @@ function StackedBarCard({
 
 // --- RankedRowsCard (Country + Label) ---------------------------------------
 
-const ROWS_PER_PAGE = 8;
+// Rows shown per column. With `columns` > 1 the page holds
+// ROWS_PER_COLUMN × columns rows (e.g. 2 columns → 16/page).
+const ROWS_PER_COLUMN = 8;
 
 interface RankedRowsCardProps {
   title: string;
@@ -309,6 +321,10 @@ interface RankedRowsCardProps {
   // import / publish), the card resets to page 0 so the user doesn't land
   // on a now-invalid trailing page.
   reloadKey: number;
+  // Number of side-by-side rank columns. 1 (default) is the single-column
+  // list; 2 packs the page into two half-width columns (16 rows/page) with
+  // ranks flowing down the left column then the right.
+  columns?: number;
   // Sub-linear (< 1) softens bar widths so a dominant top row doesn't crush
   // the tail's visual readability. Counts and percentages in the row text
   // stay honest; only the bar fill is cosmetically scaled. Default 1.0.
@@ -329,12 +345,14 @@ function RankedRowsCard({
   title,
   rows,
   reloadKey,
+  columns = 1,
   scalingExponent = 1.0,
   tintFor,
   className,
 }: RankedRowsCardProps) {
   const totalCount = total(rows);
-  const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+  const pageSize = ROWS_PER_COLUMN * columns;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const [page, setPage] = useState(0);
 
   // Reset to page 0 on reload — the list shape may have changed underneath.
@@ -344,9 +362,16 @@ function RankedRowsCard({
 
   // Clamp page if rows shrink without a reloadKey bump.
   const safePage = Math.min(page, totalPages - 1);
-  const start = safePage * ROWS_PER_PAGE;
-  const end = Math.min(start + ROWS_PER_PAGE, rows.length);
+  const start = safePage * pageSize;
+  const end = Math.min(start + pageSize, rows.length);
   const visible = rows.slice(start, end);
+
+  // Split the visible page into up to `columns` chunks of ROWS_PER_COLUMN.
+  // Ranks flow down the first chunk, then the next (1–8 left, 9–16 right).
+  const chunks: BreakdownRow[][] = [];
+  for (let ci = 0; ci < columns; ci++) {
+    chunks.push(visible.slice(ci * ROWS_PER_COLUMN, (ci + 1) * ROWS_PER_COLUMN));
+  }
 
   // Bar widths are absolute (relative to the catalogue's #1 row) so that
   // paginating reads honestly — page 2's bars genuinely look smaller than
@@ -376,22 +401,37 @@ function RankedRowsCard({
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
         <div className="flex flex-col gap-2 flex-1">
-          <ul className="text-xs font-mono space-y-1">
-            {visible.map((r, i) => {
-              const rank = start + i + 1;
-              return (
-                <RankedRow
-                  key={r.value}
-                  rank={rank}
-                  label={r.value}
-                  count={r.count}
-                  totalCount={totalCount}
-                  widthPct={widthPctFor(r.count)}
-                  tint={tintFor ? tintFor(r, rank, rows.length) : undefined}
-                />
-              );
-            })}
-          </ul>
+          <div
+            className={
+              columns > 1
+                ? "grid grid-cols-2 gap-x-4 gap-y-1 items-start"
+                : ""
+            }
+          >
+            {chunks.map((chunk, ci) => (
+              <ul
+                key={ci}
+                className="text-xs font-mono space-y-1 min-w-0"
+              >
+                {chunk.map((r, i) => {
+                  const rank = start + ci * ROWS_PER_COLUMN + i + 1;
+                  return (
+                    <RankedRow
+                      key={r.value}
+                      rank={rank}
+                      label={r.value}
+                      count={r.count}
+                      totalCount={totalCount}
+                      widthPct={widthPctFor(r.count)}
+                      tint={
+                        tintFor ? tintFor(r, rank, rows.length) : undefined
+                      }
+                    />
+                  );
+                })}
+              </ul>
+            ))}
+          </div>
           {showPager && (
             <div
               className="mt-auto flex items-center justify-end gap-2
@@ -476,7 +516,23 @@ function RankedRow({
   );
 }
 
-// --- YearCard (sparkline + decade lattice) ----------------------------------
+// Per-year colour along the theme's year-strip gradient. `p` is the year's
+// normalised position in the visible window (0 = oldest, 1 = newest). Three
+// stops (old → mid → new) interpolated with color-mix so each theme resolves
+// its own sweep: fizx deep-blue → light-blue → lime, upleb rust → orange →
+// gold. Adjacent years differ slightly, so each decade reads as a horizontal
+// gradation rather than a flat block — the glmps hero-title effect.
+function yearGradientColor(p: number): string {
+  const clamped = p < 0 ? 0 : p > 1 ? 1 : p;
+  if (clamped <= 0.5) {
+    const t = (clamped / 0.5) * 100;
+    return `color-mix(in srgb, rgb(var(--c-year-old)), rgb(var(--c-year-mid)) ${t}%)`;
+  }
+  const t = ((clamped - 0.5) / 0.5) * 100;
+  return `color-mix(in srgb, rgb(var(--c-year-mid)), rgb(var(--c-year-new)) ${t}%)`;
+}
+
+// --- YearCard (per-year gradient strip + decade labels) ---------------------
 
 interface YearCardProps {
   rows: BreakdownRow[];
@@ -535,52 +591,42 @@ function YearCard({ rows, className }: YearCardProps) {
       count: lookup.get(y) ?? 0,
     });
   }
-  const maxCount = Math.max(
-    ...decadeGroups.flatMap((g) => g.years.map((y) => y.count)),
-    1,
-  );
+  // Flatten to one densified year sequence for the bar strip; decadeGroups
+  // are kept only to position the labels underneath.
+  const allYears = decadeGroups.flatMap((g) => g.years);
+  const maxCount = Math.max(...allYears.map((y) => y.count), 1);
+  const span = Math.max(1, maxYear - minYear);
 
   return (
     <Section title="Year" className={className}>
       <div className="flex flex-col gap-1">
-        {/* Bars: one per year, coloured by their decade. The colour shift
-            at each decade boundary is reinforced by a small inter-decade
-            gap (gap-1.5) so the breaks read as deliberate. */}
+        {/* One bar per year, uniformly spaced across the whole window — no
+            decade gap or divider. Each year is coloured by its position
+            along the theme gradient, so decades are distinguished by colour
+            and every decade reads as a *0→*9 horizontal gradation. */}
         <div
-          className="flex items-end h-14 gap-1.5"
+          className="flex items-end h-14 gap-px"
           aria-label="releases per year"
         >
-          {decadeGroups.map((g, i) => {
-            const tint = gradientTint(i, decadeGroups.length);
-            return (
-              <div
-                key={g.decade}
-                className="flex items-end gap-px h-full"
-                style={{ flexGrow: g.years.length, flexBasis: 0 }}
-              >
-                {g.years.map((d) => (
-                  <div
-                    key={d.year}
-                    className="flex-1 min-w-[2px] rounded-sm"
-                    style={{
-                      height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
-                      backgroundColor: tint,
-                    }}
-                    title={`${d.year}: ${d.count.toLocaleString()}`}
-                  />
-                ))}
-              </div>
-            );
-          })}
+          {allYears.map((d) => (
+            <div
+              key={d.year}
+              className="flex-1 min-w-[2px] rounded-sm"
+              style={{
+                height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
+                backgroundColor: yearGradientColor((d.year - minYear) / span),
+              }}
+              title={`${d.year}: ${d.count.toLocaleString()}`}
+            />
+          ))}
         </div>
-        {/* Decade labels with thin vertical division lines between groups. */}
+        {/* Decade labels, proportionally spaced. No dividers — colour now
+            carries the decade distinction. */}
         <div className="flex text-[10px] font-mono text-muted">
-          {decadeGroups.map((g, i) => (
+          {decadeGroups.map((g) => (
             <div
               key={g.decade}
-              className={`text-center py-0.5 ${
-                i > 0 ? "border-l border-fg/15" : ""
-              }`}
+              className="text-center py-0.5"
               style={{ flexGrow: g.years.length, flexBasis: 0 }}
             >
               {g.decade}s

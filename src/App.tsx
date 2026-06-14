@@ -357,8 +357,9 @@ export default function App() {
 
   return (
     <ReactionsProvider npub={npub}>
-    <div className="min-h-screen pt-6 px-6 pb-2 max-w-[1500px] mx-auto">
-      <header className="mb-4 px-4 flex items-center justify-between gap-4">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col
+                    pt-6 px-6 pb-2 max-w-[1500px] mx-auto">
+      <header className="mb-4 px-4 shrink-0 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
@@ -475,8 +476,9 @@ export default function App() {
       </header>
 
       {view === "library" ? (
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
-          <div className="grid grid-cols-1 gap-2 content-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]
+                        gap-2 items-stretch lg:flex-1 lg:min-h-0">
+          <div className="flex flex-col gap-2 min-w-0 lg:min-h-0">
             {lib.active && <LibraryFlowPanel lib={lib} />}
             <ReleaseList
               reloadKey={reloadKey}
@@ -486,7 +488,8 @@ export default function App() {
               relays={relays}
             />
           </div>
-          <div className="grid grid-cols-1 gap-2 content-start">
+          <div className="flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto
+                          [scrollbar-gutter:stable]">
             {selected ? (
               <ReleaseDetail
                 release={selected}
@@ -531,12 +534,14 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <StatsView reloadKey={reloadKey} />
+        <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]">
+          <StatsView reloadKey={reloadKey} />
+        </div>
       )}
 
       {/* Three columns: stack info left, identity centred, db path right —
           justify-between buffers each from the next. */}
-      <footer className="mt-4 flex flex-wrap items-center justify-between
+      <footer className="mt-4 shrink-0 flex flex-wrap items-center justify-between
                           gap-x-8 gap-y-1 text-xs text-muted">
         <span>scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite</span>
         {npub && (

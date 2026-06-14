@@ -466,8 +466,9 @@ export function ReleaseList({
 
   return (
     <Section
-      title="Releases"
+      title=""
       icon={<Disc3 size={16} />}
+      bodyClassName="lg:min-h-0"
       right={
         <span className="text-xs text-muted">
           <span className="text-accent font-mono">{items.length}</span>{" "}
@@ -495,7 +496,7 @@ export function ReleaseList({
           )}
         </span>
       }
-      className="h-full"
+      className="lg:flex-1 lg:min-h-0"
     >
       <div className="flex gap-2 items-center">
         <div className="relative flex-1">
@@ -900,14 +901,14 @@ export function ReleaseList({
           </details>
         )}
 
-      {/* Fixed height (not a max) so the panel is the same height whether the
-          DB holds 0 rows (e.g. a fresh dev sandbox) or thousands — the list
-          area no longer collapses to its content. The LIBRARY panel no longer
-          sits above this list, so it reclaims that vertical space; during an
-          import the transient panel adds a brief page scroll. */}
-      <ul className="mt-1 h-[calc(100vh-220px)] overflow-auto rounded-md
-                     divide-y divide-surface/60 bg-bg/50
-                     [scrollbar-gutter:stable]">
+      {/* At lg+ the app is a fixed one-screen shell: the list flex-fills its
+          column (capped to the viewport) and scrolls internally through the
+          rest of the DB — so it shows as many rows as the monitor allows.
+          Below lg the layout stacks and scrolls as a page, so we fall back to
+          the viewport-minus-chrome height. */}
+      <ul className="mt-1 h-[calc(100vh-220px)] lg:h-auto lg:flex-1 lg:min-h-0
+                     overflow-auto rounded-md divide-y divide-surface/60
+                     bg-bg/50 [scrollbar-gutter:stable]">
         {items.length === 0 && !loading && !error && (
           <li className="px-3 py-3 text-muted text-xs">
             {needsCoverOnly

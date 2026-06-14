@@ -21,8 +21,8 @@ export interface Release {
   releaseType?: string | null;
   category?: string | null;
   // v2: three ordered genre slots (primary / secondary / tertiary). Each
-  // slot is one of the 18 valid slugs (see schema/release.v2.json) or null.
-  // Invariants (distinct, no parent+own-sub, dense) enforced by
+  // slot is one of the 22 valid slugs (see schema/release.v2.json) or null.
+  // Invariants (distinct, dense ordering) enforced by
   // setReleaseGenres in the backend.
   genrePrimary?: string | null;
   genreSecondary?: string | null;

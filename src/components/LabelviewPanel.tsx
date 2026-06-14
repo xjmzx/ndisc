@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, ImageOff, Link2Off, List, Search, X } from "lucide-react";
 import { Section } from "./Section";
 import { listDistinctLabels, type LabelCount } from "../lib/tauri";
+import { genreDisplay } from "../lib/genre";
 import type { LabelEntry } from "./LabelPanel";
 
 interface Props {
@@ -187,37 +188,59 @@ export function LabelviewPanel({
     </button>
   );
 
+  // Labelled-art indicator — relocated from the old footer into the header.
+  // mauve check + "labelled / shown" of the currently-listed labels.
+  const shown = filtered.length;
+  const labelledPct = shown ? Math.round((labelledCount / shown) * 100) : 0;
+  const labelledIndicator =
+    mode === "library" ? (
+      <span
+        title={`${labelledCount} of ${shown} shown labels have artwork (${labelledPct}%)`}
+        className="flex items-center gap-0.5 text-[10px] tabular-nums
+                   text-muted shrink-0"
+      >
+        <Check size={10} className="text-mauve" />
+        {labelledCount}/{shown}
+      </span>
+    ) : null;
+
   const headerRight = (
     <div className="flex items-center gap-1">
+      {labelledIndicator}
       {orphansToggle}
       {noArtToggle}
     </div>
   );
 
+  // Search field lives in the Section title slot (no "LABELS" text). The
+  // normal-case / tracking-normal / font-normal classes neutralise the h2
+  // heading styles the title is nested inside.
+  const searchField = (
+    <div className="relative w-full normal-case tracking-normal font-normal">
+      <Search
+        size={12}
+        className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+      />
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={mode === "orphans" ? "search orphans…" : "search labels…"}
+        spellCheck={false}
+        className="w-full pl-7 pr-2 py-1 rounded-md bg-surface text-fg text-xs
+                   outline-none border border-transparent focus:border-accent/50
+                   placeholder:text-muted"
+      />
+    </div>
+  );
+
   return (
-    <Section title="Labels" icon={<List size={16} />} right={headerRight}>
-      <div className="relative mb-1">
-        <Search
-          size={12}
-          className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
-        />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={
-            mode === "orphans" ? "search orphans…" : "search labels…"
-          }
-          spellCheck={false}
-          className="w-full pl-7 pr-2 py-1 rounded-md bg-surface text-fg
-                     text-xs outline-none border border-transparent
-                     focus:border-accent/50 placeholder:text-muted"
-        />
-      </div>
-      {/* Fixed height (6 rows: 24px each + 2px gap) so the panel keeps its
-          size whether the library is empty (fresh install) or populated. */}
+    <Section title={searchField} icon={<List size={16} />} right={headerRight}>
+      {/* Fixed height absorbing the rows freed by moving search + the
+          labelled indicator into the header, so the panel keeps its footprint
+          (empty library or not) without needing the body to be collapsible. */}
       <ul
-        className="h-[154px] overflow-y-auto pr-1 space-y-0.5
+        className="h-[200px] overflow-y-auto pr-1 space-y-0.5
                    [scrollbar-gutter:stable]"
       >
         {visible.map((name) => {
@@ -257,11 +280,12 @@ export function LabelviewPanel({
             null,
             null,
           ];
-          // Compound slugs are stored hyphenated (dnb-jungle) and shown
-          // with a slash for legibility (dnb/jungle).
+          // Compound pair slugs are stored hyphenated (dnb-jungle) and shown
+          // with a slash for legibility (dnb/jungle); single hyphenated names
+          // (hip-hop) render verbatim. See lib/genre genreDisplay.
           const genreLabels = genres
             .filter((g): g is string => !!g)
-            .map((g) => g.replace(/-/g, "/"));
+            .map(genreDisplay);
           const genreTitle = genreLabels.length
             ? ` · genres: ${genreLabels.join(" / ")}`
             : "";
@@ -339,44 +363,6 @@ export function LabelviewPanel({
           </li>
         )}
       </ul>
-      <div className="px-2 pt-1 text-[10px] text-muted tabular-nums text-center">
-        {(() => {
-          const noun = mode === "orphans" ? "orphan" : "label";
-          const total =
-            mode === "orphans" ? orphans.length : distinct.length;
-          const denom = noArtOnly ? artFiltered.length : total;
-          const suffix = noArtOnly ? " without art" : "";
-          const head = query.trim()
-            ? `${filtered.length} of ${denom} ${noun}s${suffix}`
-            : `${denom} ${noun}${denom === 1 ? "" : "s"}${suffix}`;
-          const showBar =
-            !noArtOnly && mode === "library" && filtered.length > 0;
-          const ratio = showBar ? labelledCount / filtered.length : 0;
-          const pct = Math.round(ratio * 100);
-          return (
-            <>
-              {showBar && (
-                <div
-                  className="mb-1 h-0.5 rounded-full bg-surface overflow-hidden"
-                  title={`${labelledCount} of ${filtered.length} labelled (${pct}%)`}
-                >
-                  <div
-                    className="h-full bg-accent transition-[width] duration-150"
-                    style={{ width: `${ratio * 100}%` }}
-                  />
-                </div>
-              )}
-              {head}
-              {!noArtOnly && mode === "library" && (
-                <>
-                  {" | "}
-                  {labelledCount} labelled
-                </>
-              )}
-            </>
-          );
-        })()}
-      </div>
     </Section>
   );
 }

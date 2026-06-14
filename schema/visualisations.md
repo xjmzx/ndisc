@@ -35,8 +35,12 @@ Stacked horizontal bar showing share of a release set by genre.
   privileged for stats rollups.
 - **Palette:** `--c-g-<slug>`
 - **Scaling note:** sub-linear by default so the dominant slug doesn't
-  drown the tail. glmps uses `k = 0.5` (square root). ndisc uses
-  `k = 0.7`. Each project picks its own.
+  drown the tail. glmps uses `k = 0.5` (square root). ndisc uses an
+  aggressive `k ≈ 0.33` (its `DOMINANT_SKEW`), shared with the Country
+  card — its catalogue has one runaway category (electronic genre / UK
+  country) and a low exponent renders the leader ~2× the next-nearest
+  rather than its true multiple. Each project picks its own; counts/
+  percentages beside the bars stay honest regardless.
 - **Implemented in:** glmps `GenreBar` (`src/components/GenreBar.tsx`);
   ndisc `StatsView` Genre card (`src/components/StatsView.tsx`)
 

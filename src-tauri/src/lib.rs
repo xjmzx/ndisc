@@ -78,7 +78,7 @@ pub struct Release {
     pub release_type: Option<String>,
     pub category: Option<String>,
     // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
-    // each optional, each one of the 18 valid slugs in schema/release.v2.json.
+    // each optional, each one of the 22 valid slugs in schema/release.v2.json.
     // See genreInvariants there: distinct slugs, no parent+own-sub, dense
     // (no holes — a value at slot N requires every slot < N to be filled).
     // Enforced in set_release_genres.
@@ -545,15 +545,15 @@ fn set_release_condition(
 // Genre slug enums — mirror schema/release.v2.json `genreSlugs`. Held here
 // as the canonical source for validation; release.v2.json is the wire spec.
 // The mains/subs split is a visual / palette grouping only — semantically
-// all 18 slugs are pure peers and may be freely combined (see v2.1 update
+// all 22 slugs are pure peers and may be freely combined (see v2.1 update
 // in genreInvariants).
 const GENRE_MAINS: &[&str] = &[
-    "classical-folk", "downtempo", "electronic", "experimental", "funk",
-    "jazz", "pop", "reggae", "rock", "soundtrack",
+    "ambient", "classical-folk", "downtempo", "electronic", "experimental",
+    "funk", "hip-hop", "jazz", "pop", "reggae", "rock", "soundtrack",
 ];
 const GENRE_ELECTRONIC_SUBS: &[&str] = &[
-    "acid", "breaks", "dnb-jungle", "drone-noise",
-    "dub", "electro", "footwork-trap", "techno",
+    "acid", "bass", "breaks", "dnb-jungle", "drone-noise",
+    "dub", "electro", "footwork-trap", "house", "techno",
 ];
 
 fn is_valid_genre_slug(s: &str) -> bool {
@@ -562,7 +562,7 @@ fn is_valid_genre_slug(s: &str) -> bool {
 }
 
 /// Enforces the v2 invariants from schema/release.v2.json `genreInvariants`:
-/// each non-null slot is one of the 18 valid slugs; all non-null slots are
+/// each non-null slot is one of the 22 valid slugs; all non-null slots are
 /// distinct; dense ordering (no holes — slot N+1 set requires slot N set).
 /// No parent+sub gate as of v2.1 — `electronic` + `techno` is valid.
 fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {

@@ -23,6 +23,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
+import { genreDisplay } from "../lib/genre";
 import {
   deleteRelease,
   restoreRelease,
@@ -65,18 +66,20 @@ const CATEGORY_OPTIONS = [
 
 // Values match the --c-g-* CSS-var slot names so the LABELS dot can use
 // the genre verbatim: `style: { backgroundColor: rgb(var(--c-g-${g})) }`.
-// 10 main genres + 8 electronic sub-genres. Compound sub-genres are stored
+// 12 main genres + 10 electronic sub-genres. Compound sub-genres are stored
 // hyphenated (dnb-jungle) and displayed with a slash (dnb/jungle) via the
 // genreDisplay helper below.
 const GENRE_GROUPS: { label: string; options: string[] }[] = [
   {
     label: "main",
     options: [
+      "ambient",
       "classical-folk",
       "downtempo",
       "electronic",
       "experimental",
       "funk",
+      "hip-hop",
       "jazz",
       "pop",
       "reggae",
@@ -88,25 +91,21 @@ const GENRE_GROUPS: { label: string; options: string[] }[] = [
     label: "electronic",
     options: [
       "acid",
+      "bass",
       "breaks",
       "dnb-jungle",
       "drone-noise",
       "dub",
       "electro",
       "footwork-trap",
+      "house",
       "techno",
     ],
   },
 ];
 
-// Hyphenated compound slugs render with a slash for UX legibility while
-// the DB / CSS-var slot keeps the hyphen form.
-function genreDisplay(slug: string): string {
-  return slug.replace(/-/g, "/");
-}
-
 // Filter GENRE_GROUPS for the given slot index, hiding anything already
-// chosen in an earlier slot. v2.1: all 18 slugs are pure peers — no
+// chosen in an earlier slot. v2.1: all 22 slugs are pure peers — no
 // parent+sub gating; meaning composes by stacking slugs.
 function genreGroupsForSlot(
   slotIndex: number,
@@ -503,28 +502,32 @@ export function ReleaseDetail({
         </>
       }
       icon={<FileMusic size={16} />}
-      right={
-        <div className="flex items-center gap-3">
-          {release.id != null && lastPublish && (
-            <ReactionButtons releaseId={release.id} />
-          )}
-          <button onClick={onDelete} className={SUBTLE_BUTTON_CLS}>
-            <Trash2 size={12} /> delete
-          </button>
-        </div>
-      }
     >
       <div className="flex gap-4 items-stretch">
         <CoverArt
           src={coverSrc}
           alt={`${release.artist} — ${release.title}`}
         />
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5
-                       text-xs flex-1 min-w-0 self-center">
-          {primaryFields.map(([label, value]) => (
-            <NaRow key={label} label={label} value={toDisplay(value)} />
-          ))}
-        </dl>
+        {/* Fields on the left, actions top-right — the actions sit on the
+            same row as `year` (the first field) and the top of the cover,
+            rather than in the Section title row, so long release names get
+            the full title width and don't wrap. */}
+        <div className="flex-1 min-w-0 flex items-start justify-between gap-3">
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5
+                         text-xs min-w-0">
+            {primaryFields.map(([label, value]) => (
+              <NaRow key={label} label={label} value={toDisplay(value)} />
+            ))}
+          </dl>
+          <div className="flex items-center gap-3 shrink-0">
+            {release.id != null && lastPublish && (
+              <ReactionButtons releaseId={release.id} />
+            )}
+            <button onClick={onDelete} className={SUBTLE_BUTTON_CLS}>
+              <Trash2 size={12} /> delete
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-[max-content_1fr] gap-x-3 items-center

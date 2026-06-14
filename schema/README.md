@@ -52,7 +52,7 @@ flagging it as non-authoritative; do not cite them as spec.
                               visual/interaction language consistent
 ```
 
-## End-state summary (as of v2.1.3, 2026-06-12)
+## End-state summary (as of v2.1.4, 2026-06-14)
 
 For glmps's catch-up: this section captures the current contract state in
 plain language. The wire spec in `release.v2.json` is authoritative; this
@@ -70,16 +70,16 @@ addition is a repeatable optional `genre` tag.
 - **Repeatable**, 0–3 occurrences per event.
 - **Ordered** — tag order IS the priority order (first = primary, second =
   secondary, third = tertiary).
-- **Each value** is one of 18 valid slugs:
+- **Each value** is one of 22 valid slugs:
 
 ```
-mains:           classical-folk, downtempo, electronic, experimental, funk,
-                 jazz, pop, reggae, rock, soundtrack
-electronic subs: acid, breaks, dnb-jungle, drone-noise, dub, electro,
-                 footwork-trap, techno
+mains:           ambient, classical-folk, downtempo, electronic, experimental,
+                 funk, hip-hop, jazz, pop, reggae, rock, soundtrack
+electronic subs: acid, bass, breaks, dnb-jungle, drone-noise, dub, electro,
+                 footwork-trap, house, techno
 ```
 
-- **All 18 slugs are pure peers.** The mains/subs split is a palette
+- **All 22 slugs are pure peers.** The mains/subs split is a palette
   grouping only; there's no semantic gate. A release MAY be tagged
   `electronic` + `techno` + `dub` if that's how the meaning composes.
 
@@ -100,6 +100,7 @@ Same triplet values on both ends:
 
 ```
 mains
+  --c-g-ambient:       176 199 209   --c-g-hip-hop:     158 104  66
   --c-g-classical-folk:232 220 195   --c-g-jazz:        199 127  78
   --c-g-downtempo:     122  74 140   --c-g-pop:         255 165 201
   --c-g-electronic:    140 140 140   --c-g-reggae:       90 138  79
@@ -107,19 +108,34 @@ mains
   --c-g-funk:          232 178  55   --c-g-soundtrack:  100 137 184
 
 electronic subs (magenta hue family — cohesive among themselves; no parent hue link)
-  --c-g-acid:          255  66 200   --c-g-electro:       255 111 184
+  --c-g-acid:          255  66 200   --c-g-dub:           199  93 163
+  --c-g-bass:          120  40 108   --c-g-electro:       255 111 184
   --c-g-breaks:        230  77 168   --c-g-footwork-trap: 255 133 200
-  --c-g-dnb-jungle:    160  39 135   --c-g-techno:        214  58 153
-  --c-g-drone-noise:   159 110 145
-  --c-g-dub:           199  93 163
+  --c-g-dnb-jungle:    160  39 135   --c-g-house:         190  80 188
+  --c-g-drone-noise:   159 110 145   --c-g-techno:        214  58 153
 ```
 
 ### Compound slug display
 
-Five slugs are compound (`classical-folk` in mains; `dnb-jungle`,
-`drone-noise`, `footwork-trap` in subs). Stored hyphenated on the wire;
-rendered in human-facing UI with the slash form via
-`slug.replace(/-/g, "/")`. The helper is idempotent for non-compound slugs.
+Four slugs are compound **genre pairs** — two distinct genres joined by a
+hyphen on the wire: `classical-folk` in mains; `dnb-jungle`, `drone-noise`,
+`footwork-trap` in subs. These render in human-facing UI with the slash
+form (`dnb/jungle`).
+
+One slug — `hip-hop` (new in v2.1.4) — is a **single** genre name that
+happens to contain a hyphen. It is NOT a pair and renders **verbatim**.
+
+So a blind `slug.replace(/-/g, "/")` is wrong: it would mangle `hip-hop`
+into `hip/hop`. The display helper slashes only the known pair slugs:
+
+```js
+const SLASH_DISPLAY = new Set([
+  "classical-folk", "dnb-jungle", "drone-noise", "footwork-trap",
+]);
+const display = (s) => SLASH_DISPLAY.has(s) ? s.replace(/-/g, "/") : s;
+```
+
+ndisc's copy lives in `src/lib/genre.ts`. glmps must mirror the same set.
 
 ### Kind 5 deletion (unchanged)
 
@@ -164,7 +180,11 @@ must remain compatible with v1 readers — the "additive" guarantee).
 amendments without forcing a v3 bump:
 
 - **Additive slug additions** inside `genreSlugs` — new optional slug
-  appended; existing slugs unchanged.
+  appended; existing slugs unchanged (e.g. v2.1.4 added `ambient` +
+  `hip-hop` to mains and `bass` + `house` to electronic subs, 18 → 22
+  slugs). No migration needed — existing releases are unaffected; the new
+  slugs simply become selectable. glmps re-vendors and mirrors the four
+  new palette triplets.
 - **Single-slug renames** within the v2.1.x series (e.g. v2.1.1
   `dub-techno` → `dub`; v2.1.2 `classical` → `classical-folk`). Ndisc-side
   migration is a one-shot `UPDATE` in `backfill_genre_slug_renames`;
@@ -201,8 +221,10 @@ inheriting the whole stack. What's worth pulling:
   Tuning autonomy clause in that doc).
 - **Slot semantics** — the any-slot filtering + aggregation rule
   (above) applies to any suite app that surfaces genre.
-- **Compound-slug display** — `slug.replace(/-/g, "/")` is the
-  one-liner used everywhere (`classical/folk`, `dnb/jungle`, etc.).
+- **Compound-slug display** — slash only the known compound *pair*
+  slugs (`classical/folk`, `dnb/jungle`, …); render single hyphenated
+  names like `hip-hop` verbatim. See "Compound slug display" above for
+  the set-based helper.
 
 What NOT to vendor: the `release.v2.json` wire spec — only ndisc and
 glmps need that. Sister apps that read user-facing displays from a
@@ -238,6 +260,8 @@ shape. They remain on disk for reference but are not authoritative:
   cutover
 - `glmps-proposal-electronic-grey-2026-06-12.md` — proposal that became
   v2.1.3 (electronic magenta → grey)
+- `glmps-genre-expansion-2026-06-14.md` — v2.1.4 heads-up: +4 slugs
+  (`ambient`, `hip-hop`, `bass`, `house`) and the `hip-hop` display fix
 
 The current state captured above supersedes all of them. If they conflict
 with this README or with `release.v2.json`, this README + the JSON win.
