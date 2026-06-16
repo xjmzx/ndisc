@@ -113,6 +113,86 @@ exception is the edge that pins a `track` to its **release**
 the fragile reference to that one edge keeps the rest of the graph
 content-addressed and durable.
 
+## Grain hierarchy & resolution (added 2026-06-16)
+
+The three apps operate at **different grains of the same tree**, and this is
+not a conflict — it is a four-level hierarchy already latent in the file
+paths. Each level derives from the one above (decompose) / composes toward
+it (compose):
+
+```
+Release (folder)     ← ndisc grain · canonical · music root
+  └─ Track (file)     ← blobtree's native grain; smpl must RESOLVE this layer
+       └─ Clip/Sample  ← blobtree produces → music_clips; smpl loads
+            └─ Mix/Stem  ← smpl produces → mixes / stems
+```
+
+| App | Operates at | Must resolve up to |
+| --- | --- | --- |
+| ndisc | Release (album **folder** = `file_path`) | — (top of the tree) |
+| ndisc.blobtree | Track (file) + produces Clips | Release |
+| ndisc.smpl | Clip / Mix | **Track → Release** |
+
+**ndisc needs none of this granularity** — it stays release-grain, untouched,
+canonical, owning only the *folder identity* (`file_path`). The relationship
+is one-directional: the downstream apps roll their finer artifacts **up** to
+ndisc's release units; ndisc never reaches down.
+
+**Track grain is the shared spine** — blobtree's primary unit, smpl's pivot
+unit, and the child of ndisc's release. Both downstream apps must locate it.
+
+### Resolution rules
+
+All derive-on-demand from what's already on disk — **no app stores a track
+table**; the layer is resolved per loaded/scanned file.
+
+- **Track → Release (climb-to-folder).** Build the set of ndisc `file_path`s;
+  for a file, **climb its parent directories until one is in the set** —
+  deepest hit wins. Segment-safe (`/`-boundary) and longest-match by
+  construction. Covers normal album folders, multi-disc (`…/Album/CD1/…`
+  climbs past `CD1`), and single-file releases (ndisc stores `file_path` as
+  file *or* folder, so the match can land at depth 0). No match → "not in
+  discography."
+- **Clip → Track (suffix-strip).** A clip `…/music_clips/Artist/Album/
+  track.<dur>s.flac` strips its `.<dur>s.flac` suffix to the **source
+  signature** `Artist/Album/track` (blobtree already computes this), which
+  identifies the source track file under `music`.
+- **Mix/Stem → sources.** Follow the recorded `derived-from` content hashes
+  (future `audio.v1`) to the source clips/tracks, then up.
+
+### Per-app resolution path depends on the root
+
+The root a file lives in selects the resolution path — which is why the
+shared manifest matters beyond portability: an app must know a file's root
+*identity* to resolve its lineage.
+
+- loaded from `music` → it *is* a track → climb to release.
+- loaded from `music_clips` → suffix-strip to track → climb to release.
+- loaded from `mixes` / `stems` → follow `derived-from` → tracks → releases.
+
+So smpl's SAMPLE panel can render the full chain — `clip → track → release`
+plus a published badge — by combining suffix-strip with the climb rule. The
+`(root, relpath)` source line already shipped is the first rung of this.
+
+### Consumer example — LIBRARY publish indicators (blobtree)
+
+The first concrete payoff: blobtree's LIBRARY, grouped into release rows via
+the climb rule, can badge each release from a local read of ndisc's
+`(file_path, last_published_at)` — no Nostr required:
+
+- **Published** — matched ndisc row, `last_published_at` set.
+- **Exists · unpublished** — matched row, `last_published_at` null.
+- **Not in discography** — no matching row (removed, or uncatalogued).
+
+A 4th state, **published-per-ndisc but stale/absent on relay** (propagation
+drift), needs the bounded author-scoped Nostr overlay (ndisc's
+`reconcile_published` shape) and is an optional enrichment, not a gate.
+
+**Drift caveat:** a renamed or sort-prefixed folder (e.g. a `_`-prefixed
+artist, or `Album (Remastered)`) won't climb-match and will read as "not in
+discography." Treat no-match as **suspect**, not authoritative — normalise
+(trim sort-prefixes, case-fold) or flag rather than assert a removal.
+
 ## Sharing the terrain across three apps
 
 Each app keeps remembering **its own DB** on launch (unchanged — this is
