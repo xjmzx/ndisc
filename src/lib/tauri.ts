@@ -31,6 +31,10 @@ export interface Release {
   lastPublishedNaddr?: string | null;
   addedAt?: number | null;
   updatedAt?: number | null;
+  // Leaf count — audio files in the release folder (0–99). Local-only,
+  // derived from filePath on import / recount; null when unknown (e.g. a
+  // physical release with no folder). Not published to Nostr.
+  trackCount?: number | null;
 }
 
 export type PublishedFilter = "published" | "unpublished";
@@ -133,6 +137,16 @@ export async function listReleases(
 
 export async function deleteRelease(id: number): Promise<void> {
   return invoke("delete_release", { id });
+}
+
+/**
+ * Backfill / refresh each release's leaf count (trackCount) from the audio
+ * files in its folder. Default fills only releases whose count is unknown
+ * (cheap to call on every launch); `force` recounts every foldered release.
+ * Returns how many rows were updated.
+ */
+export async function recountTracks(force = false): Promise<number> {
+  return invoke("recount_tracks", { force });
 }
 
 export async function setCoverArtUrl(

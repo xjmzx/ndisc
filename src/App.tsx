@@ -35,6 +35,7 @@ import {
   clearKeypair,
   getNpub,
   initDb,
+  recountTracks,
   setDbPath as setDbPathCmd,
   type Release,
 } from "./lib/tauri";
@@ -309,6 +310,20 @@ export default function App() {
     setReloadKey((k) => k + 1);
     setSelected(null);
   }
+
+  // One-time leaf-count backfill — fill track_count from each folder-backed
+  // release that hasn't been counted yet, then refresh so the leaf meters
+  // appear. Cheap on later launches (only unknown counts are walked).
+  useEffect(() => {
+    recountTracks()
+      .then((n) => {
+        if (n > 0) reload();
+      })
+      .catch(() => {
+        /* unreadable folders / no DB yet — leave counts as-is, retry next launch */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Library stats + import/export controller. Its toolbar + stat chips live
   // in the header; the import flow renders transiently in the left column.

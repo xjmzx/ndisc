@@ -96,6 +96,12 @@ pub struct Release {
     pub added_at: Option<i64>,
     #[serde(default)]
     pub updated_at: Option<i64>,
+    // Number of audio files in the release folder (the "leaves" on this branch).
+    // Local-only: derived from file_path on import / recount, NOT published to
+    // Nostr (release.v2 is frozen). Null when unknown (e.g. physical releases
+    // with no folder). Capped at 99.
+    #[serde(default)]
+    pub track_count: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -202,6 +208,8 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "genre_primary", "TEXT")?;
     ensure_column(&conn, "releases", "genre_secondary", "TEXT")?;
     ensure_column(&conn, "releases", "genre_tertiary", "TEXT")?;
+    // Leaf count — audio files per release folder. See Release.track_count.
+    ensure_column(&conn, "releases", "track_count", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
     backfill_type_category(&conn)?;
@@ -363,9 +371,10 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
           condition, notes, source, file_path, cover_art_path, cover_art_url,
           discogs_id, musicbrainz_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary,
-          last_published_at, last_published_naddr, added_at, updated_at)
+          last_published_at, last_published_naddr, added_at, updated_at,
+          track_count)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
         params![
             id,
             release.artist,
@@ -393,6 +402,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.last_published_naddr,
             release.added_at,
             release.updated_at,
+            release.track_count,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -850,6 +860,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         genre_tertiary: row.get(23)?,
         last_published_at: row.get(24)?,
         last_published_naddr: row.get(25)?,
+        track_count: row.get(26)?,
     })
 }
 
@@ -858,7 +869,7 @@ const RELEASE_SELECT_COLS: &str =
      country, condition, notes, source, file_path, cover_art_path,
      discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
-     last_published_at, last_published_naddr";
+     last_published_at, last_published_naddr, track_count";
 
 #[tauri::command]
 fn list_releases(
@@ -941,6 +952,64 @@ fn delete_release(app: tauri::AppHandle, id: i64) -> Result<(), String> {
     conn.execute("DELETE FROM releases WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Count audio files directly inside `dir` (non-recursive — matches the import
+/// grain, where each leaf folder is one release). Capped at 99 ("0–99 leaves").
+/// None when the folder can't be read (e.g. an unmounted drive) so the caller
+/// leaves track_count untouched and retries later.
+fn count_audio_in_dir(dir: &str) -> Option<i64> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut n: i64 = 0;
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_file() && is_audio(&p) {
+            n += 1;
+            if n >= 99 {
+                break;
+            }
+        }
+    }
+    Some(n)
+}
+
+/// Backfill / refresh each release's leaf count (track_count) from the audio
+/// files in its folder. Default fills only releases whose count is unknown
+/// (NULL) — cheap to call on every launch; `force` recounts every release that
+/// has a folder. Returns how many rows were updated. Local-only; never touches
+/// the Nostr publish path.
+#[tauri::command]
+fn recount_tracks(app: tauri::AppHandle, force: Option<bool>) -> Result<usize, String> {
+    let conn = open(&app)?;
+    let where_clause = if force.unwrap_or(false) {
+        "file_path IS NOT NULL AND file_path <> ''"
+    } else {
+        "track_count IS NULL AND file_path IS NOT NULL AND file_path <> ''"
+    };
+    let targets: Vec<(i64, String)> = {
+        let sql = format!("SELECT id, file_path FROM releases WHERE {}", where_clause);
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        let mut v = Vec::new();
+        for m in mapped {
+            v.push(m.map_err(|e| e.to_string())?);
+        }
+        v
+    };
+    let mut updated = 0usize;
+    for (id, path) in targets {
+        if let Some(n) = count_audio_in_dir(&path) {
+            conn.execute(
+                "UPDATE releases SET track_count = ?1 WHERE id = ?2",
+                params![n, id],
+            )
+            .map_err(|e| e.to_string())?;
+            updated += 1;
+        }
+    }
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -3044,8 +3113,8 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
         match tx.execute(
             "INSERT INTO releases
              (artist, title, year, medium, format, label, notes, source,
-              file_path, cover_art_path, release_type)
-             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music')",
+              file_path, cover_art_path, release_type, track_count)
+             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music', ?10)",
             params![
                 artist,
                 title,
@@ -3056,6 +3125,7 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
                 info.source_url,
                 dir_str,
                 cover,
+                (files.len() as i64).min(99),
             ],
         ) {
             Ok(_) => summary.imported += 1,
@@ -3611,6 +3681,7 @@ pub fn run() {
             export_markdown,
             list_releases,
             delete_release,
+            recount_tracks,
             publish_reaction,
             delete_reaction,
             publish_labels,
@@ -3715,6 +3786,7 @@ mod schema_v1 {
             last_published_naddr: None,
             added_at: None,
             updated_at: None,
+            track_count: None,
         }
     }
 
@@ -3884,6 +3956,7 @@ mod schema_v2 {
             last_published_naddr: None,
             added_at: None,
             updated_at: None,
+            track_count: None,
         }
     }
 

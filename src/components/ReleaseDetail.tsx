@@ -21,6 +21,7 @@ import { REACTION_DOWN, REACTION_UP, displayCount } from "../lib/rating";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
+import { LeafMeter } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
 import { genreDisplay } from "../lib/genre";
@@ -518,6 +519,18 @@ export function ReleaseDetail({
             {primaryFields.map(([label, value]) => (
               <NaRow key={label} label={label} value={toDisplay(value)} />
             ))}
+            {release.trackCount != null && (
+              <>
+                <dt className="text-muted">tracks</dt>
+                <dd className="text-fg/90 min-w-0 flex items-center gap-1.5">
+                  <LeafMeter n={release.trackCount} />
+                  <span className="tabular-nums">
+                    {release.trackCount}
+                    {release.trackCount >= 99 ? "+" : ""}
+                  </span>
+                </dd>
+              </>
+            )}
           </dl>
           <div className="flex items-center gap-3 shrink-0">
             {release.id != null && lastPublish && (
