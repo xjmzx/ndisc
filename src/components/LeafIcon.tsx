@@ -3,11 +3,7 @@ import { cn } from "../lib/cn";
 
 /**
  * The suite's "leaf" glyph — a simple almond blade + midrib in the lucide
- * idiom (24×24, currentColor stroke, round caps/joins, stroke-width 2), so it
- * drops in anywhere a lucide icon does: `<LeafIcon size={14} />`.
- *
- * Shared with ndisc.tree and ndisc.smpl. In the suite a leaf is an audio track
- * / clip; here it marks a release's track count (its "leaves on the branch").
+ * idiom. Kept for affordance / brand use; quantity is shown with LeafDots.
  */
 export function LeafIcon({
   size = 24,
@@ -27,51 +23,42 @@ export function LeafIcon({
       aria-hidden="true"
       {...props}
     >
-      {/* blade — pointed almond (tip top, stem base bottom) */}
       <path d="M12 21C6 16 6 9 12 4C18 9 18 16 12 21Z" />
-      {/* midrib */}
       <path d="M12 20V5" />
     </svg>
   );
 }
 
-// Foliage meter — fixed three-slot magnitude gauge, identical to the one in
-// ndisc.tree / ndisc.smpl. The first `litCount(n)` leaves are lit, the rest
-// dimmed; the exact figure lives in the hover title. A release is a branch and
-// these are its leaves (tracks). `null` count = unknown (no folder) → all dim.
-function litCount(n: number): number {
-  if (n <= 0) return 0;
-  return n >= 50 ? 3 : n >= 10 ? 2 : 1;
-}
-
-export function LeafMeter({
+/**
+ * Leaf-dots — the suite's diagrammatic quantity glyph. A leaf is a track; each
+ * track is one flat, muted leaf-green dot, and the dots stack into a compact
+ * cluster (wrap at 5 per row) so the *count itself* is the picture — leaves
+ * piling up on a branch. Renders nothing for a count of 0 (a bare branch).
+ * Capped at `max` (default 99); the exact figure stays in the hover title.
+ */
+export function LeafDots({
   n,
-  size = 12,
+  max = 99,
+  unit = "track",
   className,
 }: {
   n: number | null | undefined;
-  size?: number;
+  max?: number;
+  unit?: string;
   className?: string;
 }) {
-  const count = n ?? 0;
-  const lit = litCount(count);
-  const title =
-    n == null
-      ? "track count unknown"
-      : `${count}${count >= 99 ? "+" : ""} track${count === 1 ? "" : "s"}`;
+  const raw = Math.max(n ?? 0, 0);
+  const count = Math.min(raw, max);
+  if (count <= 0) return null;
+  const title = `${raw}${raw >= max ? "+" : ""} ${unit}${raw === 1 ? "" : "s"}`;
   return (
     <span
-      className={cn("inline-flex items-center gap-0.5", className)}
+      className={cn("inline-grid grid-cols-5 gap-[2px] w-max", className)}
       title={title}
       aria-label={title}
     >
-      {[0, 1, 2].map((i) => (
-        <LeafIcon
-          key={i}
-          size={size}
-          // shares the suite's ~10°-past-12:00 lean.
-          className={cn("rotate-[10deg]", i < lit ? "text-fg/70" : "text-muted/25")}
-        />
+      {Array.from({ length: count }, (_, i) => (
+        <span key={i} className="w-1 h-1 rounded-full bg-ok/70" />
       ))}
     </span>
   );

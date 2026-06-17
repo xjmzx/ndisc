@@ -17,7 +17,7 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
-import { LeafMeter } from "./LeafIcon";
+import { LeafDots } from "./LeafIcon";
 import {
   deleteRelease,
   extractEmbeddedCovers,
@@ -954,7 +954,7 @@ export function ReleaseList({
                   {/* Leaf meter — this release's track count ("leaves on the
                       branch"). Shown only for counted (folder-backed) releases;
                       physical/uncounted rows have no leaves. */}
-                  {r.trackCount != null && <LeafMeter n={r.trackCount} />}
+                  {r.trackCount != null && <LeafDots n={r.trackCount} />}
                   {/* Nostr purple is fixed across both themes — not the
                       theme-variable mauve token. Lit = published. */}
                   <span
