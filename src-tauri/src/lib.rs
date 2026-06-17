@@ -1333,6 +1333,22 @@ fn refresh_release_inner(
     };
     let new_cover_path = find_cover(&dir).or_else(|| release.cover_art_path.clone());
 
+    // notes / source — fill-when-empty in BOTH modes, regardless of
+    // `overwrite_label`. We never overwrite a non-empty value, so hand-edited
+    // notes and curated source URLs survive a rescan. This only backfills
+    // releases that have none yet — e.g. lifting a Bandcamp store URL out of a
+    // file's COMMENT tag into `source` (and keeping the raw comment in notes).
+    let new_notes = if release.notes.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        info.comment.clone().or_else(|| release.notes.clone())
+    } else {
+        release.notes.clone()
+    };
+    let new_source = if release.source.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        info.source_url.clone().or_else(|| release.source.clone())
+    } else {
+        release.source.clone()
+    };
+
     let mut changes: Vec<String> = Vec::new();
     if new_artist != release.artist {
         changes.push("artist".into());
@@ -1348,6 +1364,12 @@ fn refresh_release_inner(
     }
     if new_label != release.label {
         changes.push("label".into());
+    }
+    if new_notes != release.notes {
+        changes.push("notes".into());
+    }
+    if new_source != release.source {
+        changes.push("source".into());
     }
     if new_cover_path != release.cover_art_path {
         changes.push("cover_art_path".into());
@@ -1367,15 +1389,19 @@ fn refresh_release_inner(
              year = ?3,
              format = ?4,
              label = ?5,
-             cover_art_path = ?6,
+             notes = ?6,
+             source = ?7,
+             cover_art_path = ?8,
              updated_at = strftime('%s','now')
-         WHERE id = ?7",
+         WHERE id = ?9",
         params![
             new_artist,
             new_title,
             new_year,
             new_format_str,
             new_label,
+            new_notes,
+            new_source,
             new_cover_path,
             release_id,
         ],
@@ -2783,6 +2809,29 @@ struct DirInfo {
     bit_depth: Option<u8>,
     sample_rate: Option<u32>,
     bitrate_kbps: Option<u32>,
+    // Raw COMMENT tag (FLAC/Vorbis COMMENT, ID3 COMM, MP4 ©cmt). Bandcamp
+    // and other digital stores commonly stash the release/store URL here
+    // (e.g. "Visit https://artist.bandcamp.com"). Preserved verbatim into
+    // `notes`; any http(s) URL inside it is also lifted into `source_url`.
+    comment: Option<String>,
+    source_url: Option<String>,
+}
+
+/// Pull the first `http(s)://…` token out of a free-text string, trimming
+/// trailing punctuation/brackets. Used to lift a store URL out of a COMMENT
+/// tag (e.g. Bandcamp's "Visit https://artist.bandcamp.com") so it can land
+/// in `source` — which `backfill_source` requires to be a bare http(s) URL.
+fn first_http_url(s: &str) -> Option<String> {
+    s.split_whitespace()
+        .filter_map(|w| {
+            // Locate the scheme inside the token so a leading "(" / "<" etc.
+            // (e.g. "(https://example.com)") doesn't defeat the match.
+            let start = w.find("https://").or_else(|| w.find("http://"))?;
+            let url = w[start..]
+                .trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '>' | '"' | '\'' | ';'));
+            (url.len() > "https://".len()).then(|| url.to_owned())
+        })
+        .next()
 }
 
 fn read_dir_tags(files: &[PathBuf]) -> DirInfo {
@@ -2795,6 +2844,8 @@ fn read_dir_tags(files: &[PathBuf]) -> DirInfo {
         bit_depth: None,
         sample_rate: None,
         bitrate_kbps: None,
+        comment: None,
+        source_url: None,
     };
     // Relaxed parsing tolerates malformed tag fields (e.g. non-4-digit year
     // strings) instead of erroring out — we'd rather get the artist/album
@@ -2832,6 +2883,22 @@ fn read_dir_tags(files: &[PathBuf]) -> DirInfo {
                     .or_else(|| tag.get_string(&ItemKey::Label))
                     .map(|s| s.trim().to_owned())
                     .filter(|s| !s.is_empty());
+            }
+            if info.comment.is_none() {
+                info.comment = tag
+                    .get_string(&ItemKey::Comment)
+                    .or_else(|| tag.get_string(&ItemKey::AudioFileUrl))
+                    .or_else(|| tag.get_string(&ItemKey::PaymentUrl))
+                    .map(|s| s.trim().to_owned())
+                    .filter(|s| !s.is_empty());
+            }
+            if info.source_url.is_none() {
+                // Prefer an explicit URL tag; otherwise dig one out of COMMENT.
+                info.source_url = tag
+                    .get_string(&ItemKey::AudioFileUrl)
+                    .or_else(|| tag.get_string(&ItemKey::PaymentUrl))
+                    .and_then(first_http_url)
+                    .or_else(|| info.comment.as_deref().and_then(first_http_url));
             }
         }
         let props = tagged.properties();
@@ -2976,15 +3043,17 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
 
         match tx.execute(
             "INSERT INTO releases
-             (artist, title, year, medium, format, label, file_path,
-              cover_art_path, release_type)
-             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, 'music')",
+             (artist, title, year, medium, format, label, notes, source,
+              file_path, cover_art_path, release_type)
+             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music')",
             params![
                 artist,
                 title,
                 info.year,
                 format,
                 info.label,
+                info.comment,
+                info.source_url,
                 dir_str,
                 cover,
             ],
@@ -3568,6 +3637,43 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod comment_url {
+    use super::*;
+
+    #[test]
+    fn lifts_bandcamp_url_from_visit_comment() {
+        assert_eq!(
+            first_http_url("Visit https://artist.bandcamp.com"),
+            Some("https://artist.bandcamp.com".into())
+        );
+    }
+
+    #[test]
+    fn trims_trailing_punctuation() {
+        assert_eq!(
+            first_http_url("See (https://example.com/album)."),
+            Some("https://example.com/album".into())
+        );
+    }
+
+    #[test]
+    fn takes_first_url_when_several() {
+        assert_eq!(
+            first_http_url("http://a.test and https://b.test"),
+            Some("http://a.test".into())
+        );
+    }
+
+    #[test]
+    fn none_when_no_url() {
+        assert_eq!(first_http_url("just a plain note"), None);
+        assert_eq!(first_http_url(""), None);
+        // A bare scheme with no host is rejected (len guard).
+        assert_eq!(first_http_url("https://"), None);
+    }
 }
 
 // ---------------------------------------------------------------------------
