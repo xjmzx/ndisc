@@ -951,10 +951,16 @@ export function ReleaseList({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Leaf meter — this release's track count ("leaves on the
-                      branch"). Shown only for counted (folder-backed) releases;
-                      physical/uncounted rows have no leaves. */}
-                  {r.trackCount != null && <LeafDots n={r.trackCount} />}
+                  {/* Leaf meter — present (green) vs expected (faint) tracks
+                      for this release. Shown for counted (folder-backed)
+                      releases; physical/uncounted rows have no leaves. */}
+                  {(r.trackCount != null || r.trackTotal != null) && (
+                    <LeafDots
+                      n={r.trackCount ?? 0}
+                      total={r.trackTotal}
+                      maxCols={8}
+                    />
+                  )}
                   {/* Nostr purple is fixed across both themes — not the
                       theme-variable mauve token. Lit = published. */}
                   <span

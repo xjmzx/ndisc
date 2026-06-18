@@ -35,6 +35,10 @@ export interface Release {
   // derived from filePath on import / recount; null when unknown (e.g. a
   // physical release with no folder). Not published to Nostr.
   trackCount?: number | null;
+  // Expected total tracks (from the TRACKTOTAL tag, else file count). A
+  // release property — IS published as the `tracks` tag. present (trackCount)
+  // vs total = how many tracks are missing locally.
+  trackTotal?: number | null;
 }
 
 export type PublishedFilter = "published" | "unpublished";

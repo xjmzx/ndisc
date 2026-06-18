@@ -519,15 +519,13 @@ export function ReleaseDetail({
             {primaryFields.map(([label, value]) => (
               <NaRow key={label} label={label} value={toDisplay(value)} />
             ))}
-            {release.trackCount != null && (
+            {(release.trackCount != null || release.trackTotal != null) && (
               <>
                 <dt className="text-muted">tracks</dt>
-                <dd className="text-fg/90 min-w-0 flex items-center gap-2">
-                  <LeafDots n={release.trackCount} />
-                  <span className="tabular-nums">
-                    {release.trackCount}
-                    {release.trackCount >= 99 ? "+" : ""}
-                  </span>
+                <dd className="text-fg/90 min-w-0 flex items-center">
+                  {/* dots are the count — present (solid) over expected (faint);
+                      exact figures + missing count on hover. */}
+                  <LeafDots n={release.trackCount ?? 0} total={release.trackTotal} />
                 </dd>
               </>
             )}

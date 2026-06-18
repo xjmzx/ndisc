@@ -102,6 +102,13 @@ pub struct Release {
     // with no folder). Capped at 99.
     #[serde(default)]
     pub track_count: Option<i64>,
+    // Expected total tracks for the release, read from the audio files'
+    // TRACKTOTAL tag (falls back to the file count). Unlike track_count
+    // (present files on this device) this is a property of the release, so it
+    // IS published — `tracks` tag on kind:31237. present vs total = how many
+    // tracks are missing locally.
+    #[serde(default)]
+    pub track_total: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -210,6 +217,8 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "genre_tertiary", "TEXT")?;
     // Leaf count — audio files per release folder. See Release.track_count.
     ensure_column(&conn, "releases", "track_count", "INTEGER")?;
+    // Expected total tracks (from TRACKTOTAL tags). See Release.track_total.
+    ensure_column(&conn, "releases", "track_total", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
     backfill_type_category(&conn)?;
@@ -372,9 +381,9 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
           discogs_id, musicbrainz_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary,
           last_published_at, last_published_naddr, added_at, updated_at,
-          track_count)
+          track_count, track_total)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
         params![
             id,
             release.artist,
@@ -403,6 +412,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.added_at,
             release.updated_at,
             release.track_count,
+            release.track_total,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -861,6 +871,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         last_published_at: row.get(24)?,
         last_published_naddr: row.get(25)?,
         track_count: row.get(26)?,
+        track_total: row.get(27)?,
     })
 }
 
@@ -869,7 +880,7 @@ const RELEASE_SELECT_COLS: &str =
      country, condition, notes, source, file_path, cover_art_path,
      discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
-     last_published_at, last_published_naddr, track_count";
+     last_published_at, last_published_naddr, track_count, track_total";
 
 #[tauri::command]
 fn list_releases(
@@ -1418,6 +1429,12 @@ fn refresh_release_inner(
         release.source.clone()
     };
 
+    // Present (audio files on disk) + expected (TRACKTOTAL tag, else present).
+    // present vs total = how many tracks are missing locally.
+    let present = (audio_files.len() as i64).min(99);
+    let new_track_count = Some(present);
+    let new_track_total = Some(info.track_total.unwrap_or(present).min(99));
+
     let mut changes: Vec<String> = Vec::new();
     if new_artist != release.artist {
         changes.push("artist".into());
@@ -1443,6 +1460,12 @@ fn refresh_release_inner(
     if new_cover_path != release.cover_art_path {
         changes.push("cover_art_path".into());
     }
+    if new_track_count != release.track_count {
+        changes.push("tracks".into());
+    }
+    if new_track_total != release.track_total {
+        changes.push("track_total".into());
+    }
 
     if changes.is_empty() {
         return Ok(RefreshResult {
@@ -1461,8 +1484,10 @@ fn refresh_release_inner(
              notes = ?6,
              source = ?7,
              cover_art_path = ?8,
+             track_count = ?9,
+             track_total = ?10,
              updated_at = strftime('%s','now')
-         WHERE id = ?9",
+         WHERE id = ?11",
         params![
             new_artist,
             new_title,
@@ -1472,6 +1497,8 @@ fn refresh_release_inner(
             new_notes,
             new_source,
             new_cover_path,
+            new_track_count,
+            new_track_total,
             release_id,
         ],
     )
@@ -2042,6 +2069,13 @@ fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
         if let Some(g) = slot {
             push_tag(&mut tags, "genre", g)?;
         }
+    }
+
+    // v2 additive: expected total tracks (the release's canonical size). Local
+    // present-count (track_count) is NOT published — only this release-level
+    // total. Omitted when unknown. Consumers treat it as optional.
+    if let Some(tt) = r.track_total.filter(|&n| n > 0) {
+        push_tag(&mut tags, "tracks", &tt.to_string())?;
     }
 
     let content = r.notes.clone().unwrap_or_default();
@@ -2884,6 +2918,10 @@ struct DirInfo {
     // `notes`; any http(s) URL inside it is also lifted into `source_url`.
     comment: Option<String>,
     source_url: Option<String>,
+    // Expected total tracks, from the TRACKTOTAL / TOTALTRACKS tag (the max
+    // declared across the folder's files). Present even when some tracks are
+    // missing — the remaining files still declare the full total.
+    track_total: Option<i64>,
 }
 
 /// Pull the first `http(s)://…` token out of a free-text string, trimming
@@ -2915,6 +2953,7 @@ fn read_dir_tags(files: &[PathBuf]) -> DirInfo {
         bitrate_kbps: None,
         comment: None,
         source_url: None,
+        track_total: None,
     };
     // Relaxed parsing tolerates malformed tag fields (e.g. non-4-digit year
     // strings) instead of erroring out — we'd rather get the artist/album
@@ -2969,6 +3008,14 @@ fn read_dir_tags(files: &[PathBuf]) -> DirInfo {
                     .and_then(first_http_url)
                     .or_else(|| info.comment.as_deref().and_then(first_http_url));
             }
+            if info.track_total.is_none() {
+                // TRACKTOTAL / TOTALTRACKS — album-wide, so the first file that
+                // declares it wins. Parsed to a positive integer.
+                info.track_total = tag
+                    .get_string(&ItemKey::TrackTotal)
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                    .filter(|&n| n > 0);
+            }
         }
         let props = tagged.properties();
         if info.codec.is_none() {
@@ -2991,6 +3038,7 @@ fn read_dir_tags(files: &[PathBuf]) -> DirInfo {
             && info.year.is_some()
             && info.label.is_some()
             && info.codec.is_some()
+            && info.track_total.is_some()
         {
             break;
         }
@@ -3113,8 +3161,8 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
         match tx.execute(
             "INSERT INTO releases
              (artist, title, year, medium, format, label, notes, source,
-              file_path, cover_art_path, release_type, track_count)
-             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music', ?10)",
+              file_path, cover_art_path, release_type, track_count, track_total)
+             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music', ?10, ?11)",
             params![
                 artist,
                 title,
@@ -3126,6 +3174,8 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
                 dir_str,
                 cover,
                 (files.len() as i64).min(99),
+                // expected = TRACKTOTAL tag, else the present file count.
+                info.track_total.unwrap_or(files.len() as i64).min(99),
             ],
         ) {
             Ok(_) => summary.imported += 1,
@@ -3787,6 +3837,7 @@ mod schema_v1 {
             added_at: None,
             updated_at: None,
             track_count: None,
+            track_total: None,
         }
     }
 
@@ -3957,6 +4008,7 @@ mod schema_v2 {
             added_at: None,
             updated_at: None,
             track_count: None,
+            track_total: None,
         }
     }
 
@@ -3998,6 +4050,30 @@ mod schema_v2 {
             genre_tags(&ev),
             vec!["techno", "dub", "downtempo"]
         );
+    }
+
+    fn tracks_tag(ev: &Event) -> Option<String> {
+        ev.tags.iter().find_map(|t| {
+            let s = t.as_slice();
+            (s.len() >= 2 && s[0] == "tracks").then(|| s[1].clone())
+        })
+    }
+
+    // v2 additive: expected total tracks. Optional — present only when known.
+    #[test]
+    fn tracks_tag_emitted_when_total_known() {
+        let r = Release {
+            track_total: Some(12),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        assert_eq!(tracks_tag(&ev), Some("12".into()));
+    }
+
+    #[test]
+    fn tracks_tag_omitted_when_total_unknown() {
+        let ev = release_event(&Keys::generate(), &base_v2_release()).unwrap();
+        assert_eq!(tracks_tag(&ev), None);
     }
 
     #[test]
