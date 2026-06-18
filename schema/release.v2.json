@@ -115,6 +115,6 @@
     "spec": "NIP-19 naddr",
     "coordinate": { "kind": 31237, "pubkey": "<author pubkey>", "identifier": "disco-vault:<integer release id>" }
   },
-  "changePolicy": "FROZEN once shipped. Additive slug additions inside `genreSlugs` (keeping existing slugs stable) are permitted by emitter-and-reader convention without forcing a v3 bump. Any other change to the emitted event format — renaming/removing slugs, changing tag semantics, breaking ordering — is a coordinated v3 bump: add release.v3.json and migrate consumers, never edit this file.",
+  "changePolicy": "FROZEN once shipped, with two convention-permitted ADDITIVE exceptions that do NOT force a v3 bump (the `d`-only structural rule guarantees old consumers stay compatible): (1) new optional slugs inside `genreSlugs`, existing slugs stable; (2) new OPTIONAL tags that consumers may ignore — e.g. the additive `tracks` tag (2026-06). Any BREAKING change — renaming/removing slugs or tags, changing tag semantics, breaking ordering, or making a previously-optional tag required — is a coordinated v3 bump: add release.v3.json and migrate consumers, never edit this file. When an additive amendment lands, re-vendor this file into the glmps + ndisc.view consumers and re-pin their SHA.",
   "rolloutFromV1": "v1 readers ignore the `genre` tag (additive rule) and surface no genre data until upgraded. ndisc emits only v2 format; no v1-compatible proxy (e.g. NIP-12 `t` tags) is added. See schema/v2-proposal-glmps-reply.md for the v2-only emission decision rationale."
 }
