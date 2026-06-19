@@ -24,13 +24,7 @@ import { Section } from "./Section";
 import { LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
-import {
-  genreDisplay,
-  GENRE_ACOUSTIC,
-  GENRE_ELECTRONIC,
-  GENRE_BRIDGE,
-  GENRE_TERTIARY,
-} from "../lib/genre";
+import { genreDisplay, GENRE_ORDER } from "../lib/genre";
 import {
   deleteRelease,
   restoreRelease,
@@ -71,33 +65,23 @@ const CATEGORY_OPTIONS = [
   "miscellaneous",
 ];
 
-// Values match the --c-g-* CSS-var slot names so the LABELS dot can use
-// the genre verbatim: `style: { backgroundColor: rgb(var(--c-g-${g})) }`.
-// 35 active slugs in four palette/semantic groups (acoustic / electronic /
-// bridge / tertiary) — sourced from lib/genre so the picker can never offer a
-// retired compound pair. The grouping is presentation only; all slugs are
-// pure peers. Display tweaks (rnb → R&B) live in genreDisplay below.
-const GENRE_GROUPS: { label: string; options: string[] }[] = [
-  { label: "acoustic", options: [...GENRE_ACOUSTIC] },
-  { label: "electronic", options: [...GENRE_ELECTRONIC] },
-  { label: "bridge", options: [...GENRE_BRIDGE] },
-  { label: "tertiary", options: [...GENRE_TERTIARY] },
-];
-
-// Filter GENRE_GROUPS for the given slot index, hiding anything already
-// chosen in an earlier slot. All 35 active slugs are pure peers — no
-// parent+sub gating; meaning composes by stacking slugs.
-function genreGroupsForSlot(
+// Flat, alphabetical genre options for one slot — the 35 active slugs (from
+// lib/genre, so a retired compound pair can never be offered) minus anything
+// already chosen in an earlier slot. The release-viewer dropdown lists genres
+// only: no family grouping. Sorted by display label (case-insensitive), so
+// `rnb` sorts as "R&B". All slugs are pure peers — no parent+sub gating.
+function genreOptionsForSlot(
   slotIndex: number,
   currentSlots: (string | null)[],
-): { label: string; options: string[] }[] {
+): string[] {
   const excluded = new Set<string>(
     currentSlots.slice(0, slotIndex).filter((s): s is string => !!s),
   );
-  return GENRE_GROUPS.map((g) => ({
-    label: g.label,
-    options: g.options.filter((o) => !excluded.has(o)),
-  }));
+  return GENRE_ORDER.filter((o) => !excluded.has(o)).sort((a, b) =>
+    genreDisplay(a).localeCompare(genreDisplay(b), undefined, {
+      sensitivity: "base",
+    }),
+  );
 }
 
 // Discogs's full condition grades. Stored verbatim so imported entries map
@@ -435,9 +419,7 @@ export function ReleaseDetail({
     slots[slot] = newValue;
     for (let i = slot + 1; i < 3; i++) {
       if (slots[i]) {
-        const allowed = new Set(
-          genreGroupsForSlot(i, slots).flatMap((g) => g.options),
-        );
+        const allowed = new Set(genreOptionsForSlot(i, slots));
         if (!allowed.has(slots[i] as string)) slots[i] = null;
       }
     }
@@ -582,7 +564,7 @@ export function ReleaseDetail({
             <>
               <EditableEnum
                 value={slots[0]}
-                groups={genreGroupsForSlot(0, slots)}
+                options={genreOptionsForSlot(0, slots)}
                 onChange={(v) => onChangeGenreSlot(0, v)}
                 ariaLabel="primary genre"
                 displayFn={genreDisplay}
@@ -595,7 +577,7 @@ export function ReleaseDetail({
               {slots[0] && (
                 <EditableEnum
                   value={slots[1]}
-                  groups={genreGroupsForSlot(1, slots)}
+                  options={genreOptionsForSlot(1, slots)}
                   onChange={(v) => onChangeGenreSlot(1, v)}
                   ariaLabel="secondary genre"
                   displayFn={genreDisplay}
@@ -606,7 +588,7 @@ export function ReleaseDetail({
               {slots[1] && (
                 <EditableEnum
                   value={slots[2]}
-                  groups={genreGroupsForSlot(2, slots)}
+                  options={genreOptionsForSlot(2, slots)}
                   onChange={(v) => onChangeGenreSlot(2, v)}
                   ariaLabel="tertiary genre"
                   displayFn={genreDisplay}
