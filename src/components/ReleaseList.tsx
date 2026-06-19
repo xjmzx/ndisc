@@ -1104,7 +1104,10 @@ export function ReleaseList({
                         : "not published to Nostr"
                     }
                     className={cn(
-                      "shrink-0 w-2.5 h-2.5 rounded-full",
+                      // Match the medium chip's footprint (w-5 h-5 rounded
+                      // square) for a coherent chip row; colours unchanged —
+                      // solid mauve = published, faint = not.
+                      "shrink-0 w-5 h-5 rounded",
                       r.lastPublishedAt != null
                         ? "bg-[#a78bfa]"
                         : "bg-[#a78bfa]/25",
