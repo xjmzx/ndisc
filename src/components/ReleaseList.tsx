@@ -19,7 +19,7 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
-import { LeafDots, leafDotRows } from "./LeafIcon";
+import { LeafDots } from "./LeafIcon";
 import {
   deleteRelease,
   extractEmbeddedCovers,
@@ -1013,10 +1013,6 @@ export function ReleaseList({
             idx === 0 || indexBucket(items[idx - 1].artist) !== bucket
               ? bucket
               : "";
-          // Leaf stack taller than the 36px cover thumb (≈7+ dot rows at
-          // maxCols 8) — only then does the state chip stretch to match it;
-          // normal rows keep the standard h-5 chip.
-          const leafTall = leafDotRows(r.trackCount, r.trackTotal, 8) >= 7;
           return (
             <li
               key={r.id}
@@ -1049,7 +1045,7 @@ export function ReleaseList({
                   idx > 0 && "border-t border-surface/60",
                 )}
               >
-              <div className="flex items-start gap-2">
+              <div className="flex items-center gap-2">
                 <CoverThumb src={thumb} />
                 <div className="min-w-0 flex-1">
                   <div
@@ -1083,7 +1079,7 @@ export function ReleaseList({
                       .join(" · ")}
                   </div>
                 </div>
-                <div className="flex items-start gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   {/* Leaf meter — present (green) vs expected (faint) tracks
                       for this release. Shown for counted (folder-backed)
                       releases; physical/uncounted rows have no leaves. */}
@@ -1097,15 +1093,8 @@ export function ReleaseList({
                   {/* State cluster: publish dot + medium disc share one mauve
                       rounded-rectangle bg (non-interactive — state only). */}
                   <div
-                    className={cn(
-                      "shrink-0 inline-flex justify-center gap-1 px-1.5",
-                      "min-w-[38px] rounded bg-mauve/20",
-                      // Stretch to the leaf stack only on genuinely tall rows;
-                      // otherwise the standard 20px chip, centred.
-                      leafTall
-                        ? "self-stretch min-h-5 items-start pt-1"
-                        : "h-5 items-center",
-                    )}
+                    className="shrink-0 inline-flex items-center justify-center
+                               gap-1 px-1.5 h-5 min-w-[38px] rounded bg-mauve/20"
                   >
                     {/* Filled dot both states: published = nostr purple
                         (theme-fixed), unpublished = the app's darkest palette
