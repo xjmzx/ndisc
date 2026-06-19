@@ -63,6 +63,23 @@ interface Props {
 
 type MediumFilter = "" | "physical" | "digital";
 
+// Alphabetical index bucket for the left rail. Keys off the artist (the list's
+// sort key). Diacritics fold to their base letter so accents don't spawn
+// stray buckets; digits map to themselves; everything else (symbols, empty,
+// non-Latin) collapses under "#". Order of markers down the rail: # · 0–9 · A–Z.
+function indexBucket(artist: string | null | undefined): string {
+  const raw = (artist ?? "").trim();
+  if (!raw) return "#";
+  const c = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .charAt(0)
+    .toUpperCase();
+  if (c >= "A" && c <= "Z") return c;
+  if (c >= "0" && c <= "9") return c;
+  return "#";
+}
+
 export function ReleaseList({
   reloadKey,
   onSelect,
@@ -917,22 +934,43 @@ export function ReleaseList({
               : "Empty library — add your first release on the right."}
           </li>
         )}
-        {items.map((r) => {
+        {items.map((r, idx) => {
           const thumb = coverImageSrc(r);
           const showInlineEditor = needsCoverOnly && r.id !== undefined;
           const draftValue = r.id !== undefined ? drafts.get(r.id) ?? "" : "";
           const saveDisabled =
             !draftValue.trim() || savingId !== null;
+          // Index rail: show the bucket marker only on the first row of each
+          // run (the artist sort makes these runs contiguous), blank on the
+          // continuations — so the left edge reads # · 0–9 · A–Z top to bottom.
+          const bucket = indexBucket(r.artist);
+          const marker =
+            idx === 0 || indexBucket(items[idx - 1].artist) !== bucket
+              ? bucket
+              : "";
           return (
             <li
               key={r.id}
               onClick={() => onSelect(r)}
               className={cn(
-                "px-3 py-2 cursor-pointer hover:bg-surface/40 text-xs",
-                "flex flex-col gap-1.5",
+                "cursor-pointer hover:bg-surface/40 text-xs",
+                "flex items-stretch",
                 selected?.id === r.id && "bg-surface/70",
               )}
             >
+              <div
+                className="shrink-0 w-4 pt-3.5 flex justify-center
+                           border-r border-surface/40"
+                aria-hidden={marker === ""}
+              >
+                <span
+                  className="text-[9px] font-mono font-semibold uppercase
+                             leading-none text-fg"
+                >
+                  {marker}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5 pl-2 pr-3 py-2">
               <div className="flex items-center gap-2">
                 <CoverThumb src={thumb} />
                 <div className="min-w-0 flex-1">
@@ -1040,6 +1078,7 @@ export function ReleaseList({
                   </button>
                 </div>
               )}
+              </div>
             </li>
           );
         })}
