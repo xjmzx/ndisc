@@ -40,6 +40,22 @@ function dotCols(n: number, maxCols: number): number {
   return Math.ceil(n / rows);
 }
 
+// Number of rows a LeafDots cluster will render into, without rendering it —
+// lets a caller reserve/stretch space to match the dot stack. Mirrors the
+// present/expected/cap logic in LeafDots.
+export function leafDotRows(
+  n: number | null | undefined,
+  total?: number | null,
+  maxCols = 5,
+  max = 99,
+): number {
+  const present = Math.min(Math.max(n ?? 0, 0), max);
+  const expected = total != null ? Math.min(Math.max(total, 0), max) : present;
+  const shown = Math.max(present, expected);
+  if (shown <= 0) return 0;
+  return Math.ceil(shown / dotCols(shown, maxCols));
+}
+
 /**
  * Leaf-dots — the suite's diagrammatic quantity glyph. A leaf is a track; each
  * present track is one solid leaf-green dot, layered over faint (25%) dots for
