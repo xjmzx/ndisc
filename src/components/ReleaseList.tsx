@@ -1059,7 +1059,7 @@ export function ReleaseList({
                         now (the gutter letter box is gone). */}
                     {marker ? (
                       <span
-                        className="rounded px-1"
+                        className="rounded px-1.5 py-0.5"
                         style={{
                           backgroundColor:
                             "color-mix(in srgb, rgb(var(--c-digital)) 40%," +
