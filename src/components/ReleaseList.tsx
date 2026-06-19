@@ -960,7 +960,7 @@ export function ReleaseList({
             >
               <div
                 className="shrink-0 w-4 pt-3.5 flex justify-center
-                           border-r border-fg"
+                           border-r border-fg/70"
                 aria-hidden={marker === ""}
               >
                 <span
