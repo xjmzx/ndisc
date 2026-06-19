@@ -1103,16 +1103,21 @@ export function ReleaseList({
                         ? "published to Nostr"
                         : "not published to Nostr"
                     }
-                    className={cn(
-                      // Match the medium chip's footprint (w-5 h-5 rounded
-                      // square) for a coherent chip row; colours unchanged —
-                      // solid mauve = published, faint = not.
-                      "shrink-0 w-5 h-5 rounded",
-                      r.lastPublishedAt != null
-                        ? "bg-[#a78bfa]"
-                        : "bg-[#a78bfa]/25",
-                    )}
-                  />
+                    className="shrink-0 grid place-items-center w-5 h-5 rounded
+                               bg-[#a78bfa]/20"
+                  >
+                    {/* Mirrors the medium chip's solid/outline disc: filled
+                        dot = published, outline ring = not. Nostr purple is
+                        theme-fixed (not the theme mauve token). */}
+                    <span
+                      className={cn(
+                        "w-2.5 h-2.5 rounded-full",
+                        r.lastPublishedAt != null
+                          ? "bg-[#a78bfa]"
+                          : "border border-[#a78bfa]",
+                      )}
+                    />
+                  </span>
                   {r.medium && (
                     <span
                       title={r.medium}
