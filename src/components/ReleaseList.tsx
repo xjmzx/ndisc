@@ -962,10 +962,9 @@ export function ReleaseList({
                 className="shrink-0 w-6 relative"
                 aria-hidden={marker === ""}
               >
-                {/* vertical rail — one continuous line at the right edge */}
-                <div className="absolute inset-y-0 right-0 w-px bg-fg/70" />
-                {/* ruler tick: a short stub per release, longer where the
-                    index character changes (top edge = the row boundary) */}
+                {/* ruler ticks only (no continuous rail): a short stub per
+                    release, longer where the index character changes (top
+                    edge = the row boundary) */}
                 <div
                   className={cn(
                     "absolute right-0 top-0 h-px bg-fg/70",
