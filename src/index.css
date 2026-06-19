@@ -24,35 +24,56 @@
   /* db-toolbar group — auburn, set apart from the mauve library/nostr groups */
   --c-auburn: 178 96 58;
 
-  /* Genre palette — shared with glmps. Mid-saturation hues that sit
-     alongside the system tokens above without competing with them. Same
-     values across fizx and upleb themes (the genre layer is theme-neutral). */
+  /* Genre palette — shared with glmps + ndisc.view verbatim. Mid-saturation
+     hues that sit alongside the system tokens above without competing with
+     them. Theme-neutral (same values across fizx and upleb). 35 active slugs
+     in four groups + the four retired compound pairs (legacy reads only,
+     rendered with a slash). Restructured + recoloured in the 2026-06 v2
+     genre amendment. */
+  /* acoustic (primary) */
   --c-g-ambient:       176 199 209;
-  --c-g-classical-folk: 232 220 195;
-  --c-g-downtempo:     122  74 140;
-  --c-g-electronic:    140 140 140;
+  --c-g-blues:          56  92 150;
+  --c-g-classical:     226 216 192;
   --c-g-experimental:  106 168 168;
+  --c-g-folk:          196 164 116;
   --c-g-funk:          232 178  55;
   --c-g-hip-hop:       158 104  66;
   --c-g-jazz:          199 127  78;
+  --c-g-latin:         232 132  52;
+  --c-g-metal:          92 100 110;
   --c-g-pop:           255 165 201;
+  --c-g-poetry:        158 148 180;
   --c-g-reggae:         90 138  79;
+  --c-g-rnb:           150  80 112;
   --c-g-rock:          176  57  46;
+  --c-g-soul:          198 100  84;
   --c-g-soundtrack:    100 137 184;
-  /* Electronic sub-genres — magenta hue family (cohesive among themselves;
-     no parent hue link as of v2.1.3 — `electronic` is grey). Compound names
-     (dnb-jungle, drone-noise, footwork-trap) store hyphenated; UI may render
-     the slash form. */
-  --c-g-acid:          255  66 200;
-  --c-g-bass:          120  40 108;
-  --c-g-breaks:        230  77 168;
+  /* electronic (secondary) */
+  --c-g-acid:          196 232  52;
+  --c-g-bass:          104  72 214;
+  --c-g-breaks:        232  64 110;
+  --c-g-dnb:            40 194 200;
+  --c-g-downtempo:     122  74 140;
+  --c-g-electro:       240  62 176;
+  --c-g-electronic:    140 140 140;
+  --c-g-footwork:      160  74 226;
+  --c-g-house:         196  74 206;
+  --c-g-jungle:         52 198 110;
+  --c-g-techno:         58 124 244;
+  /* bridge */
+  --c-g-dub:            22 138 104;
+  --c-g-noise:         234  80  46;
+  /* tertiary (optional) */
+  --c-g-boom-bap:      176 132  92;
+  --c-g-lo-fi:         158 130 128;
+  --c-g-spiritual:     178 118  56;
+  --c-g-trance:        120 100 245;
+  --c-g-trap:          128  84  96;
+  /* deprecated compound pairs — legacy reads only, render with slash */
+  --c-g-classical-folk:232 220 195;
   --c-g-dnb-jungle:    160  39 135;
   --c-g-drone-noise:   159 110 145;
-  --c-g-dub:           199  93 163;
-  --c-g-electro:       255 111 184;
   --c-g-footwork-trap: 255 133 200;
-  --c-g-house:         190  80 188;
-  --c-g-techno:        214  58 153;
   /* Year-strip gradient — oldest → newest, swept per-year across the visible
      window (mirrors the glmps hero-title sweep). fizx: deep blue → light blue
      → lime. The decade reads from colour, not from gaps/dividers. */
@@ -78,28 +99,50 @@
   --c-auburn: 178 96 58;
 
   /* Genre palette — identical to :root; theme-neutral. */
+  /* acoustic (primary) */
   --c-g-ambient:       176 199 209;
-  --c-g-classical-folk: 232 220 195;
-  --c-g-downtempo:     122  74 140;
-  --c-g-electronic:    140 140 140;
+  --c-g-blues:          56  92 150;
+  --c-g-classical:     226 216 192;
   --c-g-experimental:  106 168 168;
+  --c-g-folk:          196 164 116;
   --c-g-funk:          232 178  55;
   --c-g-hip-hop:       158 104  66;
   --c-g-jazz:          199 127  78;
+  --c-g-latin:         232 132  52;
+  --c-g-metal:          92 100 110;
   --c-g-pop:           255 165 201;
+  --c-g-poetry:        158 148 180;
   --c-g-reggae:         90 138  79;
+  --c-g-rnb:           150  80 112;
   --c-g-rock:          176  57  46;
+  --c-g-soul:          198 100  84;
   --c-g-soundtrack:    100 137 184;
-  --c-g-acid:          255  66 200;
-  --c-g-bass:          120  40 108;
-  --c-g-breaks:        230  77 168;
+  /* electronic (secondary) */
+  --c-g-acid:          196 232  52;
+  --c-g-bass:          104  72 214;
+  --c-g-breaks:        232  64 110;
+  --c-g-dnb:            40 194 200;
+  --c-g-downtempo:     122  74 140;
+  --c-g-electro:       240  62 176;
+  --c-g-electronic:    140 140 140;
+  --c-g-footwork:      160  74 226;
+  --c-g-house:         196  74 206;
+  --c-g-jungle:         52 198 110;
+  --c-g-techno:         58 124 244;
+  /* bridge */
+  --c-g-dub:            22 138 104;
+  --c-g-noise:         234  80  46;
+  /* tertiary (optional) */
+  --c-g-boom-bap:      176 132  92;
+  --c-g-lo-fi:         158 130 128;
+  --c-g-spiritual:     178 118  56;
+  --c-g-trance:        120 100 245;
+  --c-g-trap:          128  84  96;
+  /* deprecated compound pairs — legacy reads only, render with slash */
+  --c-g-classical-folk:232 220 195;
   --c-g-dnb-jungle:    160  39 135;
   --c-g-drone-noise:   159 110 145;
-  --c-g-dub:           199  93 163;
-  --c-g-electro:       255 111 184;
   --c-g-footwork-trap: 255 133 200;
-  --c-g-house:         190  80 188;
-  --c-g-techno:        214  58 153;
   /* Year-strip gradient — warm analog of the fizx sweep: deep rust → orange
      → warm gold, oldest → newest. */
   --c-year-old:        138  58  36;

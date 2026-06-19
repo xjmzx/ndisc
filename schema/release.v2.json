@@ -38,7 +38,7 @@
           "repeatable": true,
           "occurrences": "0-3",
           "ordered": true,
-          "note": "NEW IN v2. Up to three ordered genre slots: first = primary, second = secondary, third = tertiary. Each slug is one of the 22 values in `genreSlugs`. Order of `genre` tags in the emitted event IS the priority order — emitters MUST preserve it, consumers MUST treat it as authoritative. Invariants enforced by the emitter and validated by conformant consumers (see `genreInvariants`).",
+          "note": "NEW IN v2. Up to three ordered genre slots: first = primary, second = secondary, third = tertiary. Each slug is one of the active values in `genreSlugs` (35 after the 2026-06 restructure; the four deprecated compound pairs remain valid for legacy reads). Order of `genre` tags in the emitted event IS the priority order — emitters MUST preserve it, consumers MUST treat it as authoritative. Invariants enforced by the emitter and validated by conformant consumers (see `genreInvariants`).",
           "valuesEnum": "see genreSlugs below"
         }
       },
@@ -64,37 +64,62 @@
     }
   },
   "genreSlugs": {
-    "_comment": "The complete set of valid `genre` tag values in v2. Slug expansions inside a v2-compatible scheme are permitted by emitter-and-reader convention (new optional slug added to this list) provided existing slugs remain stable. Renaming or removing a slug requires a v3 bump. Note: `mains` vs `electronicSubs` is a visual / palette grouping (sub-slugs share the magenta hue family for chip colour); semantically all 22 slugs are pure peers — see genreInvariants.",
-    "mains": [
+    "_comment": "Grouped for semantics + palette ONLY — NOT a hierarchy; all active slugs are pure peers (see genreInvariants). The groups map to three colour tiers: `acoustic` (primary, muted/earthy), `electronic` (secondary, vivid), `tertiary` (optional/cross-cutting). `bridge` slugs (dub, noise) sit between the acoustic and electronic families and carry standalone hues. A zero-count slug renders no chip in data but stays selectable in pickers. Adding a slug is additive (re-pin the SHA, no v3 bump) provided existing slugs stay stable; renaming or removing a slug is a v3 bump. Display is verbatim except `rnb` → 'R&B' and the glmps-side cosmetic `soundtrack` → 'film'.",
+    "acoustic": [
       "ambient",
-      "classical-folk",
-      "downtempo",
-      "electronic",
+      "blues",
+      "classical",
       "experimental",
+      "folk",
       "funk",
       "hip-hop",
       "jazz",
+      "latin",
+      "metal",
       "pop",
+      "poetry",
       "reggae",
+      "rnb",
       "rock",
+      "soul",
       "soundtrack"
     ],
-    "electronicSubs": [
+    "electronic": [
       "acid",
       "bass",
       "breaks",
-      "dnb-jungle",
-      "drone-noise",
-      "dub",
+      "dnb",
+      "downtempo",
       "electro",
-      "footwork-trap",
+      "electronic",
+      "footwork",
       "house",
+      "jungle",
       "techno"
     ],
-    "compoundDisplayRule": "Compound PAIR slugs (classical-folk, dnb-jungle, drone-noise, footwork-trap) join two distinct genres with a hyphen on the wire and SHOULD render with a slash in UI (e.g. dnb/jungle). EXCEPTION: hip-hop is a single genre name that contains a hyphen — it is NOT a pair and renders verbatim. Implementations MUST slash only the known pair slugs; a blind slug.replace(/-/g,'/') would mangle hip-hop into hip/hop. Reference: ndisc src/lib/genre.ts SLASH_DISPLAY_SLUGS."
+    "bridge": [
+      "dub",
+      "noise"
+    ],
+    "tertiary": [
+      "boom-bap",
+      "lo-fi",
+      "spiritual",
+      "trance",
+      "trap"
+    ],
+    "deprecated": {
+      "_comment": "Compound slash-pairs from the original v2 set, retired in the 2026-06 restructure when they were split/collapsed into atomic slugs. NEVER emitted on new events; retained as VALID for reading legacy events and cross-relay NIP-77 copies, where they still display with a slash. Mapping: classical-folk→classical+folk, dnb-jungle→dnb+jungle, drone-noise→noise, footwork-trap→footwork.",
+      "slugs": [
+        "classical-folk",
+        "dnb-jungle",
+        "drone-noise",
+        "footwork-trap"
+      ]
+    }
   },
   "genreInvariants": {
-    "_comment": "Cross-slot constraints. The emitter enforces these at capture time; conformant consumers SHOULD validate on read with strict-but-recoverable handling (silently drop the offending slot, keep the rest). v2.1: all 22 slugs are pure peers — `electronic` + any electronic sub (e.g. `techno`) is permitted in the same event. Meaning composes by stacking slugs rather than implying parent semantics.",
+    "_comment": "Cross-slot constraints. The emitter enforces these at capture time; conformant consumers SHOULD validate on read with strict-but-recoverable handling (silently drop the offending slot, keep the rest). All 35 active slugs are pure peers — the acoustic / electronic / bridge / tertiary groups are palette + semantic groupings, not a hierarchy; any combination across groups is permitted in the same event. Meaning composes by stacking slugs rather than implying parent semantics.",
     "slotCap": 3,
     "distinct": "All emitted `genre` slugs in a single event MUST be distinct.",
     "denseOrdering": "Slots are dense on the wire — present slugs occupy the lowest indices. A consumer receiving a sparse sequence (e.g. via a non-canonical re-emitter) SHOULD compact before indexing."

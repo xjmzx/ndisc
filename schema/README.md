@@ -70,18 +70,27 @@ addition is a repeatable optional `genre` tag.
 - **Repeatable**, 0–3 occurrences per event.
 - **Ordered** — tag order IS the priority order (first = primary, second =
   secondary, third = tertiary).
-- **Each value** is one of 22 valid slugs:
+- **Each value** is one of 35 active slugs (restructured 2026-06):
 
 ```
-mains:           ambient, classical-folk, downtempo, electronic, experimental,
-                 funk, hip-hop, jazz, pop, reggae, rock, soundtrack
-electronic subs: acid, bass, breaks, dnb-jungle, drone-noise, dub, electro,
-                 footwork-trap, house, techno
+acoustic:    ambient, blues, classical, experimental, folk, funk, hip-hop,
+             jazz, latin, metal, pop, poetry, reggae, rnb, rock, soul, soundtrack
+electronic:  acid, bass, breaks, dnb, downtempo, electro, electronic, footwork,
+             house, jungle, techno
+bridge:      dub, noise
+tertiary:    boom-bap, lo-fi, spiritual, trance, trap
 ```
 
-- **All 22 slugs are pure peers.** The mains/subs split is a palette
-  grouping only; there's no semantic gate. A release MAY be tagged
-  `electronic` + `techno` + `dub` if that's how the meaning composes.
+- **All 35 active slugs are pure peers.** The acoustic / electronic / bridge /
+  tertiary grouping is palette + semantic grouping only; there's no hierarchy
+  or gate. A release MAY be tagged `electronic` + `techno` + `dub` if that's
+  how the meaning composes.
+- **Deprecated** — four compound slash-pairs (`classical-folk`, `dnb-jungle`,
+  `drone-noise`, `footwork-trap`) were retired in the 2026-06 restructure
+  (split/collapsed into atomic slugs). They are **never emitted** on new
+  events but remain **valid for reading** legacy / cross-relay events, where
+  they still display with a slash. Mapping: `classical-folk`→`classical`+`folk`,
+  `dnb-jungle`→`dnb`+`jungle`, `drone-noise`→`noise`, `footwork-trap`→`footwork`.
 
 ### Invariants (enforced at capture, validated on read)
 
@@ -99,34 +108,49 @@ parse failures, no exceptions.
 Same triplet values on both ends:
 
 ```
-mains
-  --c-g-ambient:       176 199 209   --c-g-hip-hop:     158 104  66
-  --c-g-classical-folk:232 220 195   --c-g-jazz:        199 127  78
-  --c-g-downtempo:     122  74 140   --c-g-pop:         255 165 201
-  --c-g-electronic:    140 140 140   --c-g-reggae:       90 138  79
-  --c-g-experimental:  106 168 168   --c-g-rock:        176  57  46
-  --c-g-funk:          232 178  55   --c-g-soundtrack:  100 137 184
+acoustic (primary, muted/earthy)
+  --c-g-ambient:       176 199 209   --c-g-poetry:        158 148 180
+  --c-g-blues:          56  92 150   --c-g-reggae:         90 138  79
+  --c-g-classical:     226 216 192   --c-g-rnb:           150  80 112
+  --c-g-experimental:  106 168 168   --c-g-rock:          176  57  46
+  --c-g-folk:          196 164 116   --c-g-soul:          198 100  84
+  --c-g-funk:          232 178  55   --c-g-soundtrack:    100 137 184
+  --c-g-hip-hop:       158 104  66   --c-g-latin:         232 132  52
+  --c-g-jazz:          199 127  78   --c-g-metal:          92 100 110
+  --c-g-pop:           255 165 201
 
-electronic subs (magenta hue family — cohesive among themselves; no parent hue link)
-  --c-g-acid:          255  66 200   --c-g-dub:           199  93 163
-  --c-g-bass:          120  40 108   --c-g-electro:       255 111 184
-  --c-g-breaks:        230  77 168   --c-g-footwork-trap: 255 133 200
-  --c-g-dnb-jungle:    160  39 135   --c-g-house:         190  80 188
-  --c-g-drone-noise:   159 110 145   --c-g-techno:        214  58 153
+electronic (secondary, vivid)
+  --c-g-acid:          196 232  52   --c-g-electronic:    140 140 140
+  --c-g-bass:          104  72 214   --c-g-footwork:      160  74 226
+  --c-g-breaks:        232  64 110   --c-g-house:         196  74 206
+  --c-g-dnb:            40 194 200   --c-g-jungle:         52 198 110
+  --c-g-downtempo:     122  74 140   --c-g-techno:         58 124 244
+  --c-g-electro:       240  62 176
+
+bridge                               tertiary (optional)
+  --c-g-dub:            22 138 104     --c-g-boom-bap:    176 132  92
+  --c-g-noise:         234  80  46     --c-g-lo-fi:       158 130 128
+                                       --c-g-spiritual:   178 118  56
+                                       --c-g-trance:      120 100 245
+                                       --c-g-trap:        128  84  96
+
+deprecated (legacy reads only, render with slash)
+  --c-g-classical-folk:232 220 195   --c-g-drone-noise:   159 110 145
+  --c-g-dnb-jungle:    160  39 135   --c-g-footwork-trap: 255 133 200
 ```
 
-### Compound slug display
+### Slug display
 
-Four slugs are compound **genre pairs** — two distinct genres joined by a
-hyphen on the wire: `classical-folk` in mains; `dnb-jungle`, `drone-noise`,
-`footwork-trap` in subs. These render in human-facing UI with the slash
-form (`dnb/jungle`).
+Three active slugs — `hip-hop`, `boom-bap`, `lo-fi` — are **single** genre
+names that happen to contain a hyphen. They are NOT pairs and render
+**verbatim**.
 
-One slug — `hip-hop` (new in v2.1.4) — is a **single** genre name that
-happens to contain a hyphen. It is NOT a pair and renders **verbatim**.
+The four **deprecated** compound pairs (`classical-folk`, `dnb-jungle`,
+`drone-noise`, `footwork-trap`) are no longer emitted, but when met in legacy
+/ cross-relay events they render with the slash form (`dnb/jungle`).
 
 So a blind `slug.replace(/-/g, "/")` is wrong: it would mangle `hip-hop`
-into `hip/hop`. The display helper slashes only the known pair slugs:
+into `hip/hop`. The display helper slashes only the four retired pair slugs:
 
 ```js
 const SLASH_DISPLAY = new Set([
@@ -135,7 +159,9 @@ const SLASH_DISPLAY = new Set([
 const display = (s) => SLASH_DISPLAY.has(s) ? s.replace(/-/g, "/") : s;
 ```
 
-ndisc's copy lives in `src/lib/genre.ts`. glmps must mirror the same set.
+A separate per-slug label override maps `rnb` → "R&B" (and, glmps-side only,
+`soundtrack` → "film"). ndisc's copy lives in `src/lib/genre.ts`; glmps and
+ndisc.view mirror the same sets.
 
 ### Kind 5 deletion (unchanged)
 
@@ -183,18 +209,25 @@ amendments without forcing a v3 bump:
   appended; existing slugs unchanged (e.g. v2.1.4 added `ambient` +
   `hip-hop` to mains and `bass` + `house` to electronic subs, 18 → 22
   slugs). No migration needed — existing releases are unaffected; the new
-  slugs simply become selectable. glmps re-vendors and mirrors the four
-  new palette triplets.
-- **Single-slug renames** within the v2.1.x series (e.g. v2.1.1
-  `dub-techno` → `dub`; v2.1.2 `classical` → `classical-folk`). Ndisc-side
-  migration is a one-shot `UPDATE` in `backfill_genre_slug_renames`;
-  glmps re-vendors. Affected releases need re-publishing for the wire data
-  to refresh.
+  slugs simply become selectable. glmps re-vendors and mirrors the new
+  palette triplets.
+- **Slug restructure** (2026-06): the `genreSlugs` set was regrouped into
+  acoustic / electronic / bridge / tertiary and grown to **35 active** slugs,
+  and the four compound slash-pairs were **retired** to a `deprecated` list
+  (still valid for legacy reads). Additive-by-design — consumers gate only on
+  the `d` tag, deprecated slugs still parse — so it re-pins the SHA without a
+  v3 bump. Ndisc-side migration is `backfill_genre_restructure_2026_06`
+  (remaps any local rows off the retired pairs, per the mapping above, and
+  marks them unpublished so the stale kind:31237 events get re-emitted). The
+  earlier v2.1.2 `classical → classical-folk` rename was removed from
+  `backfill_genre_slug_renames` as part of this (it would otherwise re-split
+  plain `classical` every launch).
 - **Constraint relaxations** (e.g. v2.1 dropping `noParentWithOwnSub`) —
   strictly more permissive, all v2.0 emitters remain valid.
-- **Palette triplet updates** (e.g. v2.1.3 `electronic` magenta → grey).
-  Visual-only; the palette is documented in this README but not in
-  `release.v2.json`, so no JSON edit, no SHA re-pin, no fixture refresh.
+- **Palette triplet updates** (e.g. v2.1.3 `electronic` magenta → grey; the
+  2026-06 recolour of the electronic family). Visual-only; the palette is
+  documented in this README but not in `release.v2.json`, so no JSON edit,
+  no SHA re-pin, no fixture refresh.
   Both ends mirror the new CSS-var value.
 
 Anything else — adding/removing/renaming a non-slug tag, changing tag

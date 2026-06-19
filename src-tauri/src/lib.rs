@@ -78,7 +78,7 @@ pub struct Release {
     pub release_type: Option<String>,
     pub category: Option<String>,
     // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
-    // each optional, each one of the 22 valid slugs in schema/release.v2.json.
+    // each optional, each one of the 35 active slugs in schema/release.v2.json.
     // See genreInvariants there: distinct slugs, no parent+own-sub, dense
     // (no holes — a value at slot N requires every slot < N to be filled).
     // Enforced in set_release_genres.
@@ -225,6 +225,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     backfill_source(&conn)?;
     backfill_genre_v2(&conn)?;
     backfill_genre_slug_renames(&conn)?;
+    backfill_genre_restructure_2026_06(&conn)?;
     Ok(conn)
 }
 
@@ -239,8 +240,12 @@ fn backfill_genre_slug_renames(conn: &Connection) -> Result<(), String> {
     // v2.1.1 (2026-06-10): dub-techno → dub. The compound was redundant
     // under v2.1's pure-peer model — meaning composes by stacking, so
     // `dub` + `techno` can be tagged independently when applicable.
-    // v2.1.2 (2026-06-12): classical → classical-folk. Streamlines a
-    // wider main-genre umbrella that incorporates folk under the same slot.
+    //
+    // NOTE: the v2.1.2 `classical → classical-folk` rename was REMOVED in the
+    // 2026-06 restructure. classical-folk is now a retired compound pair and
+    // `classical` is an atomic slug in its own right — keeping the rename
+    // would feed backfill_genre_restructure_2026_06 and re-split plain
+    // `classical` into classical + folk on every launch. See that function.
     for col in &["genre_primary", "genre_secondary", "genre_tertiary", "genre"] {
         conn.execute(
             &format!(
@@ -250,15 +255,120 @@ fn backfill_genre_slug_renames(conn: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 2026-06 genre restructure migration. The four compound slash-pairs were
+/// retired and split/collapsed into atomic slugs:
+///   classical-folk → classical + folk      drone-noise   → noise
+///   dnb-jungle     → dnb + jungle           footwork-trap → footwork
+/// Any local row still carrying a pair in a genre slot is remapped to the
+/// atomic slug(s), preserving slot order, dropping duplicates, and capping at
+/// the 3 dense slots (a split that would overflow keeps the leading atomic and
+/// drops the overflow). Affected rows are marked unpublished
+/// (last_published_at / _naddr cleared) so their now-stale kind:31237 events
+/// can be re-emitted in one pass via Publish Library → unpublished — the new
+/// events replace the addressable (kind:31237, same d-tag) events on relays.
+/// The legacy single-slot `genre` tombstone (never emitted) is renamed 1:1 to
+/// the pair's leading atomic. Idempotent: once migrated, no row matches a
+/// pair, so repeat runs are no-ops and won't re-clear publish state.
+/// Pure slot remap for the 2026-06 restructure: expand each retired compound
+/// pair to its atomic slug(s), de-dupe preserving slot order, and return a
+/// dense ≤3-slot array. Factored out of the DB migration so it can be unit
+/// tested without a database.
+fn remap_restructured_genre_slots(slots: [Option<String>; 3]) -> [Option<String>; 3] {
+    fn expand(slug: &str) -> &'static [&'static str] {
+        match slug {
+            "classical-folk" => &["classical", "folk"],
+            "dnb-jungle" => &["dnb", "jungle"],
+            "drone-noise" => &["noise"],
+            "footwork-trap" => &["footwork"],
+            _ => &[],
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for slot in slots.iter() {
+        let v = match slot {
+            Some(v) if !v.is_empty() => v.as_str(),
+            _ => continue,
+        };
+        let expanded = expand(v);
+        if expanded.is_empty() {
+            if !out.iter().any(|x| x == v) {
+                out.push(v.to_string());
+            }
+        } else {
+            for atomic in expanded {
+                if !out.iter().any(|x| x == *atomic) {
+                    out.push((*atomic).to_string());
+                }
+            }
+        }
+    }
+    out.truncate(3);
+    [out.first().cloned(), out.get(1).cloned(), out.get(2).cloned()]
+}
+
+fn backfill_genre_restructure_2026_06(conn: &Connection) -> Result<(), String> {
+    // Snapshot the affected rows (immutable borrow released before updating).
+    let affected: Vec<(i64, Option<String>, Option<String>, Option<String>)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, genre_primary, genre_secondary, genre_tertiary
+                 FROM releases
+                 WHERE genre_primary   IN ('classical-folk','dnb-jungle','drone-noise','footwork-trap')
+                    OR genre_secondary IN ('classical-folk','dnb-jungle','drone-noise','footwork-trap')
+                    OR genre_tertiary  IN ('classical-folk','dnb-jungle','drone-noise','footwork-trap')",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| e.to_string())?);
+        }
+        out
+    };
+
+    for (id, p, s, t) in affected {
+        let [new_p, new_s, new_t] = remap_restructured_genre_slots([p, s, t]);
         conn.execute(
-            &format!(
-                "UPDATE releases SET {} = 'classical-folk' WHERE {} = 'classical'",
-                col, col
-            ),
-            [],
+            "UPDATE releases
+             SET genre_primary = ?1,
+                 genre_secondary = ?2,
+                 genre_tertiary = ?3,
+                 last_published_at = NULL,
+                 last_published_naddr = NULL
+             WHERE id = ?4",
+            params![new_p, new_s, new_t, id],
         )
         .map_err(|e| e.to_string())?;
     }
+
+    // Legacy single-slot `genre` tombstone — not emitted; rename 1:1 to the
+    // pair's leading atomic so it stops surfacing a retired slug.
+    for (pair, atomic) in [
+        ("classical-folk", "classical"),
+        ("dnb-jungle", "dnb"),
+        ("drone-noise", "noise"),
+        ("footwork-trap", "footwork"),
+    ] {
+        conn.execute(
+            "UPDATE releases SET genre = ?1 WHERE genre = ?2",
+            params![atomic, pair],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -562,29 +672,38 @@ fn set_release_condition(
     Ok(())
 }
 
-// Genre slug enums — mirror schema/release.v2.json `genreSlugs`. Held here
-// as the canonical source for validation; release.v2.json is the wire spec.
-// The mains/subs split is a visual / palette grouping only — semantically
-// all 22 slugs are pure peers and may be freely combined (see v2.1 update
-// in genreInvariants).
-const GENRE_MAINS: &[&str] = &[
-    "ambient", "classical-folk", "downtempo", "electronic", "experimental",
-    "funk", "hip-hop", "jazz", "pop", "reggae", "rock", "soundtrack",
+// Genre slug groups — mirror schema/release.v2.json `genreSlugs` and
+// src/lib/genre.ts. Held here as the canonical EMITTABLE-slug list for publish
+// validation; release.v2.json is the wire spec. The grouping is semantic /
+// palette ONLY — all 35 active slugs are pure peers and may be freely combined
+// (see genreInvariants). The four retired compound pairs (classical-folk,
+// dnb-jungle, drone-noise, footwork-trap) are deliberately ABSENT: never
+// emitted on new events. They stay valid for legacy *reads* in consumers, but
+// the emitter must never write them — backfill_genre_slug_renames migrates any
+// local rows still carrying them to the atomic slugs.
+const GENRE_ACOUSTIC: &[&str] = &[
+    "ambient", "blues", "classical", "experimental", "folk", "funk",
+    "hip-hop", "jazz", "latin", "metal", "pop", "poetry", "reggae", "rnb",
+    "rock", "soul", "soundtrack",
 ];
-const GENRE_ELECTRONIC_SUBS: &[&str] = &[
-    "acid", "bass", "breaks", "dnb-jungle", "drone-noise",
-    "dub", "electro", "footwork-trap", "house", "techno",
+const GENRE_ELECTRONIC: &[&str] = &[
+    "acid", "bass", "breaks", "dnb", "downtempo", "electro", "electronic",
+    "footwork", "house", "jungle", "techno",
 ];
+const GENRE_BRIDGE: &[&str] = &["dub", "noise"];
+const GENRE_TERTIARY: &[&str] = &["boom-bap", "lo-fi", "spiritual", "trance", "trap"];
 
 fn is_valid_genre_slug(s: &str) -> bool {
-    GENRE_MAINS.iter().any(|&g| g == s)
-        || GENRE_ELECTRONIC_SUBS.iter().any(|&g| g == s)
+    GENRE_ACOUSTIC.iter().any(|&g| g == s)
+        || GENRE_ELECTRONIC.iter().any(|&g| g == s)
+        || GENRE_BRIDGE.iter().any(|&g| g == s)
+        || GENRE_TERTIARY.iter().any(|&g| g == s)
 }
 
 /// Enforces the v2 invariants from schema/release.v2.json `genreInvariants`:
-/// each non-null slot is one of the 22 valid slugs; all non-null slots are
+/// each non-null slot is one of the 35 active slugs; all non-null slots are
 /// distinct; dense ordering (no holes — slot N+1 set requires slot N set).
-/// No parent+sub gate as of v2.1 — `electronic` + `techno` is valid.
+/// No parent+sub gate — `electronic` + `techno` is valid.
 fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {
     // Each non-null slot must be a known slug.
     for (i, s) in slots.iter().enumerate() {
@@ -1149,7 +1268,7 @@ fn library_breakdown_from_conn(conn: &Connection) -> Result<LibraryBreakdown, St
     };
 
     // Genre: UNION ALL across the three slot columns, then tally. Pure-peer
-    // model — a release tagged classical-folk + downtempo + experimental
+    // model — a release tagged classical + downtempo + experimental
     // contributes one tally to each.
     let genre = collect(
         "WITH slot_tags AS (
@@ -4088,14 +4207,113 @@ mod schema_v2 {
     }
 
     #[test]
-    fn compound_slug_emitted_hyphenated_not_slash() {
+    fn atomic_hyphen_slug_emitted_verbatim() {
+        // `hip-hop` is a single atomic slug whose name contains a hyphen — it
+        // is NOT a compound pair and must emit verbatim on the wire (the slash
+        // render rule is scoped to the four retired pairs only).
         let r = Release {
-            genre_primary: Some("dnb-jungle".into()),
+            genre_primary: Some("hip-hop".into()),
             ..base_v2_release()
         };
         let ev = release_event(&Keys::generate(), &r).unwrap();
-        // Wire form is always hyphenated; slash form is a UI render rule.
-        assert_eq!(genre_tags(&ev), vec!["dnb-jungle"]);
+        assert_eq!(genre_tags(&ev), vec!["hip-hop"]);
+    }
+
+    #[test]
+    fn deprecated_compound_pairs_rejected_by_validator() {
+        // The 2026-06 restructure retired the four compound slash-pairs; they
+        // must never validate for a new write (split/collapsed into atomic
+        // slugs). They remain valid for legacy *reads* in consumers only.
+        for slug in ["classical-folk", "dnb-jungle", "drone-noise", "footwork-trap"] {
+            let slots = [Some(slug.to_string()), None, None];
+            assert!(
+                validate_genre_slots(&slots).is_err(),
+                "deprecated pair '{}' must be rejected by the emitter validator",
+                slug
+            );
+        }
+    }
+
+    #[test]
+    fn restructure_atomic_slugs_accepted_by_validator() {
+        // The atomic slugs the pairs split/collapsed into, plus a sampling of
+        // the other slugs added in the restructure, must all validate.
+        for slug in [
+            "classical", "folk", "dnb", "jungle", "noise", "footwork", "blues",
+            "latin", "metal", "poetry", "rnb", "soul", "boom-bap", "lo-fi",
+            "spiritual", "trance", "trap",
+        ] {
+            let slots = [Some(slug.to_string()), None, None];
+            assert!(
+                validate_genre_slots(&slots).is_ok(),
+                "active slug '{}' must be accepted by the emitter validator",
+                slug
+            );
+        }
+    }
+
+    // --- 2026-06 restructure DB slot remap ---------------------------------
+
+    fn slot(s: &str) -> Option<String> {
+        Some(s.to_string())
+    }
+
+    #[test]
+    fn remap_collapses_pair_to_single_atomic() {
+        // drone-noise → noise, footwork-trap → footwork (1:1 collapses).
+        assert_eq!(
+            remap_restructured_genre_slots([slot("drone-noise"), None, None]),
+            [slot("noise"), None, None]
+        );
+        assert_eq!(
+            remap_restructured_genre_slots([slot("footwork-trap"), None, None]),
+            [slot("footwork"), None, None]
+        );
+    }
+
+    #[test]
+    fn remap_splits_pair_into_two_atomics_when_room() {
+        // classical-folk alone → classical + folk across the first two slots.
+        assert_eq!(
+            remap_restructured_genre_slots([slot("classical-folk"), None, None]),
+            [slot("classical"), slot("folk"), None]
+        );
+        // dnb-jungle in slot 0 with another genre in slot 1 → dnb, jungle, x.
+        assert_eq!(
+            remap_restructured_genre_slots([slot("dnb-jungle"), slot("techno"), None]),
+            [slot("dnb"), slot("jungle"), slot("techno")]
+        );
+    }
+
+    #[test]
+    fn remap_split_overflow_drops_the_overflow() {
+        // classical-folk + two more = would be 4 slugs; capped to 3 dense.
+        assert_eq!(
+            remap_restructured_genre_slots([
+                slot("classical-folk"),
+                slot("ambient"),
+                slot("techno"),
+            ]),
+            [slot("classical"), slot("folk"), slot("ambient")]
+        );
+    }
+
+    #[test]
+    fn remap_dedupes_when_split_atomic_already_present() {
+        // dnb-jungle then dnb → dnb + jungle (no duplicate dnb).
+        assert_eq!(
+            remap_restructured_genre_slots([slot("dnb-jungle"), slot("dnb"), None]),
+            [slot("dnb"), slot("jungle"), None]
+        );
+    }
+
+    #[test]
+    fn remap_leaves_active_slugs_untouched() {
+        assert_eq!(
+            remap_restructured_genre_slots([slot("hip-hop"), slot("jazz"), None]),
+            [slot("hip-hop"), slot("jazz"), None]
+        );
+        assert_eq!(remap_restructured_genre_slots([None, None, None]), [None, None, None]);
     }
 
     #[test]

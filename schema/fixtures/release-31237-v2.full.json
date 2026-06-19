@@ -1,5 +1,5 @@
 {
-  "_comment": "Reference kind:31237 release event conforming to release.v2.json — every optional tag populated, all three genre slots used. Slot order = priority: techno is primary, dub-techno is secondary, downtempo is tertiary. As of v2.1 all 18 slugs are pure peers — `electronic` + `techno` would also be valid here; meaning composes by stacking slugs.",
+  "_comment": "Reference kind:31237 release event conforming to release.v2.json — every optional tag populated, all three genre slots used. Slot order = priority: techno is primary, dub is secondary, downtempo is tertiary. All 35 active slugs are pure peers — `electronic` + `techno` would also be valid here; meaning composes by stacking slugs.",
   "kind": 31237,
   "content": "First three albums, remastered.",
   "tags": [

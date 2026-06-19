@@ -24,7 +24,13 @@ import { Section } from "./Section";
 import { LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
-import { genreDisplay } from "../lib/genre";
+import {
+  genreDisplay,
+  GENRE_ACOUSTIC,
+  GENRE_ELECTRONIC,
+  GENRE_BRIDGE,
+  GENRE_TERTIARY,
+} from "../lib/genre";
 import {
   deleteRelease,
   restoreRelease,
@@ -67,46 +73,19 @@ const CATEGORY_OPTIONS = [
 
 // Values match the --c-g-* CSS-var slot names so the LABELS dot can use
 // the genre verbatim: `style: { backgroundColor: rgb(var(--c-g-${g})) }`.
-// 12 main genres + 10 electronic sub-genres. Compound sub-genres are stored
-// hyphenated (dnb-jungle) and displayed with a slash (dnb/jungle) via the
-// genreDisplay helper below.
+// 35 active slugs in four palette/semantic groups (acoustic / electronic /
+// bridge / tertiary) — sourced from lib/genre so the picker can never offer a
+// retired compound pair. The grouping is presentation only; all slugs are
+// pure peers. Display tweaks (rnb → R&B) live in genreDisplay below.
 const GENRE_GROUPS: { label: string; options: string[] }[] = [
-  {
-    label: "main",
-    options: [
-      "ambient",
-      "classical-folk",
-      "downtempo",
-      "electronic",
-      "experimental",
-      "funk",
-      "hip-hop",
-      "jazz",
-      "pop",
-      "reggae",
-      "rock",
-      "soundtrack",
-    ],
-  },
-  {
-    label: "electronic",
-    options: [
-      "acid",
-      "bass",
-      "breaks",
-      "dnb-jungle",
-      "drone-noise",
-      "dub",
-      "electro",
-      "footwork-trap",
-      "house",
-      "techno",
-    ],
-  },
+  { label: "acoustic", options: [...GENRE_ACOUSTIC] },
+  { label: "electronic", options: [...GENRE_ELECTRONIC] },
+  { label: "bridge", options: [...GENRE_BRIDGE] },
+  { label: "tertiary", options: [...GENRE_TERTIARY] },
 ];
 
 // Filter GENRE_GROUPS for the given slot index, hiding anything already
-// chosen in an earlier slot. v2.1: all 22 slugs are pure peers — no
+// chosen in an earlier slot. All 35 active slugs are pure peers — no
 // parent+sub gating; meaning composes by stacking slugs.
 function genreGroupsForSlot(
   slotIndex: number,
