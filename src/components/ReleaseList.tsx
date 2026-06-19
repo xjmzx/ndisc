@@ -925,7 +925,7 @@ export function ReleaseList({
           Below lg the layout stacks and scrolls as a page, so we fall back to
           the viewport-minus-chrome height. */}
       <ul className="mt-1 h-[calc(100vh-220px)] lg:h-auto lg:flex-1 lg:min-h-0
-                     overflow-auto rounded-md divide-y divide-surface/60
+                     overflow-auto rounded-md
                      bg-bg/50 [scrollbar-gutter:stable]">
         {items.length === 0 && !loading && !error && (
           <li className="px-3 py-3 text-muted text-xs">
@@ -960,7 +960,7 @@ export function ReleaseList({
             >
               <div
                 className="shrink-0 w-4 pt-3.5 flex justify-center
-                           border-r border-surface/40"
+                           border-r border-fg"
                 aria-hidden={marker === ""}
               >
                 <span
@@ -970,7 +970,12 @@ export function ReleaseList({
                   {marker}
                 </span>
               </div>
-              <div className="flex-1 min-w-0 flex flex-col gap-1.5 pl-2 pr-3 py-2">
+              <div
+                className={cn(
+                  "flex-1 min-w-0 flex flex-col gap-1.5 pl-2 pr-3 py-2",
+                  idx > 0 && "border-t border-surface/60",
+                )}
+              >
               <div className="flex items-center gap-2">
                 <CoverThumb src={thumb} />
                 <div className="min-w-0 flex-1">
