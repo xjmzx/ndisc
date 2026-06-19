@@ -1106,15 +1106,13 @@ export function ReleaseList({
                     className="shrink-0 grid place-items-center w-5 h-5 rounded
                                bg-[#a78bfa]/20"
                   >
-                    {/* Mirrors the medium chip's solid/outline disc: filled
-                        dot = published, outline ring = not. Nostr purple is
-                        theme-fixed (not the theme mauve token). */}
+                    {/* Filled dot both states: published = nostr purple
+                        (theme-fixed), unpublished = the app's darkest palette
+                        colour (--c-bg), reading as a hole in the mauve square. */}
                     <span
                       className={cn(
                         "w-2.5 h-2.5 rounded-full",
-                        r.lastPublishedAt != null
-                          ? "bg-[#a78bfa]"
-                          : "border border-[#a78bfa]",
+                        r.lastPublishedAt != null ? "bg-[#a78bfa]" : "bg-bg",
                       )}
                     />
                   </span>
