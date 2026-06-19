@@ -1,35 +1,151 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#313244"/>
-      <stop offset="100%" stop-color="#1e1e2e"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="128"
+   viewBox="0 0 128 128"
+   version="1.1"
+   id="svg12"
+   sodipodi:docname="ndisc.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview12"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="6.1171875"
+     inkscape:cx="64.081737"
+     inkscape:cy="63.918263"
+     inkscape:window-width="1920"
+     inkscape:window-height="1003"
+     inkscape:window-x="1920"
+     inkscape:window-y="40"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg12" />
+  <defs
+     id="defs5">
+    <linearGradient
+       id="bg"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#313244"
+         id="stop1"
+         style="stop-color:#0b0b10;stop-opacity:1;" />
+      <stop
+         offset="100%"
+         stop-color="#1e1e2e"
+         id="stop2" />
     </linearGradient>
-    <radialGradient id="vinyl" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#313244"/>
-      <stop offset="80%" stop-color="#181825"/>
-      <stop offset="100%" stop-color="#1e1e2e"/>
+    <radialGradient
+       id="vinyl"
+       cx="0.5"
+       cy="0.5"
+       r="0.5">
+      <stop
+         offset="0%"
+         stop-color="#313244"
+         id="stop3" />
+      <stop
+         offset="80%"
+         stop-color="#181825"
+         id="stop4" />
+      <stop
+         offset="100%"
+         stop-color="#1e1e2e"
+         id="stop5" />
     </radialGradient>
   </defs>
-  <rect x="4" y="4" width="120" height="120" rx="22" ry="22" fill="url(#bg)"/>
-  <rect x="4" y="4" width="120" height="120" rx="22" ry="22"
-        fill="none" stroke="#89b4fa" stroke-width="3" opacity="0.6"/>
-  <text x="64" y="34" font-family="Helvetica, Arial, sans-serif" font-size="20"
-        font-weight="bold" fill="#89b4fa" text-anchor="middle">disco</text>
+  <rect
+     x="4"
+     y="4"
+     width="120"
+     height="120"
+     rx="22"
+     ry="22"
+     fill="url(#bg)"
+     id="rect5" />
+  <text
+     x="64"
+     y="46"
+     font-family="Helvetica, Arial, sans-serif"
+     font-size="20px"
+     font-weight="bold"
+     fill="#89b4fa"
+     text-anchor="middle"
+     id="text6"
+     style="font-size:32px"><tspan
+       style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:32px;font-family:'Ubuntu Sans';-inkscape-font-specification:'Ubuntu Sans Bold'"
+       id="tspan12">ndisc</tspan></text>
   <!-- vinyl record -->
-  <circle cx="64" cy="78" r="32" fill="url(#vinyl)" stroke="#a6e3a1"
-          stroke-width="0.5" opacity="0.9"/>
+  <circle
+     cx="64"
+     cy="78"
+     r="32"
+     fill="url(#vinyl)"
+     stroke="#a6e3a1"
+     stroke-width="0.5"
+     opacity="0.9"
+     id="circle6" />
   <!-- groove rings -->
-  <g fill="none" stroke="#cdd6f4" stroke-width="0.4" opacity="0.35">
-    <circle cx="64" cy="78" r="28"/>
-    <circle cx="64" cy="78" r="24"/>
-    <circle cx="64" cy="78" r="20"/>
-    <circle cx="64" cy="78" r="16"/>
+  <g
+     fill="none"
+     stroke="#cdd6f4"
+     stroke-width="0.4"
+     opacity="0.35"
+     id="g10">
+    <circle
+       cx="64"
+       cy="78"
+       r="28"
+       id="circle7" />
+    <circle
+       cx="64"
+       cy="78"
+       r="24"
+       id="circle8" />
+    <circle
+       cx="64"
+       cy="78"
+       r="20"
+       id="circle9" />
+    <circle
+       cx="64"
+       cy="78"
+       r="16"
+       id="circle10" />
   </g>
   <!-- record label -->
-  <circle cx="64" cy="78" r="9" fill="#89b4fa"/>
+  <circle
+     cx="64"
+     cy="78"
+     r="9"
+     fill="#89b4fa"
+     id="circle11" />
   <!-- spindle hole -->
-  <circle cx="64" cy="78" r="1.6" fill="#1e1e2e"/>
+  <circle
+     cx="64"
+     cy="78"
+     r="1.6"
+     fill="#1e1e2e"
+     id="circle12" />
   <!-- highlight -->
-  <ellipse cx="54" cy="68" rx="8" ry="3" fill="#cdd6f4" opacity="0.12"/>
+  <ellipse
+     cx="54"
+     cy="68"
+     rx="8"
+     ry="3"
+     fill="#cdd6f4"
+     opacity="0.12"
+     id="ellipse12" />
 </svg>
