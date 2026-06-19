@@ -24,7 +24,7 @@ the same care as the rest of the contract.
 Crucially, the owner has pushed back on "keep it minimal/additive." The
 goal is for **every app — ndisc (emitter), both schema consumers
 (`ndisc.view`, `glmps`×2), AND the schema non-consumers (`ndisc.smpl`,
-`ndisc.blobtree`) — to be aware of which files are audio-only and which
+`ndisc.tree`) — to be aware of which files are audio-only and which
 carry a video stream.** That awareness is a lower layer than the release
 wire and is the harder, more interesting half of this work.
 
@@ -59,14 +59,15 @@ The owner floated two options, explicitly leaning on consistency with the
 existing model:
 
 - **(a) Flat peers** — `audio-visual` is one `type` value, and any finer
-  distinction is just convention. Simplest; matches the "all 22 genre
+  distinction is just convention. Simplest; matches the "all 35 active genre
   slugs are pure peers" philosophy.
 - **(b) A small set of A/V sub-kinds** — candidate vocabulary to debate:
   `music-video`, `live` / `concert`, `visualizer`, `short-film`,
   `documentary`. If we want grouping, the genre precedent is the right
   template: a **palette/UI grouping only**, with all sub-kinds remaining
-  semantic peers (cf. the `mains` vs `electronicSubs` split, which is hue
-  grouping, not hierarchy — see `genreSlugs._comment`).
+  semantic peers (cf. the `acoustic` / `electronic` / `bridge` / `tertiary`
+  genre groups, which are hue + semantic grouping, not hierarchy — see
+  `genreSlugs._comment`).
 
 Recommendation to pressure-test: start with one `audio-visual` `type`
 value, and if sub-kinds are wanted, model them as a **separate optional
@@ -132,8 +133,8 @@ carries a video stream.** Doing this properly means:
   alongside `music`, and the per-file `hasVideo` fact rides the same
   indexing pass. This is why Layer 2 is shared by the non-consumer apps:
   they index files too, they just don't read kind:31237.
-- **What the two sister apps need is unresolved.** `ndisc.smpl` (quality
-  analysis / playback) and `ndisc.blobtree` (samples) *may or may not* gain
+- **What the two sister apps need is unresolved.** `ndisc.tree` (quality
+  analysis / playback) and `ndisc.smpl` (samples) *may or may not* gain
   the ability to analyze or play video. The owner has not resolved this.
   Minimum bar regardless: they must be **format-aware enough not to
   mishandle** a video-bearing file — e.g. not run audio-only analysis on a
@@ -156,7 +157,7 @@ carries a video stream.** Doing this properly means:
    descriptor (codec, resolution, has-audio, has-video)?
 6. New root category for video — name and whether it's `source` or
    `output` in terrain terms?
-7. Do `ndisc.smpl` / `ndisc.blobtree` gain video capability, stay
+7. Do `ndisc.smpl` / `ndisc.tree` gain video capability, stay
    audio-only-but-aware, or skip A/V files? (explicitly unresolved)
 
 ## Suggested sequencing (when this leaves incubation)
@@ -170,7 +171,7 @@ carries a video stream.** Doing this properly means:
    decided), amend the `changePolicy` note, re-vendor + re-pin SHA across
    `ndisc.view` + `glmps`×2 (the usual ritual; the `prebuild` freeze-check
    guards it).
-4. Decide per-app whether `ndisc.smpl` / `ndisc.blobtree` analyze, ignore,
+4. Decide per-app whether `ndisc.smpl` / `ndisc.tree` analyze, ignore,
    or merely flag video.
 
 ---
