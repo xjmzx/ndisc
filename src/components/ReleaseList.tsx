@@ -1090,48 +1090,48 @@ export function ReleaseList({
                       maxCols={8}
                     />
                   )}
-                  {/* Nostr purple is fixed across both themes — not the
-                      theme-variable mauve token. Lit = published. */}
-                  <span
-                    title={
-                      r.lastPublishedAt != null
-                        ? "published to Nostr"
-                        : "not published to Nostr"
-                    }
-                    aria-label={
-                      r.lastPublishedAt != null
-                        ? "published to Nostr"
-                        : "not published to Nostr"
-                    }
-                    className="shrink-0 grid place-items-center w-5 h-5 rounded
-                               bg-[#a78bfa]/20"
+                  {/* State cluster: publish dot + medium disc share one mauve
+                      rounded-rectangle bg (non-interactive — state only). */}
+                  <div
+                    className="shrink-0 inline-flex items-center gap-1 px-1.5 h-5
+                               rounded bg-mauve/20"
                   >
                     {/* Filled dot both states: published = nostr purple
                         (theme-fixed), unpublished = the app's darkest palette
-                        colour (--c-bg), reading as a hole in the mauve square. */}
+                        colour (--c-bg), reading as a hole in the chip. */}
                     <span
+                      title={
+                        r.lastPublishedAt != null
+                          ? "published to Nostr"
+                          : "not published to Nostr"
+                      }
+                      aria-label={
+                        r.lastPublishedAt != null
+                          ? "published to Nostr"
+                          : "not published to Nostr"
+                      }
                       className={cn(
                         "w-2.5 h-2.5 rounded-full",
                         r.lastPublishedAt != null ? "bg-[#a78bfa]" : "bg-bg",
                       )}
                     />
-                  </span>
-                  {r.medium && (
-                    <span
-                      title={r.medium}
-                      aria-label={r.medium}
-                      className="shrink-0 grid place-items-center w-5 h-5
-                                 rounded bg-mauve/20 text-mauve"
-                    >
-                      {/* Same disc as the medium FilterToggle above: solid =
-                          physical, outline = digital. Icon carries the meaning
-                          so the chip can be a narrow square, not a word. */}
-                      <Disc3
-                        size={12}
-                        fill={r.medium === "physical" ? "currentColor" : "none"}
-                      />
-                    </span>
-                  )}
+                    {/* Same disc as the medium FilterToggle above: solid =
+                        physical, outline = digital. */}
+                    {r.medium && (
+                      <span
+                        title={r.medium}
+                        aria-label={r.medium}
+                        className="grid place-items-center text-mauve"
+                      >
+                        <Disc3
+                          size={12}
+                          fill={
+                            r.medium === "physical" ? "currentColor" : "none"
+                          }
+                        />
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
