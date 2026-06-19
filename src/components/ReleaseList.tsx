@@ -959,16 +959,19 @@ export function ReleaseList({
               )}
             >
               <div
-                className="shrink-0 w-4 pt-3.5 flex justify-center
+                className="shrink-0 w-5 pt-3 flex justify-center
                            border-r border-fg/70"
                 aria-hidden={marker === ""}
               >
-                <span
-                  className="text-[9px] font-mono font-semibold uppercase
-                             leading-none text-fg"
-                >
-                  {marker}
-                </span>
+                {marker && (
+                  <span
+                    className="inline-flex items-center justify-center w-4 h-4
+                               rounded-[2px] bg-fg text-bg text-[10px] font-mono
+                               font-bold uppercase leading-none"
+                  >
+                    {marker}
+                  </span>
+                )}
               </div>
               <div
                 className={cn(
