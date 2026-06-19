@@ -234,6 +234,39 @@ Anything else — adding/removing/renaming a non-slug tag, changing tag
 semantics, reordering rules, breaking ordering — is a **coordinated v3
 bump**: add `release.v3.json` (do not edit v2), migrate consumers.
 
+## Versioning & release cycle (suite-wide)
+
+The apps share a codebase and a contract but sit at genuinely different
+maturities, so the suite uses **two independent version axes** rather than one
+lockstep number:
+
+1. **App version** — per app, independent semver, tracking that app's own
+   features/UI. Tag format `vMAJOR.MINOR.PATCH`, with `-beta.N` pre-1.0.
+   An app-only change (e.g. an ndisc list-UI tweak) bumps *that app alone*;
+   no other repo moves. Current lines: `ndisc` 0.1.x-beta · `ndisc.tree`
+   0.2.x · `ndisc.smpl` 0.3.0-beta · `ndisc.view` 0.1.0-beta. Don't force a
+   shared number — it would misrepresent where each app actually is.
+
+2. **Contract version** — the shared backbone: `release.vN` + its committed
+   SHA pin. This is what actually couples the suite. A schema change is a
+   **coordinated wave**, not a per-app bump: the emitter (`ndisc`) and every
+   consumer (`ndisc.view`, `glmps.fizx.uk`, `glmps.upleb.uk`) re-vendor,
+   re-pin, and changelog *together, all citing the same SHA*. Consumers that
+   read user data from the desktop DB rather than the wire (`ndisc.tree`,
+   `ndisc.smpl`) follow `README.md`/`visualisations.md` but don't vendor the
+   JSON.
+
+**Rule of thumb:** contract change → everyone moves in one wave citing the
+SHA; app-only change → that app bumps alone. The consumer web apps are
+therefore in the *same logical cycle as the contract*, not as ndisc's binary.
+
+**CHANGELOG convention:** each app's `CHANGELOG.md` carries a top
+`Contract:` line naming the active milestone — e.g.
+`Contract: release.v2 @ 99a9b2696395… (2026-06 genre restructure)` — so any
+app's log shows at a glance which contract it's built against. glmps versions
+*are* the contract (their `package.json` stays `0.0.0`); the `Contract:` line
+is their real version marker.
+
 Consumers vendor a copy of `release.v2.json`; this repo's copy is
 canonical and wins on any discrepancy. SHA-256 should be pinned on the
 consumer side so any drift is caught at build time.
