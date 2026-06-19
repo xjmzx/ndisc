@@ -959,15 +959,26 @@ export function ReleaseList({
               )}
             >
               <div
-                className="shrink-0 w-5 pt-3 flex justify-center
-                           border-r border-fg/70"
+                className="shrink-0 w-6 relative"
                 aria-hidden={marker === ""}
               >
+                {/* vertical rail — one continuous line at the right edge */}
+                <div className="absolute inset-y-0 right-0 w-px bg-fg/70" />
+                {/* ruler tick: a short stub per release, longer where the
+                    index character changes (top edge = the row boundary) */}
+                <div
+                  className={cn(
+                    "absolute right-0 top-0 h-px bg-fg/70",
+                    marker ? "w-[6px]" : "w-[3px]",
+                  )}
+                />
+                {/* inverted square index chip, buffered a few px off the rail */}
                 {marker && (
                   <span
-                    className="inline-flex items-center justify-center w-4 h-4
-                               rounded-[2px] bg-fg text-bg text-[10px] font-mono
-                               font-bold uppercase leading-none"
+                    className="absolute left-0.5 top-3 inline-flex items-center
+                               justify-center w-4 h-4 rounded-[2px] bg-fg text-bg
+                               text-[10px] font-mono font-bold uppercase
+                               leading-none"
                   >
                     {marker}
                   </span>
