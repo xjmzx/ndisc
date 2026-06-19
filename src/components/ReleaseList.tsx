@@ -1112,14 +1112,18 @@ export function ReleaseList({
                   />
                   {r.medium && (
                     <span
-                      className={cn(
-                        "text-[10px] px-1.5 py-0.5 rounded w-14 text-center",
-                        r.medium === "digital"
-                          ? "bg-digital/20 text-digital"
-                          : "bg-ok/20 text-ok",
-                      )}
+                      title={r.medium}
+                      aria-label={r.medium}
+                      className="shrink-0 grid place-items-center w-5 h-5
+                                 rounded bg-mauve/20 text-mauve"
                     >
-                      {r.medium}
+                      {/* Same disc as the medium FilterToggle above: solid =
+                          physical, outline = digital. Icon carries the meaning
+                          so the chip can be a narrow square, not a word. */}
+                      <Disc3
+                        size={12}
+                        fill={r.medium === "physical" ? "currentColor" : "none"}
+                      />
                     </span>
                   )}
                 </div>
