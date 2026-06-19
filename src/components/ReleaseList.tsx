@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ChevronDown,
+  ChevronUp,
   Disc3,
   FolderSearch,
   ImageOff,
@@ -97,6 +99,41 @@ export function ReleaseList({
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Scroll container, for the index-rail jump-to-letter chevrons.
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // Jump the list to the next (dir=1) / previous (dir=-1) index character —
+  // the nearest first-of-bucket row below / above the current scroll top.
+  // Queries the live DOM, so it stays correct under search + filters.
+  function jumpBucket(dir: 1 | -1) {
+    const ul = listRef.current;
+    if (!ul) return;
+    const ulTop = ul.getBoundingClientRect().top;
+    const offsets = Array.from(
+      ul.querySelectorAll<HTMLElement>("li[data-bucket-start]"),
+    ).map((el) => el.getBoundingClientRect().top - ulTop);
+    const EPS = 2;
+    let target: number | null = null;
+    if (dir === 1) {
+      for (const o of offsets) {
+        if (o > EPS) {
+          target = o;
+          break;
+        }
+      }
+    } else {
+      for (let i = offsets.length - 1; i >= 0; i--) {
+        if (offsets[i] < -EPS) {
+          target = offsets[i];
+          break;
+        }
+      }
+    }
+    if (target != null) {
+      ul.scrollTo({ top: ul.scrollTop + target, behavior: "smooth" });
+    }
+  }
 
   // Inline cover-paste state (only used when needsCoverOnly is true).
   const [drafts, setDrafts] = useState<Map<number, string>>(new Map());
@@ -924,9 +961,37 @@ export function ReleaseList({
           rest of the DB — so it shows as many rows as the monitor allows.
           Below lg the layout stacks and scrolls as a page, so we fall back to
           the viewport-minus-chrome height. */}
-      <ul className="mt-1 h-[calc(100vh-220px)] lg:h-auto lg:flex-1 lg:min-h-0
-                     overflow-auto rounded-md
-                     bg-bg/50 [scrollbar-gutter:stable]">
+      <div className="relative mt-1 h-[calc(100vh-220px)] lg:h-auto lg:flex-1
+                      lg:min-h-0">
+        {/* Jump to previous / next index character. Pinned over the rail
+            gutter; up = previous letter, down = next. */}
+        <button
+          type="button"
+          onClick={() => jumpBucket(-1)}
+          title="Jump to previous letter"
+          aria-label="Jump to previous index letter"
+          className="absolute left-0 top-1 z-10 grid place-items-center w-5 h-5
+                     rounded bg-surface/90 text-fg ring-1 ring-fg/15
+                     hover:bg-surfaceHover shadow-sm"
+        >
+          <ChevronUp size={12} strokeWidth={2.5} />
+        </button>
+        <button
+          type="button"
+          onClick={() => jumpBucket(1)}
+          title="Jump to next letter"
+          aria-label="Jump to next index letter"
+          className="absolute left-0 bottom-1 z-10 grid place-items-center
+                     w-5 h-5 rounded bg-surface/90 text-fg ring-1 ring-fg/15
+                     hover:bg-surfaceHover shadow-sm"
+        >
+          <ChevronDown size={12} strokeWidth={2.5} />
+        </button>
+      <ul
+        ref={listRef}
+        className="h-full overflow-auto rounded-md
+                   bg-bg/50 [scrollbar-gutter:stable]"
+      >
         {items.length === 0 && !loading && !error && (
           <li className="px-3 py-3 text-muted text-xs">
             {needsCoverOnly
@@ -952,6 +1017,7 @@ export function ReleaseList({
             <li
               key={r.id}
               onClick={() => onSelect(r)}
+              data-bucket-start={marker ? "" : undefined}
               className={cn(
                 "cursor-pointer hover:bg-surface/40 text-xs",
                 "flex items-stretch",
@@ -1101,6 +1167,7 @@ export function ReleaseList({
           );
         })}
       </ul>
+      </div>
     </Section>
   );
 }
