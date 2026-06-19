@@ -1028,26 +1028,16 @@ export function ReleaseList({
                 className="shrink-0 w-6 relative"
                 aria-hidden={marker === ""}
               >
-                {/* ruler ticks only (no continuous rail): a short stub per
-                    release, longer where the index character changes (top
-                    edge = the row boundary) */}
+                {/* ruler ticks only: a short stub per release, longer where
+                    the index character changes (top edge = the row boundary).
+                    The section letter is no longer drawn here — the first
+                    artist of each bucket is highlighted in the row instead. */}
                 <div
                   className={cn(
                     "absolute right-0 top-0 h-px bg-fg/70",
                     marker ? "w-[6px]" : "w-[3px]",
                   )}
                 />
-                {/* inverted square index chip, buffered a few px off the rail */}
-                {marker && (
-                  <span
-                    className="absolute left-0.5 top-3 inline-flex items-center
-                               justify-center w-4 h-4 rounded-[2px] bg-fg text-bg
-                               text-[10px] font-mono font-bold uppercase
-                               leading-none"
-                  >
-                    {marker}
-                  </span>
-                )}
               </div>
               <div
                 className={cn(
@@ -1064,7 +1054,20 @@ export function ReleaseList({
                       selected?.id === r.id ? "text-accent" : "text-fg",
                     )}
                   >
-                    {r.artist} <span className="text-muted">·</span> {r.title}
+                    {/* First release of each index bucket: highlight the
+                        artist as a tinted pill — this is the section marker
+                        now (the gutter letter box is gone). */}
+                    {marker ? (
+                      <span
+                        className="rounded px-1 bg-digital/20 text-digital
+                                   font-semibold"
+                      >
+                        {r.artist}
+                      </span>
+                    ) : (
+                      r.artist
+                    )}{" "}
+                    <span className="text-muted">·</span> {r.title}
                   </div>
                   <div className="text-muted text-[10px] truncate">
                     {[r.year, r.format, r.label, r.catalogNumber]
