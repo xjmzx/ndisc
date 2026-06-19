@@ -1045,7 +1045,7 @@ export function ReleaseList({
                   idx > 0 && "border-t border-surface/60",
                 )}
               >
-              <div className="flex items-center gap-2">
+              <div className="flex items-start gap-2">
                 <CoverThumb src={thumb} />
                 <div className="min-w-0 flex-1">
                   <div
@@ -1079,7 +1079,7 @@ export function ReleaseList({
                       .join(" · ")}
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-start gap-1.5 shrink-0">
                   {/* Leaf meter — present (green) vs expected (faint) tracks
                       for this release. Shown for counted (folder-backed)
                       releases; physical/uncounted rows have no leaves. */}
@@ -1093,8 +1093,8 @@ export function ReleaseList({
                   {/* State cluster: publish dot + medium disc share one mauve
                       rounded-rectangle bg (non-interactive — state only). */}
                   <div
-                    className="shrink-0 inline-flex items-center gap-1 px-1.5 h-5
-                               rounded bg-mauve/20"
+                    className="shrink-0 inline-flex items-center justify-center
+                               gap-1 px-1.5 h-5 min-w-[38px] rounded bg-mauve/20"
                   >
                     {/* Filled dot both states: published = nostr purple
                         (theme-fixed), unpublished = the app's darkest palette
