@@ -1082,18 +1082,17 @@ export function ReleaseList({
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {/* Leaf meter — present (green) vs expected (faint) tracks.
-                      For physical releases there's no "present locally" notion
-                      (you own the item), so present = total → all solid; the
-                      meter reads as the release's size. Folder-backed digital
-                      uses the real present count. Uncounted rows show nothing.
-                      Capped at 4 rows (maxRows) — taller counts collapse to a
-                      solid green tile + 8-ball total. */}
+                      Completeness is keyed on whether there's a local folder to
+                      count (file_path), NOT the medium enum: a folder-linked
+                      release (digital, or a physical you've also ripped) shows
+                      present-vs-total ("1 of 12"); an object-only release (no
+                      folder) can't be "missing" tracks, so present = total →
+                      all solid (reads as the release's size). Capped at 4 rows
+                      — taller counts collapse to a solid green tile + 8-ball. */}
                   {(r.trackCount != null || r.trackTotal != null) && (
                     <LeafDots
                       n={
-                        (r.medium === "physical"
-                          ? r.trackTotal
-                          : r.trackCount) ?? 0
+                        (r.filePath ? r.trackCount : r.trackTotal) ?? 0
                       }
                       total={r.trackTotal}
                       maxCols={8}

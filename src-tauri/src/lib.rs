@@ -1640,7 +1640,15 @@ fn refresh_release_inner(
     // present vs total = how many tracks are missing locally.
     let present = (audio_files.len() as i64).min(99);
     let new_track_count = Some(present);
-    let new_track_total = Some(info.track_total.unwrap_or(present).min(99));
+    // Discogs owns the canonical total once a release is linked: a disk refresh
+    // must not overwrite the enriched track_total with the local tag value
+    // (that's the dual-source guard — Discogs = canonical, disk = present).
+    // Present count still updates from disk; disc_total isn't touched here.
+    let new_track_total = if release.discogs_id.is_some() {
+        release.track_total
+    } else {
+        Some(info.track_total.unwrap_or(present).min(99))
+    };
 
     let mut changes: Vec<String> = Vec::new();
     if new_artist != release.artist {
