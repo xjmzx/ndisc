@@ -2260,6 +2260,12 @@ fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
         push_tag(&mut tags, "tracks", &tt.to_string())?;
     }
 
+    // v2 additive: total disc count (Discogs-enrichment-derived). A release
+    // property like `tracks`; emitted only when > 0, omitted otherwise.
+    if let Some(dt) = r.disc_total.filter(|&n| n > 0) {
+        push_tag(&mut tags, "discs", &dt.to_string())?;
+    }
+
     let content = r.notes.clone().unwrap_or_default();
     EventBuilder::new(Kind::Custom(KIND_RELEASE), content)
         .tags(tags)
@@ -4576,6 +4582,36 @@ mod schema_v2 {
     fn tracks_tag_omitted_when_total_unknown() {
         let ev = release_event(&Keys::generate(), &base_v2_release()).unwrap();
         assert_eq!(tracks_tag(&ev), None);
+    }
+
+    fn discs_tag(ev: &Event) -> Option<String> {
+        ev.tags.iter().find_map(|t| {
+            let s = t.as_slice();
+            (s.len() >= 2 && s[0] == "discs").then(|| s[1].clone())
+        })
+    }
+
+    // v2 additive: total disc count. Optional — emitted only when > 0.
+    #[test]
+    fn discs_tag_emitted_when_disc_total_known() {
+        let r = Release {
+            disc_total: Some(32),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        assert_eq!(discs_tag(&ev), Some("32".into()));
+    }
+
+    #[test]
+    fn discs_tag_omitted_when_disc_total_absent_or_zero() {
+        let ev = release_event(&Keys::generate(), &base_v2_release()).unwrap();
+        assert_eq!(discs_tag(&ev), None);
+        let zero = Release {
+            disc_total: Some(0),
+            ..base_v2_release()
+        };
+        let ev0 = release_event(&Keys::generate(), &zero).unwrap();
+        assert_eq!(discs_tag(&ev0), None);
     }
 
     #[test]
