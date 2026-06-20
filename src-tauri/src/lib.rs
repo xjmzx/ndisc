@@ -3976,29 +3976,34 @@ struct EnrichProgress {
     label: String,
 }
 
-// Write enriched counts back. When the row was already published and its
-// track_total actually changes, clear the publish state so the now-stale
-// kind:31237 event (which carried no / a different `tracks` tag) gets
-// re-emitted on the next Publish Library pass — same mechanism the genre
-// restructure migration uses. disc_total is DB-local and never gates publish.
+// Write enriched counts back. When the row was already published and EITHER
+// published count (track_total → `tracks`, disc_total → `discs`) actually
+// changes, clear the publish state so the now-stale kind:31237 event gets
+// re-emitted on the next Publish pass — same mechanism the genre restructure
+// migration uses. (Both counts gate publish since the 2026-06 `discs` tag.)
 fn apply_enrichment(
     conn: &Connection,
     release_id: i64,
     track_total: Option<i64>,
     disc_total: Option<i64>,
 ) -> Result<(), String> {
-    let (old_tt, published): (Option<i64>, Option<i64>) = conn
+    let (old_tt, old_dt, published): (Option<i64>, Option<i64>, Option<i64>) = conn
         .query_row(
-            "SELECT track_total, last_published_at FROM releases WHERE id = ?1",
+            "SELECT track_total, disc_total, last_published_at
+             FROM releases WHERE id = ?1",
             params![release_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .map_err(|e| e.to_string())?;
-    let total_changed = track_total.is_some() && track_total != old_tt;
-    if total_changed && published.is_some() {
+    // A published event is stale if either emitted count moved.
+    let changed = (track_total.is_some() && track_total != old_tt)
+        || (disc_total.is_some() && disc_total != old_dt);
+    // COALESCE keeps an existing value if the API returned none for that count.
+    if changed && published.is_some() {
         conn.execute(
             "UPDATE releases
-             SET track_total = ?1, disc_total = ?2,
+             SET track_total = COALESCE(?1, track_total),
+                 disc_total = COALESCE(?2, disc_total),
                  last_published_at = NULL, last_published_naddr = NULL,
                  updated_at = strftime('%s','now')
              WHERE id = ?3",
@@ -4006,10 +4011,10 @@ fn apply_enrichment(
         )
         .map_err(|e| e.to_string())?;
     } else {
-        // COALESCE keeps an existing track_total if the API returned none.
         conn.execute(
             "UPDATE releases
-             SET track_total = COALESCE(?1, track_total), disc_total = ?2,
+             SET track_total = COALESCE(?1, track_total),
+                 disc_total = COALESCE(?2, disc_total),
                  updated_at = strftime('%s','now')
              WHERE id = ?3",
             params![track_total, disc_total, release_id],
