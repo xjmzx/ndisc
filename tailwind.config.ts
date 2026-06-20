@@ -26,6 +26,10 @@ export default {
         alert: c("--c-alert"),
         mauve: c("--c-mauve"),
         auburn: c("--c-auburn"),
+        // Release medium (physical/digital) mark — leaf green, independent of
+        // the mauve publish dot so a physical + published row doesn't read as
+        // two same-colour dots. Identical on both themes.
+        medium: c("--c-medium"),
         // Genre palette — shared with glmps. Use as bg-g-electronic,
         // text-g-jazz, etc. The mains/subs split is a palette grouping only;
         // all slugs are pure peers (see schema/release.v2.json genreInvariants).

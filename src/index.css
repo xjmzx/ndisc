@@ -23,6 +23,9 @@
   --c-mauve: 167 139 250;
   /* db-toolbar group — auburn, set apart from the mauve library/nostr groups */
   --c-auburn: 178 96 58;
+  /* release medium mark — leaf green (matches --c-ok), independent of the mauve
+     publish dot; deliberately identical across both themes */
+  --c-medium: 74 222 128;
 
   /* Genre palette — shared with glmps + ndisc.view verbatim. Mid-saturation
      hues that sit alongside the system tokens above without competing with
@@ -97,6 +100,8 @@
   --c-alert: 248 113 113;
   --c-mauve: 255 179 71;
   --c-auburn: 178 96 58;
+  /* release medium mark — same leaf green as :root (kept identical on purpose) */
+  --c-medium: 74 222 128;
 
   /* Genre palette — identical to :root; theme-neutral. */
   /* acoustic (primary) */

@@ -53,6 +53,7 @@ export function LeafDots({
   max = 99,
   unit = "track",
   maxCols = 5,
+  maxRows,
   className,
 }: {
   /** Present count (solid green dots). */
@@ -64,6 +65,11 @@ export function LeafDots({
   unit?: string;
   /** Max dots per row — lower = taller/narrower, higher = shorter/wider. */
   maxCols?: number;
+  /** When set, the dot grid is capped at this many rows; any count that would
+   *  exceed it collapses to a single solid leaf-green tile with the total in an
+   *  "8-ball" (white circle, black number). Opt-in — the shared tree/smpl
+   *  copies pass no maxRows and keep the uncapped grid. */
+  maxRows?: number;
   className?: string;
 }) {
   const present = Math.min(Math.max(n ?? 0, 0), max);
@@ -78,6 +84,23 @@ export function LeafDots({
           missing > 0 ? ` · ${missing} missing` : " · complete"
         }`
       : `${present}${present >= max ? "+" : ""} ${unit}${present === 1 ? "" : "s"}`;
+
+  // Past the row cap, a full dot grid would tower over the row — collapse it to
+  // one solid leaf-green tile carrying the total, centred.
+  if (maxRows != null && Math.ceil(shown / cols) > maxRows) {
+    return (
+      <CountBadge
+        value={shown}
+        atMax={shown >= max}
+        title={title}
+        className={className}
+        // Tracks: solid green rounded tile, dark number on top.
+        shapeClassName="rounded-[3px]"
+        colorClassName="bg-ok/70 text-bg"
+      />
+    );
+  }
+
   return (
     <span
       className={cn("inline-grid gap-[2px] w-max", className)}
@@ -95,6 +118,48 @@ export function LeafDots({
           )}
         />
       ))}
+    </span>
+  );
+}
+
+/**
+ * A count rendered as a number centred on a single solid fixed-size shape —
+ * keeps a large or overflowing quantity to one compact mark. Flavour is set by
+ * className props: tracks use a leaf-green rounded tile, discs a mauve circle.
+ */
+export function CountBadge({
+  value,
+  atMax = false,
+  title,
+  shapeClassName = "rounded-full",
+  colorClassName,
+  size = 21,
+  className,
+}: {
+  value: number;
+  atMax?: boolean;
+  title: string;
+  /** Border-radius flavour — `rounded-[3px]` (tile) or `rounded-full` (ball). */
+  shapeClassName?: string;
+  /** Solid `bg-*` + readable `text-*`. */
+  colorClassName?: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-grid place-items-center font-bold leading-none tabular-nums",
+        shapeClassName,
+        colorClassName,
+        className,
+      )}
+      style={{ width: size, height: size, fontSize: value >= 100 ? 8 : 10 }}
+      title={title}
+      aria-label={title}
+    >
+      {value}
+      {atMax ? "+" : ""}
     </span>
   );
 }

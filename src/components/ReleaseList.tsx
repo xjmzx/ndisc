@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
+  Circle,
   Disc3,
   FolderSearch,
   ImageOff,
@@ -19,7 +20,7 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
-import { LeafDots } from "./LeafIcon";
+import { CountBadge, LeafDots } from "./LeafIcon";
 import {
   deleteRelease,
   extractEmbeddedCovers,
@@ -1080,21 +1081,13 @@ export function ReleaseList({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Multi-disc flag — physical box sets / 2×LP etc. Single-
-                      disc (the common case) stays unmarked to keep rows clean. */}
-                  {r.discTotal != null && r.discTotal > 1 && (
-                    <span
-                      title={`${r.discTotal} discs`}
-                      className="text-[10px] leading-none text-mauve/70 tabular-nums"
-                    >
-                      {r.discTotal}×
-                    </span>
-                  )}
                   {/* Leaf meter — present (green) vs expected (faint) tracks.
                       For physical releases there's no "present locally" notion
                       (you own the item), so present = total → all solid; the
                       meter reads as the release's size. Folder-backed digital
-                      uses the real present count. Uncounted rows show nothing. */}
+                      uses the real present count. Uncounted rows show nothing.
+                      Capped at 4 rows (maxRows) — taller counts collapse to a
+                      solid green tile + 8-ball total. */}
                   {(r.trackCount != null || r.trackTotal != null) && (
                     <LeafDots
                       n={
@@ -1104,9 +1097,22 @@ export function ReleaseList({
                       }
                       total={r.trackTotal}
                       maxCols={8}
+                      maxRows={4}
                     />
                   )}
-                  {/* State cluster: publish dot + medium disc share one mauve
+                  {/* Disc count — same leaf green as the track tile (mauve is
+                      reserved suite-wide for the published-to-Nostr state); the
+                      circle shape keeps it distinct from the square track tile.
+                      Single-disc stays unmarked. */}
+                  {r.discTotal != null && r.discTotal > 1 && (
+                    <CountBadge
+                      value={r.discTotal}
+                      title={`${r.discTotal} discs`}
+                      shapeClassName="rounded-full"
+                      colorClassName="bg-ok/70 text-bg"
+                    />
+                  )}
+                  {/* State cluster: publish dot + medium share one mauve
                       rounded-rectangle bg (non-interactive — state only). */}
                   <div
                     className="shrink-0 inline-flex items-center justify-center
@@ -1131,22 +1137,25 @@ export function ReleaseList({
                         r.lastPublishedAt != null ? "bg-[#a78bfa]" : "bg-bg",
                       )}
                     />
-                    {/* Same disc as the medium FilterToggle above: solid =
-                        physical, outline = digital. */}
-                    {r.medium && (
+                    {/* Medium — sharpened contrast: physical is a solid filled
+                        disc, digital a hollow ring (intangible — no platter). */}
+                    {r.medium === "physical" ? (
                       <span
-                        title={r.medium}
-                        aria-label={r.medium}
-                        className="grid place-items-center text-mauve"
+                        title="physical"
+                        aria-label="physical"
+                        className="grid place-items-center text-medium"
                       >
-                        <Disc3
-                          size={12}
-                          fill={
-                            r.medium === "physical" ? "currentColor" : "none"
-                          }
-                        />
+                        <Disc3 size={12} fill="currentColor" />
                       </span>
-                    )}
+                    ) : r.medium === "digital" ? (
+                      <span
+                        title="digital"
+                        aria-label="digital"
+                        className="grid place-items-center text-medium/70"
+                      >
+                        <Circle size={11} />
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </div>
