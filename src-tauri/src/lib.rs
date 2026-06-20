@@ -1604,6 +1604,10 @@ fn refresh_release_inner(
     //   overwrite_label = false (batch Scan library) — only fill when the DB
     //     value is empty. Protects curated Discogs labels and prior backfills
     //     from getting clobbered by drift in local tags.
+    // A Discogs-linked release forces fill-empty even in per-release Refresh:
+    // Discogs owns the label (it's enrich-filled), so a local tag must never
+    // overwrite/clear it — same "Discogs = canonical" rule as track/disc_total.
+    let overwrite_label = overwrite_label && release.discogs_id.is_none();
     let new_label = if overwrite_label {
         info.label.clone()
     } else {
@@ -3859,6 +3863,18 @@ struct DiscogsRelease {
     tracklist: Vec<DiscogsTrack>,
     #[serde(default)]
     formats: Vec<DiscogsFormat>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    labels: Vec<DiscogsLabel>,
+}
+
+#[derive(Deserialize)]
+struct DiscogsLabel {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    catno: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3877,6 +3893,8 @@ struct DiscogsFormat {
     name: Option<String>,
     #[serde(default)]
     qty: Option<String>,
+    #[serde(default)]
+    descriptions: Vec<String>,
 }
 
 // Count real tracks in a Discogs tracklist. Discogs interleaves "heading" rows
@@ -4011,46 +4029,84 @@ struct EnrichProgress {
 fn apply_enrichment(
     conn: &Connection,
     release_id: i64,
-    track_total: Option<i64>,
-    disc_total: Option<i64>,
+    enr: &Enrichment,
 ) -> Result<(), String> {
-    let (old_tt, old_dt, published): (Option<i64>, Option<i64>, Option<i64>) = conn
+    type Row = (
+        Option<i64>,    // track_total
+        Option<i64>,    // disc_total
+        Option<String>, // category
+        Option<String>, // label
+        Option<String>, // catalog_number
+        Option<String>, // country
+        Option<i64>,    // last_published_at
+    );
+    let (old_tt, old_dt, old_cat, old_label, old_catno, old_country, published): Row = conn
         .query_row(
-            "SELECT track_total, disc_total, last_published_at
+            "SELECT track_total, disc_total, category, label, catalog_number,
+                    country, last_published_at
              FROM releases WHERE id = ?1",
             params![release_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| {
+                Ok((
+                    r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
         )
         .map_err(|e| e.to_string())?;
-    // A published event is stale if either emitted count moved. track_total is
-    // COALESCE'd (a None API result keeps the existing value, so only a real
-    // new value is a change); disc_total is authoritative/overwritten, so a
-    // Some→None — e.g. a digital release correctly losing a bogus disc count —
-    // is a genuine change that must re-publish too.
-    let track_changed = track_total.is_some() && track_total != old_tt;
-    let disc_changed = disc_total != old_dt;
-    if (track_changed || disc_changed) && published.is_some() {
-        conn.execute(
-            "UPDATE releases
-             SET track_total = COALESCE(?1, track_total),
-                 disc_total = ?2,
-                 last_published_at = NULL, last_published_naddr = NULL,
-                 updated_at = strftime('%s','now')
-             WHERE id = ?3",
-            params![track_total, disc_total, release_id],
-        )
-        .map_err(|e| e.to_string())?;
-    } else {
-        conn.execute(
-            "UPDATE releases
-             SET track_total = COALESCE(?1, track_total),
-                 disc_total = ?2,
-                 updated_at = strftime('%s','now')
-             WHERE id = ?3",
-            params![track_total, disc_total, release_id],
-        )
-        .map_err(|e| e.to_string())?;
+
+    // Fill an EMPTY column from the API value; never clobber a value the user
+    // already curated. Returns the resolved value + whether it changed.
+    fn fill(cur: Option<String>, api: &Option<String>) -> (Option<String>, bool) {
+        let set = |o: &Option<String>| o.as_deref().map_or(false, |s| !s.trim().is_empty());
+        if set(&cur) {
+            (cur, false)
+        } else if set(api) {
+            (api.clone(), true)
+        } else {
+            (cur, false)
+        }
     }
+    let (category, c_cat) = fill(old_cat, &enr.category);
+    let (label, c_lab) = fill(old_label, &enr.label);
+    let (catalog, c_cn) = fill(old_catno, &enr.catalog);
+    let (country, c_co) = fill(old_country, &enr.country);
+
+    // A published event is stale if any emitted field moved. track_total is
+    // COALESCE'd (a None API result keeps the existing value); disc_total is
+    // authoritative/overwritten (a Some→None — a digital release losing a bogus
+    // disc count — is a real change); metadata only changes when newly filled.
+    let track_changed = enr.track_total.is_some() && enr.track_total != old_tt;
+    let disc_changed = enr.disc_total != old_dt;
+    let meta_changed = c_cat || c_lab || c_cn || c_co;
+    let clear_pub = (track_changed || disc_changed || meta_changed) && published.is_some();
+
+    conn.execute(
+        "UPDATE releases SET
+             track_total = COALESCE(?1, track_total),
+             disc_total = ?2,
+             category = ?3,
+             label = ?4,
+             catalog_number = ?5,
+             country = ?6,
+             last_published_at =
+                 CASE WHEN ?7 THEN NULL ELSE last_published_at END,
+             last_published_naddr =
+                 CASE WHEN ?7 THEN NULL ELSE last_published_naddr END,
+             updated_at = strftime('%s','now')
+         WHERE id = ?8",
+        params![
+            enr.track_total,
+            enr.disc_total,
+            category,
+            label,
+            catalog,
+            country,
+            clear_pub,
+            release_id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -4058,6 +4114,49 @@ fn counts_from(rel: &DiscogsRelease) -> (Option<i64>, Option<i64>) {
     let tracks = count_discogs_tracks(&rel.tracklist).clamp(0, 99);
     let discs = parse_disc_total(&rel.formats).map(|d| d.clamp(1, 99));
     (if tracks > 0 { Some(tracks) } else { None }, discs)
+}
+
+// Everything an enrichment pass pulls from a Discogs release. Counts are
+// authoritative (overwrite); the metadata fields only ever fill EMPTY columns
+// (a release's own curated label/category/etc. is never clobbered).
+struct Enrichment {
+    track_total: Option<i64>,
+    disc_total: Option<i64>,
+    category: Option<String>,
+    label: Option<String>,
+    catalog: Option<String>,
+    country: Option<String>,
+}
+
+// Discogs writes "none" (literally) for a catalog-less release — treat as empty.
+fn clean_catno(s: Option<&str>) -> Option<String> {
+    let t = s?.trim();
+    (!t.is_empty() && !t.eq_ignore_ascii_case("none")).then(|| t.to_string())
+}
+
+// Reconstruct a Discogs-style format string ("Vinyl, LP, Album") from the API
+// formats so category_from_discogs_format can infer the category, exactly as it
+// does from the CSV `Format` column.
+fn discogs_format_string(formats: &[DiscogsFormat]) -> String {
+    formats
+        .iter()
+        .flat_map(|f| f.name.iter().cloned().chain(f.descriptions.iter().cloned()))
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn enrichment_from(rel: &DiscogsRelease) -> Enrichment {
+    let (track_total, disc_total) = counts_from(rel);
+    Enrichment {
+        track_total,
+        disc_total,
+        category: category_from_discogs_format(&discogs_format_string(&rel.formats))
+            .map(|s| s.to_string()),
+        label: rel.labels.first().and_then(|l| l.name.as_deref()).and_then(nonempty),
+        catalog: rel.labels.first().and_then(|l| clean_catno(l.catno.as_deref())),
+        country: rel.country.as_deref().and_then(nonempty),
+    }
 }
 
 // Enrich one release by its stored discogs_id (a manual "refresh from Discogs"
@@ -4086,9 +4185,10 @@ async fn enrich_discogs_release(
     };
     let token = load_discogs_token()?;
     let rel = fetch_discogs_release(did, token).await?;
-    let (tt, dt) = counts_from(&rel);
+    let enr = enrichment_from(&rel);
+    let (tt, dt) = (enr.track_total, enr.disc_total);
     let conn = open(&app)?;
-    apply_enrichment(&conn, release_id, tt, dt)?;
+    apply_enrichment(&conn, release_id, &enr)?;
     Ok(EnrichResult {
         release_id,
         track_total: tt,
@@ -4152,11 +4252,11 @@ async fn enrich_discogs_library(
         );
         match fetch_discogs_release(*did, token.clone()).await {
             Ok(rel) => {
-                let (tt, dt) = counts_from(&rel);
+                let enr = enrichment_from(&rel);
                 // Open a fresh connection per item: rusqlite's Connection is
                 // !Send and must not be held across the .await above.
                 let conn = open(&app)?;
-                match apply_enrichment(&conn, *rid, tt, dt) {
+                match apply_enrichment(&conn, *rid, &enr) {
                     Ok(()) => summary.enriched += 1,
                     Err(e) => summary.errors.push(format!("release {}: {}", rid, e)),
                 }
@@ -5021,6 +5121,34 @@ mod discogs_enrich {
     fn missing_qty_on_physical_format_floors_to_one() {
         let rel = parse(r#"{"tracklist":[],"formats":[{"name":"CD"}]}"#);
         assert_eq!(counts_from(&rel).1, Some(1));
+    }
+
+    #[test]
+    fn enrichment_extracts_label_catalog_country_category() {
+        let rel = parse(
+            r#"{
+                "country":"UK",
+                "labels":[{"name":"Warp Records","catno":"WARPCD21"}],
+                "formats":[{"name":"CD","qty":"1","descriptions":["Album"]}],
+                "tracklist":[{"position":"1","type_":"track"}]
+            }"#,
+        );
+        let e = enrichment_from(&rel);
+        assert_eq!(e.country.as_deref(), Some("UK"));
+        assert_eq!(e.label.as_deref(), Some("Warp Records"));
+        assert_eq!(e.catalog.as_deref(), Some("WARPCD21"));
+        assert_eq!(e.category.as_deref(), Some("album"));
+        assert_eq!(e.track_total, Some(1));
+    }
+
+    #[test]
+    fn enrichment_treats_catno_none_as_empty() {
+        let rel = parse(
+            r#"{"labels":[{"name":"Self","catno":"none"}],"formats":[],"tracklist":[]}"#,
+        );
+        let e = enrichment_from(&rel);
+        assert_eq!(e.catalog, None);
+        assert_eq!(e.label.as_deref(), Some("Self"));
     }
 
     #[test]
