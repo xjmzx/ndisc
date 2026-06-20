@@ -549,7 +549,9 @@ export function ReleaseDetail({
                       exact figures + missing count on hover. Keyed on file_path
                       (a folder to count), not medium: folder-linked → present
                       vs total; object-only (no folder) → present = total, all
-                      solid (you own it; tracks can't be "missing"). */}
+                      solid (you own it; tracks can't be "missing"). Wide pack
+                      (maxCols 17) so even the 99-cap stacks in ≤6 rows and grows
+                      horizontally instead of towering and pushing panels down. */}
                   <LeafDots
                     n={
                       (release.filePath
@@ -557,6 +559,7 @@ export function ReleaseDetail({
                         : release.trackTotal) ?? 0
                     }
                     total={release.trackTotal}
+                    maxCols={17}
                   />
                 </dd>
               </>
