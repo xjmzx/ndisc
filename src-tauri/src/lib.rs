@@ -3874,6 +3874,8 @@ struct DiscogsTrack {
 #[derive(Deserialize)]
 struct DiscogsFormat {
     #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
     qty: Option<String>,
 }
 
@@ -3908,12 +3910,29 @@ fn count_discogs_tracks(items: &[DiscogsTrack]) -> i64 {
     n
 }
 
-// Physical disc count = sum of the per-format quantities (a 2×LP + bonus 7"
-// reads as two formats, qty 2 and 1 → 3). Missing/garbage qty counts as 1; the
-// result is floored at 1 so any physical release shows at least one disc.
-fn parse_disc_total(formats: &[DiscogsFormat]) -> i64 {
-    let sum: i64 = formats
+// Discogs format names that do NOT denote a physical disc/platter, so their
+// `qty` must not be counted as discs: "File" is digital (its qty is the file /
+// track count — e.g. "4×File" is 4 tracks, 0 discs); "Box Set" / "All Media"
+// are container wrappers whose qty is 1-for-the-box, not a disc count (the
+// real discs are the inner format lines). A missing name is assumed physical.
+fn is_disc_format(name: Option<&str>) -> bool {
+    match name.map(str::trim) {
+        Some(n) => !["File", "Box Set", "All Media"]
+            .iter()
+            .any(|d| n.eq_ignore_ascii_case(d)),
+        None => true,
+    }
+}
+
+// Physical disc count = sum of the per-format quantities across disc-bearing
+// formats only (a 2×LP + bonus 7" → 3; a "4×File" digital release → no discs).
+// Missing/garbage qty on a physical format counts as 1. Returns None when the
+// release has no physical media (digital-only / containers) — that's a real
+// "no discs" answer, distinct from an unknown count.
+fn parse_disc_total(formats: &[DiscogsFormat]) -> Option<i64> {
+    let discs: i64 = formats
         .iter()
+        .filter(|f| is_disc_format(f.name.as_deref()))
         .map(|f| {
             f.qty
                 .as_deref()
@@ -3922,7 +3941,7 @@ fn parse_disc_total(formats: &[DiscogsFormat]) -> i64 {
                 .unwrap_or(1)
         })
         .sum();
-    sum.max(1)
+    (discs > 0).then_some(discs)
 }
 
 async fn fetch_discogs_release(
@@ -4003,15 +4022,18 @@ fn apply_enrichment(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .map_err(|e| e.to_string())?;
-    // A published event is stale if either emitted count moved.
-    let changed = (track_total.is_some() && track_total != old_tt)
-        || (disc_total.is_some() && disc_total != old_dt);
-    // COALESCE keeps an existing value if the API returned none for that count.
-    if changed && published.is_some() {
+    // A published event is stale if either emitted count moved. track_total is
+    // COALESCE'd (a None API result keeps the existing value, so only a real
+    // new value is a change); disc_total is authoritative/overwritten, so a
+    // Some→None — e.g. a digital release correctly losing a bogus disc count —
+    // is a genuine change that must re-publish too.
+    let track_changed = track_total.is_some() && track_total != old_tt;
+    let disc_changed = disc_total != old_dt;
+    if (track_changed || disc_changed) && published.is_some() {
         conn.execute(
             "UPDATE releases
              SET track_total = COALESCE(?1, track_total),
-                 disc_total = COALESCE(?2, disc_total),
+                 disc_total = ?2,
                  last_published_at = NULL, last_published_naddr = NULL,
                  updated_at = strftime('%s','now')
              WHERE id = ?3",
@@ -4022,7 +4044,7 @@ fn apply_enrichment(
         conn.execute(
             "UPDATE releases
              SET track_total = COALESCE(?1, track_total),
-                 disc_total = COALESCE(?2, disc_total),
+                 disc_total = ?2,
                  updated_at = strftime('%s','now')
              WHERE id = ?3",
             params![track_total, disc_total, release_id],
@@ -4034,8 +4056,8 @@ fn apply_enrichment(
 
 fn counts_from(rel: &DiscogsRelease) -> (Option<i64>, Option<i64>) {
     let tracks = count_discogs_tracks(&rel.tracklist).clamp(0, 99);
-    let discs = parse_disc_total(&rel.formats).clamp(1, 99);
-    (if tracks > 0 { Some(tracks) } else { None }, Some(discs))
+    let discs = parse_disc_total(&rel.formats).map(|d| d.clamp(1, 99));
+    (if tracks > 0 { Some(tracks) } else { None }, discs)
 }
 
 // Enrich one release by its stored discogs_id (a manual "refresh from Discogs"
@@ -4996,11 +5018,48 @@ mod discogs_enrich {
     }
 
     #[test]
-    fn missing_or_bad_qty_floors_to_one() {
+    fn missing_qty_on_physical_format_floors_to_one() {
         let rel = parse(r#"{"tracklist":[],"formats":[{"name":"CD"}]}"#);
         assert_eq!(counts_from(&rel).1, Some(1));
-        let rel2 = parse(r#"{"tracklist":[],"formats":[]}"#);
-        assert_eq!(counts_from(&rel2).1, Some(1));
+    }
+
+    #[test]
+    fn no_physical_formats_yields_no_disc_count() {
+        // No formats at all, and a container-only release, are not "1 disc".
+        let empty = parse(r#"{"tracklist":[],"formats":[]}"#);
+        assert_eq!(counts_from(&empty).1, None);
+        let boxed = parse(r#"{"tracklist":[],"formats":[{"name":"Box Set","qty":"1"}]}"#);
+        assert_eq!(counts_from(&boxed).1, None);
+    }
+
+    #[test]
+    fn digital_file_format_has_no_discs() {
+        // Regression: Discogs gives a digital release one "File" format whose
+        // qty is the FILE (track) count, not a disc count — "4×File" is 4
+        // tracks and 0 discs, never disc_total = 4.
+        let rel = parse(
+            r#"{"formats":[{"name":"File","qty":"4","descriptions":["ALAC"]}],
+                "tracklist":[
+                  {"position":"1","type_":"track"},{"position":"2","type_":"track"},
+                  {"position":"3","type_":"track"},{"position":"4","type_":"track"}
+                ]}"#,
+        );
+        let (tt, dt) = counts_from(&rel);
+        assert_eq!(tt, Some(4));
+        assert_eq!(dt, None);
+    }
+
+    #[test]
+    fn box_set_container_excluded_inner_discs_counted() {
+        // A box set lists the container plus the real disc lines; the box's
+        // qty=1 must not inflate the count — only the inner CDs count.
+        let rel = parse(
+            r#"{"tracklist":[],"formats":[
+                {"name":"Box Set","qty":"1"},
+                {"name":"CD","qty":"5"}
+            ]}"#,
+        );
+        assert_eq!(counts_from(&rel).1, Some(5));
     }
 
     #[test]
