@@ -29,6 +29,11 @@ import {
   LibraryFlowPanel,
 } from "./components/LibraryPanel";
 import { ToolbarIconButton } from "./components/ToolbarIconButton";
+import {
+  useDiscogsEnrich,
+  EnrichToolbarButton,
+  DiscogsEnrichPanel,
+} from "./components/DiscogsEnrichPanel";
 import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
 import { ReactionsProvider } from "./hooks/useReactions";
 import {
@@ -328,6 +333,7 @@ export default function App() {
   // Library stats + import/export controller. Its toolbar + stat chips live
   // in the header; the import flow renders transiently in the left column.
   const lib = useLibrary(reloadKey, reload);
+  const enrich = useDiscogsEnrich(reload);
 
   function handleReleaseChanged(updated: Release) {
     setSelected(updated);
@@ -410,8 +416,9 @@ export default function App() {
 
         {/* Toolbar: library | db | nostr — three divider-separated groups. */}
         <div className="flex items-center gap-2 shrink-0 min-w-0">
-          {/* library group — import local / discogs, export markdown */}
+          {/* library group — import local / discogs, enrich, export markdown */}
           <LibraryToolbar lib={lib} />
+          <EnrichToolbarButton enrich={enrich} />
 
           {/* db group — auburn, set apart from the mauve library/nostr groups */}
           <span className="w-px h-6 bg-surface shrink-0" aria-hidden="true" />
@@ -495,6 +502,7 @@ export default function App() {
                         gap-2 items-stretch lg:flex-1 lg:min-h-0">
           <div className="flex flex-col gap-2 min-w-0 lg:min-h-0">
             {lib.active && <LibraryFlowPanel lib={lib} />}
+            {enrich.active && <DiscogsEnrichPanel enrich={enrich} />}
             <ReleaseList
               reloadKey={reloadKey}
               selected={selected}

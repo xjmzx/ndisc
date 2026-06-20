@@ -19,6 +19,10 @@ use walkdir::WalkDir;
 
 const KEYRING_SERVICE: &str = "ndisc";
 const KEYRING_USER: &str = "nostr-nsec";
+// Discogs personal access token (for the metadata enrichment pass). Stored in
+// the same keychain service as the nsec, under its own user so the two never
+// collide; it follows the dev/install service split via keyring_service().
+const KEYRING_USER_DISCOGS: &str = "discogs-token";
 const LEGACY_KEYRING_SERVICE: &str = "disco-vault";
 const LEGACY_BUNDLE_ID: &str = "uk.fizx.discovault";
 const KIND_RELEASE: u16 = 31237;
@@ -109,6 +113,13 @@ pub struct Release {
     // tracks are missing locally.
     #[serde(default)]
     pub track_total: Option<i64>,
+    // Number of physical discs (LP/CD/etc.) in the release. Populated by the
+    // Discogs enrichment pass (sum of the format quantities) for physical
+    // releases that carry a discogs_id; null for folder-imported digital and
+    // un-enriched rows. NOT published to Nostr yet (release.v2 is frozen — a
+    // `discs` tag would be an additive contract wave). Capped at 99.
+    #[serde(default)]
+    pub disc_total: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -219,6 +230,8 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "track_count", "INTEGER")?;
     // Expected total tracks (from TRACKTOTAL tags). See Release.track_total.
     ensure_column(&conn, "releases", "track_total", "INTEGER")?;
+    // Physical disc count, from Discogs enrichment. See Release.disc_total.
+    ensure_column(&conn, "releases", "disc_total", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
     backfill_type_category(&conn)?;
@@ -991,6 +1004,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         last_published_naddr: row.get(25)?,
         track_count: row.get(26)?,
         track_total: row.get(27)?,
+        disc_total: row.get(28)?,
     })
 }
 
@@ -999,7 +1013,8 @@ const RELEASE_SELECT_COLS: &str =
      country, condition, notes, source, file_path, cover_art_path,
      discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
-     last_published_at, last_published_naddr, track_count, track_total";
+     last_published_at, last_published_naddr, track_count, track_total,
+     disc_total";
 
 #[tauri::command]
 fn list_releases(
@@ -1968,6 +1983,54 @@ fn clear_keypair() -> Result<(), String> {
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Discogs API token (for the metadata enrichment pass)
+// ---------------------------------------------------------------------------
+
+fn discogs_token_entry() -> Result<Entry, String> {
+    Entry::new(keyring_service(), KEYRING_USER_DISCOGS).map_err(|e| e.to_string())
+}
+
+fn load_discogs_token() -> Result<Option<String>, String> {
+    match discogs_token_entry()?.get_password() {
+        Ok(s) => Ok(Some(s)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn clear_discogs_token_inner() -> Result<(), String> {
+    match discogs_token_entry()?.delete_credential() {
+        Ok(_) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// Store (or, when given an empty string, clear) the Discogs personal access
+// token. The token is never returned to the frontend — only its presence is,
+// via get_discogs_token_status.
+#[tauri::command]
+fn set_discogs_token(token: String) -> Result<(), String> {
+    let t = token.trim();
+    if t.is_empty() {
+        return clear_discogs_token_inner();
+    }
+    discogs_token_entry()?
+        .set_password(t)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_discogs_token_status() -> Result<bool, String> {
+    Ok(load_discogs_token()?.is_some())
+}
+
+#[tauri::command]
+fn clear_discogs_token() -> Result<(), String> {
+    clear_discogs_token_inner()
 }
 
 // ---------------------------------------------------------------------------
@@ -3690,6 +3753,319 @@ fn category_from_discogs_format(format: &str) -> Option<&'static str> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// Discogs metadata enrichment
+//
+// Discogs CSV exports carry no track or disc counts, so physical (Discogs-
+// imported) releases land with track_total / disc_total NULL — they render no
+// leaf-dots and publish no `tracks` tag, breaking parity with folder-imported
+// digital releases. This pass fetches the canonical release from the Discogs
+// API by the stored discogs_id and fills both counts: the tracklist length →
+// track_total (which the existing `tracks` tag then publishes), and the sum of
+// the format quantities → disc_total (DB-local for now; a published `discs`
+// tag would be an additive contract wave, deferred).
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct DiscogsRelease {
+    #[serde(default)]
+    tracklist: Vec<DiscogsTrack>,
+    #[serde(default)]
+    formats: Vec<DiscogsFormat>,
+}
+
+#[derive(Deserialize)]
+struct DiscogsTrack {
+    #[serde(default, rename = "type_")]
+    kind: Option<String>,
+    #[serde(default)]
+    position: Option<String>,
+    #[serde(default)]
+    sub_tracks: Vec<DiscogsTrack>,
+}
+
+#[derive(Deserialize)]
+struct DiscogsFormat {
+    #[serde(default)]
+    qty: Option<String>,
+}
+
+// Count real tracks in a Discogs tracklist. Discogs interleaves "heading" rows
+// (section titles, no audio) and "index" rows (a single track holding named
+// sub-parts, e.g. a medley); only "track" rows — and the sub_tracks under an
+// index — are playable. Older entries omit type_ entirely, so a typed-less row
+// with a position counts as a track.
+fn count_discogs_tracks(items: &[DiscogsTrack]) -> i64 {
+    let mut n = 0i64;
+    for t in items {
+        match t.kind.as_deref() {
+            Some("track") => n += 1,
+            Some("index") => {
+                let sub = count_discogs_tracks(&t.sub_tracks);
+                n += if sub > 0 { sub } else { 1 };
+            }
+            Some("heading") => {}
+            // Unknown / absent type: treat a positioned row as a track.
+            _ => {
+                if t
+                    .position
+                    .as_deref()
+                    .map(|p| !p.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
+// Physical disc count = sum of the per-format quantities (a 2×LP + bonus 7"
+// reads as two formats, qty 2 and 1 → 3). Missing/garbage qty counts as 1; the
+// result is floored at 1 so any physical release shows at least one disc.
+fn parse_disc_total(formats: &[DiscogsFormat]) -> i64 {
+    let sum: i64 = formats
+        .iter()
+        .map(|f| {
+            f.qty
+                .as_deref()
+                .and_then(|q| q.trim().parse::<i64>().ok())
+                .filter(|&q| q > 0)
+                .unwrap_or(1)
+        })
+        .sum();
+    sum.max(1)
+}
+
+async fn fetch_discogs_release(
+    id: i64,
+    token: Option<String>,
+) -> Result<DiscogsRelease, String> {
+    let url = format!("https://api.discogs.com/releases/{}", id);
+    let client = reqwest::Client::builder()
+        // Discogs rejects requests without a descriptive User-Agent.
+        .user_agent("ndisc/0.1 (+https://github.com/xjmzx/ndisc)")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = client.get(&url);
+    if let Some(t) = token.filter(|t| !t.trim().is_empty()) {
+        req = req.header("Authorization", format!("Discogs token={}", t.trim()));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("discogs {}: {}", id, e))?;
+    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err("rate_limited".into());
+    }
+    if !resp.status().is_success() {
+        return Err(format!("discogs {}: HTTP {}", id, resp.status()));
+    }
+    // reqwest's `json` feature isn't enabled; decode the body ourselves.
+    let body = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("discogs {} body: {}", id, e))?;
+    serde_json::from_slice::<DiscogsRelease>(&body)
+        .map_err(|e| format!("discogs {} parse: {}", id, e))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EnrichResult {
+    release_id: i64,
+    track_total: Option<i64>,
+    disc_total: Option<i64>,
+    status: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EnrichSummary {
+    scanned: usize,
+    enriched: usize,
+    skipped: usize,
+    errors: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EnrichProgress {
+    current: usize,
+    total: usize,
+    label: String,
+}
+
+// Write enriched counts back. When the row was already published and its
+// track_total actually changes, clear the publish state so the now-stale
+// kind:31237 event (which carried no / a different `tracks` tag) gets
+// re-emitted on the next Publish Library pass — same mechanism the genre
+// restructure migration uses. disc_total is DB-local and never gates publish.
+fn apply_enrichment(
+    conn: &Connection,
+    release_id: i64,
+    track_total: Option<i64>,
+    disc_total: Option<i64>,
+) -> Result<(), String> {
+    let (old_tt, published): (Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT track_total, last_published_at FROM releases WHERE id = ?1",
+            params![release_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let total_changed = track_total.is_some() && track_total != old_tt;
+    if total_changed && published.is_some() {
+        conn.execute(
+            "UPDATE releases
+             SET track_total = ?1, disc_total = ?2,
+                 last_published_at = NULL, last_published_naddr = NULL,
+                 updated_at = strftime('%s','now')
+             WHERE id = ?3",
+            params![track_total, disc_total, release_id],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        // COALESCE keeps an existing track_total if the API returned none.
+        conn.execute(
+            "UPDATE releases
+             SET track_total = COALESCE(?1, track_total), disc_total = ?2,
+                 updated_at = strftime('%s','now')
+             WHERE id = ?3",
+            params![track_total, disc_total, release_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn counts_from(rel: &DiscogsRelease) -> (Option<i64>, Option<i64>) {
+    let tracks = count_discogs_tracks(&rel.tracklist).clamp(0, 99);
+    let discs = parse_disc_total(&rel.formats).clamp(1, 99);
+    (if tracks > 0 { Some(tracks) } else { None }, Some(discs))
+}
+
+// Enrich one release by its stored discogs_id (a manual "refresh from Discogs"
+// on a single row). Always re-fetches.
+#[tauri::command]
+async fn enrich_discogs_release(
+    app: tauri::AppHandle,
+    release_id: i64,
+) -> Result<EnrichResult, String> {
+    let discogs_id: Option<i64> = {
+        let conn = open(&app)?;
+        conn.query_row(
+            "SELECT discogs_id FROM releases WHERE id = ?1",
+            params![release_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    };
+    let Some(did) = discogs_id else {
+        return Ok(EnrichResult {
+            release_id,
+            track_total: None,
+            disc_total: None,
+            status: "no_discogs_id".into(),
+        });
+    };
+    let token = load_discogs_token()?;
+    let rel = fetch_discogs_release(did, token).await?;
+    let (tt, dt) = counts_from(&rel);
+    let conn = open(&app)?;
+    apply_enrichment(&conn, release_id, tt, dt)?;
+    Ok(EnrichResult {
+        release_id,
+        track_total: tt,
+        disc_total: dt,
+        status: "ok".into(),
+    })
+}
+
+// Batch pass over every Discogs-sourced release that's still missing a count
+// (or all of them, when `force`). Throttled to stay under Discogs' rate limit
+// and emits enrich:* events for a progress bar; stops early on a 429.
+#[tauri::command]
+async fn enrich_discogs_library(
+    app: tauri::AppHandle,
+    force: Option<bool>,
+) -> Result<EnrichSummary, String> {
+    let force = force.unwrap_or(false);
+    let token = load_discogs_token()?;
+
+    let targets: Vec<(i64, i64, String, String)> = {
+        let conn = open(&app)?;
+        let sql = if force {
+            "SELECT id, discogs_id, artist, title FROM releases
+             WHERE discogs_id IS NOT NULL ORDER BY id"
+        } else {
+            "SELECT id, discogs_id, artist, title FROM releases
+             WHERE discogs_id IS NOT NULL
+               AND (track_total IS NULL OR disc_total IS NULL)
+             ORDER BY id"
+        };
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| e.to_string())?);
+        }
+        out
+    };
+
+    let total = targets.len();
+    let mut summary = EnrichSummary {
+        scanned: total,
+        enriched: 0,
+        skipped: 0,
+        errors: Vec::new(),
+    };
+    let _ = app.emit("enrich:started", total);
+
+    for (i, (rid, did, artist, title)) in targets.iter().enumerate() {
+        let _ = app.emit(
+            "enrich:progress",
+            EnrichProgress {
+                current: i + 1,
+                total,
+                label: format!("{} — {}", artist, title),
+            },
+        );
+        match fetch_discogs_release(*did, token.clone()).await {
+            Ok(rel) => {
+                let (tt, dt) = counts_from(&rel);
+                // Open a fresh connection per item: rusqlite's Connection is
+                // !Send and must not be held across the .await above.
+                let conn = open(&app)?;
+                match apply_enrichment(&conn, *rid, tt, dt) {
+                    Ok(()) => summary.enriched += 1,
+                    Err(e) => summary.errors.push(format!("release {}: {}", rid, e)),
+                }
+            }
+            Err(e) if e == "rate_limited" => {
+                summary
+                    .errors
+                    .push(format!("release {}: rate limited — stopped early", rid));
+                break;
+            }
+            Err(e) => {
+                summary.skipped += 1;
+                summary.errors.push(format!("release {}: {}", rid, e));
+            }
+        }
+        // Polite throttle — Discogs allows ~60 authenticated req/min.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    }
+
+    let _ = app.emit("enrich:done", summary.clone());
+    Ok(summary)
+}
+
 // One-shot migration from the disco-vault era. On first launch of the
 // renamed binary we move user data (the SQLite DB and config.json) from the
 // old app-data directory to the new one. The libsecret nsec is migrated
@@ -3860,6 +4236,11 @@ pub fn run() {
             import_directory,
             scan_discogs_csv,
             import_discogs_csv,
+            set_discogs_token,
+            get_discogs_token_status,
+            clear_discogs_token,
+            enrich_discogs_release,
+            enrich_discogs_library,
             extract_embedded_covers,
             rescan_local_covers,
             refresh_release,
@@ -3957,6 +4338,7 @@ mod schema_v1 {
             updated_at: None,
             track_count: None,
             track_total: None,
+            disc_total: None,
         }
     }
 
@@ -4128,6 +4510,7 @@ mod schema_v2 {
             updated_at: None,
             track_count: None,
             track_total: None,
+            disc_total: None,
         }
     }
 
@@ -4391,6 +4774,120 @@ mod schema_v2 {
             None,
         ];
         assert!(validate_genre_slots(&slots).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod discogs_enrich {
+    use super::*;
+
+    fn parse(json: &str) -> DiscogsRelease {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn counts_plain_tracklist_and_single_disc() {
+        let rel = parse(
+            r#"{
+              "formats": [{"name":"Vinyl","qty":"1","descriptions":["LP","Album"]}],
+              "tracklist": [
+                {"position":"A1","type_":"track","title":"One"},
+                {"position":"A2","type_":"track","title":"Two"},
+                {"position":"B1","type_":"track","title":"Three"}
+              ]
+            }"#,
+        );
+        let (tt, dt) = counts_from(&rel);
+        assert_eq!(tt, Some(3));
+        assert_eq!(dt, Some(1));
+    }
+
+    #[test]
+    fn headings_are_not_counted_as_tracks() {
+        let rel = parse(
+            r#"{
+              "formats": [{"qty":"1"}],
+              "tracklist": [
+                {"position":"","type_":"heading","title":"Side A"},
+                {"position":"A1","type_":"track","title":"One"},
+                {"position":"","type_":"heading","title":"Side B"},
+                {"position":"B1","type_":"track","title":"Two"}
+              ]
+            }"#,
+        );
+        assert_eq!(counts_from(&rel).0, Some(2));
+    }
+
+    #[test]
+    fn index_track_counts_its_subtracks() {
+        let rel = parse(
+            r#"{
+              "formats": [{"qty":"1"}],
+              "tracklist": [
+                {"position":"A","type_":"index","title":"Medley","sub_tracks":[
+                  {"position":"","type_":"track","title":"a"},
+                  {"position":"","type_":"track","title":"b"}
+                ]},
+                {"position":"B","type_":"track","title":"Solo"}
+              ]
+            }"#,
+        );
+        // 2 sub-tracks + 1 plain = 3.
+        assert_eq!(counts_from(&rel).0, Some(3));
+    }
+
+    #[test]
+    fn index_track_without_subtracks_counts_one() {
+        let rel = parse(
+            r#"{"formats":[{"qty":"1"}],"tracklist":[
+                {"position":"A","type_":"index","title":"Suite"}
+            ]}"#,
+        );
+        assert_eq!(counts_from(&rel).0, Some(1));
+    }
+
+    #[test]
+    fn typeless_positioned_rows_count_as_tracks() {
+        // Older Discogs entries omit type_ entirely.
+        let rel = parse(
+            r#"{"formats":[{"qty":"1"}],"tracklist":[
+                {"position":"1","title":"One"},
+                {"position":"2","title":"Two"}
+            ]}"#,
+        );
+        assert_eq!(counts_from(&rel).0, Some(2));
+    }
+
+    #[test]
+    fn disc_total_sums_format_quantities() {
+        let rel = parse(
+            r#"{"tracklist":[],"formats":[
+                {"name":"Vinyl","qty":"2"},
+                {"name":"Vinyl","qty":"1"}
+            ]}"#,
+        );
+        // 2×LP + bonus 7" = 3 discs; empty tracklist → no track_total.
+        let (tt, dt) = counts_from(&rel);
+        assert_eq!(dt, Some(3));
+        assert_eq!(tt, None);
+    }
+
+    #[test]
+    fn missing_or_bad_qty_floors_to_one() {
+        let rel = parse(r#"{"tracklist":[],"formats":[{"name":"CD"}]}"#);
+        assert_eq!(counts_from(&rel).1, Some(1));
+        let rel2 = parse(r#"{"tracklist":[],"formats":[]}"#);
+        assert_eq!(counts_from(&rel2).1, Some(1));
+    }
+
+    #[test]
+    fn track_count_caps_at_99() {
+        let items: String = (1..=120)
+            .map(|i| format!(r#"{{"position":"{i}","type_":"track","title":"t"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let rel = parse(&format!(r#"{{"formats":[{{"qty":"1"}}],"tracklist":[{items}]}}"#));
+        assert_eq!(counts_from(&rel).0, Some(99));
     }
 }
 

@@ -22,6 +22,17 @@ wave; an app-only change bumps ndisc alone. See
   kind:31237 events can be re-emitted via Publish Library → unpublished.
 
 ### App
+- **Discogs enrichment** — physical (Discogs-imported) releases now get
+  track + disc counts from the Discogs API (the CSV export carries neither),
+  fetched by the stored `discogs_id`. New keychain-backed Discogs token, a
+  Sparkles toolbar action + transient panel (throttled batch with progress),
+  and a new local `disc_total` column. `track_total` flows through the
+  existing `tracks` tag — so enriched physical releases publish counts and
+  render leaf-dots like digital; physical meters read all-solid (you own the
+  item, so present = total). `disc_total` is **DB-local** for now (a published
+  `discs` tag would be an additive contract wave — deferred). Re-enriching an
+  already-published release whose total changes clears its publish state so
+  the new `tracks` tag re-emits.
 - RELEASES list: alphabetical **index rail** — ruler ticks (longer at each
   letter change) + jump-to-letter chevrons, a dark-digital pill highlighting
   the first artist of each letter, and a merged mauve **state chip** (publish

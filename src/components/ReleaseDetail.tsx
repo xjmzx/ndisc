@@ -485,8 +485,25 @@ export function ReleaseDetail({
                 <dt className="text-muted">tracks</dt>
                 <dd className="text-fg/90 min-w-0 flex items-center">
                   {/* dots are the count — present (solid) over expected (faint);
-                      exact figures + missing count on hover. */}
-                  <LeafDots n={release.trackCount ?? 0} total={release.trackTotal} />
+                      exact figures + missing count on hover. Physical releases
+                      have no local "present" count — you own the item — so
+                      present = total and the meter reads all-solid. */}
+                  <LeafDots
+                    n={
+                      (release.medium === "physical"
+                        ? release.trackTotal
+                        : release.trackCount) ?? 0
+                    }
+                    total={release.trackTotal}
+                  />
+                </dd>
+              </>
+            )}
+            {release.discTotal != null && release.discTotal > 0 && (
+              <>
+                <dt className="text-muted">discs</dt>
+                <dd className="text-fg/90 min-w-0 tabular-nums">
+                  {release.discTotal}
                 </dd>
               </>
             )}

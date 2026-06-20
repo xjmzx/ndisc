@@ -39,6 +39,10 @@ export interface Release {
   // release property — IS published as the `tracks` tag. present (trackCount)
   // vs total = how many tracks are missing locally.
   trackTotal?: number | null;
+  // Physical disc count, from the Discogs enrichment pass (sum of format
+  // quantities). Null for digital / un-enriched rows. DB-local — not published
+  // to Nostr yet.
+  discTotal?: number | null;
 }
 
 export type PublishedFilter = "published" | "unpublished";
@@ -277,6 +281,59 @@ export async function importDiscogsCsv(
   mediumFilter?: "physical" | "digital",
 ): Promise<ImportSummary> {
   return invoke<ImportSummary>("import_discogs_csv", { path, mediumFilter });
+}
+
+// --- Discogs metadata enrichment --------------------------------------------
+// Fills track_total + disc_total for Discogs-sourced releases (which the CSV
+// export omits) by fetching the canonical release from the Discogs API.
+
+export interface EnrichResult {
+  releaseId: number;
+  trackTotal: number | null;
+  discTotal: number | null;
+  // "ok" | "no_discogs_id"
+  status: string;
+}
+
+export interface EnrichSummary {
+  scanned: number;
+  enriched: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface EnrichProgress {
+  current: number;
+  total: number;
+  label: string;
+}
+
+// The Discogs personal access token lives in the OS keychain; the frontend
+// only ever sees whether one is set, never the value itself.
+export async function setDiscogsToken(token: string): Promise<void> {
+  await invoke("set_discogs_token", { token });
+}
+
+export async function getDiscogsTokenStatus(): Promise<boolean> {
+  return invoke<boolean>("get_discogs_token_status");
+}
+
+export async function clearDiscogsToken(): Promise<void> {
+  await invoke("clear_discogs_token");
+}
+
+export async function enrichDiscogsRelease(
+  releaseId: number,
+): Promise<EnrichResult> {
+  return invoke<EnrichResult>("enrich_discogs_release", { releaseId });
+}
+
+// Batch-enrich every Discogs release still missing a count (or all, when
+// `force`). Emits enrich:started / enrich:progress / enrich:done events.
+export async function enrichDiscogsLibrary(
+  force = false,
+): Promise<EnrichSummary> {
+  return invoke<EnrichSummary>("enrich_discogs_library", { force });
 }
 
 // --- Embedded cover-art extraction ------------------------------------------

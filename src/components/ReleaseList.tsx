@@ -1080,12 +1080,28 @@ export function ReleaseList({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Leaf meter — present (green) vs expected (faint) tracks
-                      for this release. Shown for counted (folder-backed)
-                      releases; physical/uncounted rows have no leaves. */}
+                  {/* Multi-disc flag — physical box sets / 2×LP etc. Single-
+                      disc (the common case) stays unmarked to keep rows clean. */}
+                  {r.discTotal != null && r.discTotal > 1 && (
+                    <span
+                      title={`${r.discTotal} discs`}
+                      className="text-[10px] leading-none text-mauve/70 tabular-nums"
+                    >
+                      {r.discTotal}×
+                    </span>
+                  )}
+                  {/* Leaf meter — present (green) vs expected (faint) tracks.
+                      For physical releases there's no "present locally" notion
+                      (you own the item), so present = total → all solid; the
+                      meter reads as the release's size. Folder-backed digital
+                      uses the real present count. Uncounted rows show nothing. */}
                   {(r.trackCount != null || r.trackTotal != null) && (
                     <LeafDots
-                      n={r.trackCount ?? 0}
+                      n={
+                        (r.medium === "physical"
+                          ? r.trackTotal
+                          : r.trackCount) ?? 0
+                      }
                       total={r.trackTotal}
                       maxCols={8}
                     />
