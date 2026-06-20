@@ -818,6 +818,79 @@ fn set_release_catalog_number(
     Ok(())
 }
 
+// Parse a Discogs release id from free text — a bare integer, or a
+// discogs.com release URL (…/release/123456[-slug]). Empty input clears the id.
+fn parse_discogs_input(raw: &str) -> Result<Option<i64>, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    // From a URL, take the run of digits right after "/release/"; otherwise
+    // treat the whole string as the id.
+    let candidate = if let Some(rest) = t.split("/release/").nth(1) {
+        rest.trim_start_matches(['/'])
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+    } else {
+        t.to_string()
+    };
+    match candidate.parse::<i64>() {
+        Ok(id) if id > 0 => Ok(Some(id)),
+        _ => Err(format!("not a valid Discogs release id or URL: {t}")),
+    }
+}
+
+// Set (or clear, on empty) a release's discogs_id from free text. Keeps the
+// `source` URL coherent: a valid id canonicalises source to the Discogs release
+// URL unless source already points elsewhere (e.g. a Bandcamp link the user
+// set); clearing the id also clears a source that was a Discogs URL.
+#[tauri::command]
+fn set_release_discogs_id(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: String,
+) -> Result<Option<i64>, String> {
+    let parsed = parse_discogs_input(&value)?;
+    let conn = open(&app)?;
+    let current_source: Option<String> = conn
+        .query_row(
+            "SELECT source FROM releases WHERE id = ?1",
+            params![release_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let source_is_discogs = current_source
+        .as_deref()
+        .map(|s| s.contains("discogs.com/release/"))
+        .unwrap_or(false);
+    let source_is_empty = current_source
+        .as_deref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+
+    let new_source: Option<String> = match parsed {
+        // Canonicalise source only when it's empty or already a Discogs URL —
+        // never clobber a user-set non-Discogs source.
+        Some(id) if source_is_empty || source_is_discogs => {
+            Some(format!("https://www.discogs.com/release/{id}"))
+        }
+        Some(_) => current_source,
+        // Cleared: drop a now-orphaned Discogs source, keep anything else.
+        None if source_is_discogs => None,
+        None => current_source,
+    };
+
+    conn.execute(
+        "UPDATE releases
+         SET discogs_id = ?1, source = ?2, updated_at = strftime('%s','now')
+         WHERE id = ?3",
+        params![parsed, new_source, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(parsed)
+}
+
 #[tauri::command]
 fn export_markdown(
     app: tauri::AppHandle,
@@ -4227,6 +4300,7 @@ pub fn run() {
             set_release_condition,
             set_release_label,
             set_release_catalog_number,
+            set_release_discogs_id,
             set_release_genres,
             list_distinct_labels,
             export_markdown,
@@ -4914,6 +4988,24 @@ mod discogs_enrich {
         assert_eq!(counts_from(&rel).1, Some(1));
         let rel2 = parse(r#"{"tracklist":[],"formats":[]}"#);
         assert_eq!(counts_from(&rel2).1, Some(1));
+    }
+
+    #[test]
+    fn parses_discogs_id_from_bare_int_and_urls() {
+        assert_eq!(parse_discogs_input("123456"), Ok(Some(123456)));
+        assert_eq!(parse_discogs_input("  789 "), Ok(Some(789)));
+        assert_eq!(
+            parse_discogs_input("https://www.discogs.com/release/20209-Whatever"),
+            Ok(Some(20209)),
+        );
+        assert_eq!(
+            parse_discogs_input("https://www.discogs.com/release/42"),
+            Ok(Some(42)),
+        );
+        assert_eq!(parse_discogs_input(""), Ok(None));
+        assert_eq!(parse_discogs_input("   "), Ok(None));
+        assert!(parse_discogs_input("not-an-id").is_err());
+        assert!(parse_discogs_input("0").is_err());
     }
 
     #[test]

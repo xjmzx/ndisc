@@ -9,6 +9,7 @@ import {
   Loader2,
   Pencil,
   RefreshCcw,
+  Sparkles,
   StickyNote,
   ThumbsDown,
   ThumbsUp,
@@ -27,11 +28,13 @@ import { coverImageSrc } from "../lib/cover";
 import { genreDisplay, GENRE_ORDER } from "../lib/genre";
 import {
   deleteRelease,
+  enrichDiscogsRelease,
   restoreRelease,
   publishRelease,
   refreshRelease,
   setCoverArtUrl,
   setReleaseCatalogNumber,
+  setReleaseDiscogsId,
   setReleaseCategory,
   setReleaseCondition,
   setReleaseCountry,
@@ -149,6 +152,7 @@ export function ReleaseDetail({
   const [unpublishing, setUnpublishing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [syncingCover, setSyncingCover] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   const [latestOp, setLatestOp] = useState<LatestOp | null>(null);
   // Persistent across non-release-switch ops so the copy/njump.me buttons in
   // the action row stay active after a later cover edit / refresh / sync.
@@ -444,6 +448,64 @@ export function ReleaseDetail({
     onChanged({ ...release, catalogNumber: v });
   }
 
+  // Accepts a bare id or a discogs.com/release/… URL (parsed backend-side; an
+  // invalid value rejects and EditableText surfaces it inline). Mirrors the
+  // backend's source-canonicalisation so the optimistic update stays coherent.
+  async function onChangeDiscogsId(v: string | null) {
+    if (!release.id) return;
+    const id = await setReleaseDiscogsId(release.id, v ?? "");
+    const sourceIsDiscogs = (release.source ?? "").includes(
+      "discogs.com/release/",
+    );
+    const sourceIsEmpty = (release.source ?? "").trim() === "";
+    let source = release.source ?? null;
+    if (id != null && (sourceIsEmpty || sourceIsDiscogs)) {
+      source = `https://www.discogs.com/release/${id}`;
+    } else if (id == null && sourceIsDiscogs) {
+      source = null;
+    }
+    onChanged({ ...release, discogsId: id, source });
+  }
+
+  // Pull track + disc counts from Discogs for just this release (vs the batch
+  // panel). Needs a discogs_id and a saved token.
+  async function onEnrich() {
+    if (!release.id || release.discogsId == null || enriching) return;
+    setEnriching(true);
+    setLatestOp(null);
+    try {
+      const res = await enrichDiscogsRelease(release.id);
+      if (res.status === "no_discogs_id") {
+        setLatestOp({ kind: "error", text: "no Discogs id set" });
+        return;
+      }
+      // Backend clears publish state when a published release's track_total
+      // changes — mirror that so the chip doesn't read stale.
+      const totalChanged =
+        res.trackTotal != null && res.trackTotal !== release.trackTotal;
+      const cleared = totalChanged && release.lastPublishedAt != null;
+      if (cleared) setLastPublish(null);
+      onChanged({
+        ...release,
+        trackTotal: res.trackTotal ?? release.trackTotal,
+        discTotal: res.discTotal ?? release.discTotal,
+        ...(cleared
+          ? { lastPublishedAt: null, lastPublishedNaddr: null }
+          : {}),
+      });
+      setLatestOp({
+        kind: "info",
+        text: `enriched — ${res.trackTotal ?? "?"} tracks · ${
+          res.discTotal ?? "?"
+        } disc${res.discTotal === 1 ? "" : "s"}`,
+      });
+    } catch (e) {
+      setLatestOp({ kind: "error", text: String(e) });
+    } finally {
+      setEnriching(false);
+    }
+  }
+
   const primaryFields: [string, unknown][] = [
     ["year", release.year],
     ["medium", release.medium],
@@ -451,7 +513,6 @@ export function ReleaseDetail({
     ["label", release.label],
     ["catalog #", release.catalogNumber],
     ["source", release.source],
-    ["discogs id", release.discogsId],
     ["file path", release.filePath],
   ];
 
@@ -571,6 +632,33 @@ export function ReleaseDetail({
           placeholder="country"
           width="w-32"
         />
+        {/* Discogs id — editable (bare id or a release URL); paired with a
+            per-release enrich button that pulls track + disc counts. */}
+        <div className="inline-flex items-center gap-1.5">
+          <EditableText
+            value={release.discogsId != null ? String(release.discogsId) : null}
+            onChange={onChangeDiscogsId}
+            ariaLabel="discogs id"
+            placeholder="discogs id"
+            width="w-28"
+          />
+          {release.discogsId != null && (
+            <button
+              type="button"
+              onClick={onEnrich}
+              disabled={enriching}
+              title="Pull track + disc counts from Discogs for this release"
+              className={SUBTLE_BUTTON_CLS}
+            >
+              {enriching ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}
+              enrich
+            </button>
+          )}
+        </div>
         {(() => {
           const slots = [
             release.genrePrimary ?? null,

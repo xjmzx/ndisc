@@ -220,6 +220,16 @@ export async function setReleaseCatalogNumber(
   return invoke("set_release_catalog_number", { releaseId, value });
 }
 
+// Set/clear a release's Discogs id from free text (bare integer or a
+// discogs.com/release/… URL). Returns the parsed id (null when cleared);
+// rejects unparseable input. Also keeps the `source` URL coherent.
+export async function setReleaseDiscogsId(
+  releaseId: number,
+  value: string,
+): Promise<number | null> {
+  return invoke<number | null>("set_release_discogs_id", { releaseId, value });
+}
+
 export interface LabelCount {
   name: string;
   count: number;
