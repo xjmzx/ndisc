@@ -44,6 +44,7 @@ import {
   setReleaseCountry,
   setReleaseGenres,
   setReleaseLabel,
+  setReleaseNotes,
   setReleaseType,
   syncCoverToDisk,
   unpublishRelease,
@@ -465,6 +466,12 @@ export function ReleaseDetail({
     onChanged({ ...release, condition: v });
   }
 
+  async function onChangeNotes(v: string | null) {
+    if (!release.id) return;
+    await setReleaseNotes(release.id, v);
+    onChanged({ ...release, notes: v });
+  }
+
   async function onChangeLabel(v: string | null) {
     if (!release.id) return;
     await setReleaseLabel(release.id, v);
@@ -841,7 +848,7 @@ export function ReleaseDetail({
           placeholder="condition"
           width="w-32"
         />
-        <NotesField value={release.notes ?? null} />
+        <NotesField value={release.notes ?? null} onCommit={onChangeNotes} />
       </div>
 
       <div className="mt-4 pt-3 border-t border-surface/60">
@@ -1041,25 +1048,86 @@ function NaRow({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-// Read-only notes field. Sits in the editable-field row so it occupies a
-// stable slot whether or not the release has notes — no more appearing and
-// disappearing block. Long/multi-line notes truncate; full text is in the
-// title tooltip. Sized to roughly match the cover-url field.
-function NotesField({ value }: { value: string | null }) {
+// Editable notes field. Sits in the editable-field row so it occupies a stable
+// slot whether or not the release has notes. Collapsed it's a compact chip (the
+// truncated text + full text on hover); click to expand into a multi-line
+// textarea. Notes are free-form and can be multi-line, so plain Enter inserts a
+// newline and Cmd/Ctrl+Enter (or blur) commits; Escape reverts. Sized to match
+// the cover-url field when collapsed.
+function NotesField({
+  value,
+  onCommit,
+}: {
+  value: string | null;
+  onCommit: (v: string | null) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Re-sync the draft when the upstream value changes (e.g. switching releases).
+  useEffect(() => {
+    setDraft(value ?? "");
+  }, [value]);
+
+  async function commit() {
+    setEditing(false);
+    const trimmed = draft.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    if ((value || null) === next) return;
+    setSaving(true);
+    try {
+      await onCommit(next);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setDraft(value ?? "");
+            setEditing(false);
+          }
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            (e.target as HTMLTextAreaElement).blur();
+          }
+        }}
+        rows={3}
+        placeholder="notes — Esc cancels, ⌘/Ctrl+Enter saves"
+        className="w-[18rem] max-w-full resize-y rounded bg-surface/40
+                   border border-accent/40 px-1.5 py-1 text-xs leading-snug
+                   text-fg/90 font-sans"
+      />
+    );
+  }
+
   const shown = value && value.trim().length > 0 ? value.trim() : null;
   return (
-    <div
-      title={shown ? `notes: ${shown}` : "no notes set"}
-      aria-label="notes"
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title={shown ? `notes: ${shown}\n\n(click to edit)` : "no notes — click to add"}
+      aria-label="edit notes"
       className="w-[12rem] max-w-full h-6 inline-flex items-center gap-1.5
                  px-1.5 rounded bg-surface/40 border border-surface/60
-                 text-fg/90"
+                 hover:border-surface text-fg/90 text-left"
     >
-      <StickyNote size={10} className="shrink-0 text-muted/50" />
+      {saving ? (
+        <Loader2 size={10} className="shrink-0 animate-spin text-muted/50" />
+      ) : (
+        <StickyNote size={10} className="shrink-0 text-muted/50" />
+      )}
       <span className={`truncate ${shown ? "" : "italic text-muted/50"}`}>
         {shown ?? "notes"}
       </span>
-    </div>
+    </button>
   );
 }
 

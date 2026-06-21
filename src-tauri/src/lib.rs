@@ -667,6 +667,27 @@ fn set_release_country(
     Ok(())
 }
 
+// Notes are free-form and may be multi-line (the CSV import joins a sleeve
+// condition + collection notes with '\n'); normalize_field only trims the ends,
+// so interior newlines survive. Not a published tag — local annotation only.
+#[tauri::command]
+fn set_release_notes(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: Option<String>,
+) -> Result<(), String> {
+    let normalized = normalize_field(value);
+    let conn = open(&app)?;
+    conn.execute(
+        "UPDATE releases
+         SET notes = ?1, updated_at = strftime('%s','now')
+         WHERE id = ?2",
+        params![normalized, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn set_release_condition(
     app: tauri::AppHandle,
@@ -4571,6 +4592,7 @@ pub fn run() {
             set_release_type,
             set_release_category,
             set_release_country,
+            set_release_notes,
             set_release_condition,
             set_release_label,
             set_release_catalog_number,

@@ -185,6 +185,13 @@ export async function setReleaseCountry(
   return invoke("set_release_country", { releaseId, value });
 }
 
+export async function setReleaseNotes(
+  releaseId: number,
+  value: string | null,
+): Promise<void> {
+  return invoke("set_release_notes", { releaseId, value });
+}
+
 export async function setReleaseCondition(
   releaseId: number,
   value: string | null,
