@@ -62,35 +62,49 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
   const { genre, country, year, medium, format, label } = state.data;
 
   return (
+    // One 2-column grid for all three rows. Each grid row stretches both cells
+    // to equal height (the default), so every section's top/bottom boundary —
+    // and every gap — lines up across the left/right divide. Row 2's left cell
+    // holds Medium + Format stacked; together they fill the cell, matching
+    // Genre's height on the right. Section labels are gone; the charts + the
+    // Totals block (row-1 left, above Medium) carry the figures.
     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-      {/* Row 1: Medium | Year */}
-      <StackedBarCard
-        title="Medium"
-        rows={medium}
-        colorFor={mediumColor}
-        displayFor={mediumLabel}
-        scalingExponent={1.0}
-      />
+      {/* Row 1: Totals | Year */}
+      <TotalsCard data={state.data} />
       <YearCard rows={year} />
-      {/* Row 2: Format | Genre */}
-      <StackedBarCard
-        title="Format"
-        rows={format}
-        colorFor={formatColor}
-        displayFor={formatLabel}
-        scalingExponent={1.0}
-      />
+      {/* Row 2: Medium + Format (stacked, filling the cell) | Genre */}
+      <div className="flex flex-col gap-2">
+        <StackedBarCard
+          title="Medium"
+          rows={medium}
+          colorFor={mediumColor}
+          displayFor={mediumLabel}
+          scalingExponent={1.0}
+          barHeight="lg"
+          className="flex-1"
+        />
+        <StackedBarCard
+          title="Format"
+          rows={format}
+          colorFor={formatColor}
+          displayFor={formatLabel}
+          scalingExponent={1.0}
+          barHeight="lg"
+          className="flex-1"
+        />
+      </div>
       <StackedBarCard
         title="Genre"
         rows={genre}
         colorFor={(v) => `rgb(var(--c-g-${v}))`}
         displayFor={genreDisplay}
         scalingExponent={DOMINANT_SKEW}
+        barHeight="sm"
       />
-      {/* Row 3: Country | Label — both run two columns (16/page) so the
-          long tails of countries and labels are browsable without endless
-          paging. Country shares the aggressive DOMINANT_SKEW so a home-
-          country monopoly (here UK) doesn't crush the rest. */}
+      {/* Row 3: Country | Label — both run two columns (16/page) so the long
+          tails of countries and labels are browsable without endless paging.
+          Country shares the aggressive DOMINANT_SKEW so a home-country monopoly
+          (here UK) doesn't crush the rest. */}
       <RankedRowsCard
         title="Country"
         rows={country}
@@ -107,6 +121,52 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         tintFor={(_row, rank, total) => labelTierTint(rank, total)}
       />
     </div>
+  );
+}
+
+// --- TotalsCard -------------------------------------------------------------
+
+// Consolidated library figures — replaces the per-section right-hand counts now
+// that the chart sections are label-less. Each figure self-labels, so the card
+// itself needs no section title. Releases is the headline; the rest are the
+// breadth of the catalogue (distinct labels/countries/genres/formats + the
+// year span).
+function TotalsCard({
+  data,
+  className,
+}: {
+  data: LibraryBreakdown;
+  className?: string;
+}) {
+  const releases = total(data.medium);
+  const years = data.year
+    .map((r) => Number(r.value))
+    .filter((y) => Number.isFinite(y));
+  const yearSpan =
+    years.length > 0 ? `${Math.min(...years)}–${Math.max(...years)}` : "—";
+  const items: [string, string][] = [
+    ["releases", releases.toLocaleString()],
+    ["labels", data.label.length.toLocaleString()],
+    ["countries", data.country.length.toLocaleString()],
+    ["genres", data.genre.length.toLocaleString()],
+    ["formats", data.format.length.toLocaleString()],
+    ["years", yearSpan],
+  ];
+  return (
+    <Section dense className={className}>
+      <dl className="grid grid-cols-3 gap-x-4 gap-y-2 font-mono">
+        {items.map(([k, v]) => (
+          <div key={k} className="flex flex-col gap-0.5 min-w-0">
+            <dt className="text-[10px] uppercase tracking-wide text-muted truncate">
+              {k}
+            </dt>
+            <dd className="text-accent tabular-nums text-sm leading-none">
+              {v}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Section>
   );
 }
 
@@ -228,6 +288,13 @@ interface StackedBarCardProps {
   // Sub-linear (< 1) softens dominant slugs so the tail stays readable;
   // linear (= 1) is honest for small categorical sets.
   scalingExponent: number;
+  // Bar thickness: "md" (default h-3); "lg" (3×, h-9) for Medium + Format whose
+  // small balanced sets read as a chunkier band; "sm" (½, h-1.5) for Genre,
+  // which has many rows and wants the saved height for its legend.
+  barHeight?: "sm" | "md" | "lg";
+  // Tighter legend row spacing — used by Genre to claw back vertical height so
+  // the lower Country/Label cards rise on-screen.
+  denseRows?: boolean;
   className?: string;
 }
 
@@ -237,8 +304,11 @@ function StackedBarCard({
   colorFor,
   displayFor = (v) => v,
   scalingExponent,
+  barHeight = "md",
+  denseRows = false,
   className,
 }: StackedBarCardProps) {
+  const barH = barHeight === "lg" ? "h-9" : barHeight === "sm" ? "h-1.5" : "h-3";
   const totalCount = total(rows);
   // Cosmetic width allocation — bar segments scale ^k so a dominant slug
   // doesn't crush the tail. Numeric percentages in the legend stay honest.
@@ -250,21 +320,13 @@ function StackedBarCard({
   }));
 
   return (
-    <Section
-      title={title}
-      right={
-        <span className="text-xs text-muted font-mono">
-          {totalCount.toLocaleString()}
-        </span>
-      }
-      className={className}
-    >
+    <Section dense className={className}>
       {rows.length === 0 ? (
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
-        <div className="space-y-3">
+        <div className={denseRows ? "space-y-2" : "space-y-3"}>
           <div
-            className="flex h-3 gap-0.5 overflow-hidden rounded-sm bg-surface"
+            className={`flex ${barH} gap-0.5 overflow-hidden rounded-sm bg-surface`}
             aria-label={`${title} composition`}
           >
             {segments.map(({ row, widthPct }) => (
@@ -279,7 +341,11 @@ function StackedBarCard({
               />
             ))}
           </div>
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-xs font-mono">
+          <ul
+            className={`grid grid-cols-1 sm:grid-cols-2 gap-x-3 text-xs font-mono ${
+              denseRows ? "gap-y-0.5" : "gap-y-1"
+            }`}
+          >
             {rows.map((r) => (
               <li
                 key={r.value}
@@ -388,19 +454,11 @@ function RankedRowsCard({
   const showPager = totalPages > 1;
 
   return (
-    <Section
-      title={title}
-      right={
-        <span className="text-xs text-muted font-mono">
-          {rows.length.toLocaleString()} / {totalCount.toLocaleString()}
-        </span>
-      }
-      className={className}
-    >
+    <Section dense className={className}>
       {rows.length === 0 ? (
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
-        <div className="flex flex-col gap-2 flex-1">
+        <div className="flex flex-col gap-2 flex-1" aria-label={`${title} ranking`}>
           <div
             className={
               columns > 1
@@ -411,7 +469,7 @@ function RankedRowsCard({
             {chunks.map((chunk, ci) => (
               <ul
                 key={ci}
-                className="text-xs font-mono space-y-1 min-w-0"
+                className="text-xs font-mono space-y-2 min-w-0"
               >
                 {chunk.map((r, i) => {
                   const rank = start + ci * ROWS_PER_COLUMN + i + 1;
@@ -554,7 +612,7 @@ function YearCard({ rows, className }: YearCardProps) {
 
   if (parsed.length === 0) {
     return (
-      <Section title="Year" className={className}>
+      <Section dense className={className}>
         <p className="text-xs text-muted italic">no data yet</p>
       </Section>
     );
@@ -598,7 +656,7 @@ function YearCard({ rows, className }: YearCardProps) {
   const span = Math.max(1, maxYear - minYear);
 
   return (
-    <Section title="Year" className={className}>
+    <Section dense className={className}>
       <div className="flex flex-col gap-1">
         {/* One bar per year, uniformly spaced across the whole window — no
             decade gap or divider. Each year is coloured by its position
@@ -611,7 +669,7 @@ function YearCard({ rows, className }: YearCardProps) {
           {allYears.map((d) => (
             <div
               key={d.year}
-              className="flex-1 min-w-[2px] rounded-sm"
+              className="flex-1 min-w-[2px]"
               style={{
                 height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
                 backgroundColor: yearGradientColor((d.year - minYear) / span),
