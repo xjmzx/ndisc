@@ -154,7 +154,7 @@ function TotalsCard({
   ];
   return (
     <Section dense className={className}>
-      <dl className="grid grid-cols-3 gap-x-4 gap-y-2 font-mono">
+      <dl className="grid grid-cols-3 gap-x-6 gap-y-2 font-mono">
         {items.map(([k, v]) => (
           <div key={k} className="flex flex-col gap-0.5 min-w-0">
             <dt className="text-[10px] uppercase tracking-wide text-muted truncate">
@@ -342,27 +342,31 @@ function StackedBarCard({
             ))}
           </div>
           <ul
-            className={`grid grid-cols-1 sm:grid-cols-2 gap-x-3 text-xs font-mono ${
+            className={`grid grid-cols-1 sm:grid-cols-2 gap-x-6 text-xs font-mono ${
               denseRows ? "gap-y-0.5" : "gap-y-1"
             }`}
           >
             {rows.map((r) => (
+              // Same column template as RankedRow so the chip (in the rank
+              // gutter, right-aligned), label, count and percent line up across
+              // every card — Medium/Format/Genre chips sit exactly above the
+              // Country/Label rank numbers.
               <li
                 key={r.value}
-                className="flex items-center gap-2 tabular-nums min-w-0"
+                className="grid grid-cols-[1.5rem_minmax(0,1fr)_3.5rem_2.5rem] items-center gap-2 tabular-nums"
               >
                 <span
-                  className="inline-block w-2 h-2 rounded-sm shrink-0"
+                  className="inline-block w-2 h-2 rounded-sm justify-self-end"
                   style={{ backgroundColor: colorFor(r.value) }}
                   aria-hidden="true"
                 />
-                <span className="text-fg/80 truncate flex-1">
+                <span className="text-fg/80 truncate">
                   {displayFor(r.value)}
                 </span>
-                <span className="text-accent shrink-0">
+                <span className="text-accent text-right">
                   {r.count.toLocaleString()}
                 </span>
-                <span className="text-muted shrink-0 w-10 text-right">
+                <span className="text-muted text-right">
                   {pct(r.count, totalCount)}
                 </span>
               </li>
@@ -462,7 +466,7 @@ function RankedRowsCard({
           <div
             className={
               columns > 1
-                ? "grid grid-cols-2 gap-x-4 gap-y-1 items-start"
+                ? "grid grid-cols-2 gap-x-6 gap-y-1 items-start"
                 : ""
             }
           >
