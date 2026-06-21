@@ -390,6 +390,14 @@ export async function updateReleasePath(
   return invoke<RefreshResult>("update_release_path", { releaseId, newPath });
 }
 
+export async function clearReleasePath(releaseId: number): Promise<void> {
+  return invoke<void>("clear_release_path", { releaseId });
+}
+
+export async function getRelease(id: number): Promise<Release | null> {
+  return invoke<Release | null>("get_release", { id });
+}
+
 export interface OrphanInfo {
   id: number;
   artist: string;

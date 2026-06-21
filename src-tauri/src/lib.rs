@@ -1172,6 +1172,18 @@ fn delete_release(app: tauri::AppHandle, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Fetch a single release by id — used by the detail view to re-read fresh
+/// state (e.g. the recomputed track_count) after a backend mutation whose
+/// result doesn't itself carry the full row.
+#[tauri::command]
+fn get_release(app: tauri::AppHandle, id: i64) -> Result<Option<Release>, String> {
+    let conn = open(&app)?;
+    let sql = format!("SELECT {} FROM releases WHERE id = ?1", RELEASE_SELECT_COLS);
+    conn.query_row(&sql, params![id], row_to_release)
+        .optional()
+        .map_err(|e| e.to_string())
+}
+
 /// Count audio files directly inside `dir` (non-recursive — matches the import
 /// grain, where each leaf folder is one release). Capped at 99 ("0–99 leaves").
 /// None when the folder can't be read (e.g. an unmounted drive) so the caller
@@ -1852,6 +1864,24 @@ fn update_release_path(
         .map_err(|e| e.to_string())?;
     }
     refresh_release(app, release_id)
+}
+
+/// Detach a release's local folder — reverts it to "object-only" (no folder to
+/// count against), clearing the derived present-count so completeness falls
+/// back to present = total. The opposite of update_release_path; used when a
+/// path was attached in error or the files have moved out of the library.
+#[tauri::command]
+fn clear_release_path(app: tauri::AppHandle, release_id: i64) -> Result<(), String> {
+    let conn = open(&app)?;
+    conn.execute(
+        "UPDATE releases
+         SET file_path = NULL, track_count = NULL,
+             updated_at = strftime('%s','now')
+         WHERE id = ?1",
+        params![release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -4549,6 +4579,7 @@ pub fn run() {
             list_distinct_labels,
             export_markdown,
             list_releases,
+            get_release,
             delete_release,
             recount_tracks,
             publish_reaction,
@@ -4571,6 +4602,7 @@ pub fn run() {
             scan_library_changes,
             sync_cover_to_disk,
             update_release_path,
+            clear_release_path,
             generate_keypair,
             import_keypair,
             get_npub,

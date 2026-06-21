@@ -4,6 +4,7 @@ import {
   Copy,
   ExternalLink,
   FileMusic,
+  FolderPlus,
   ImageDown,
   Image as ImageIcon,
   Loader2,
@@ -15,20 +16,23 @@ import {
   ThumbsUp,
   Trash2,
   Undo2,
+  Unlink,
   Upload,
 } from "lucide-react";
 import { useReactions } from "../hooks/useReactions";
 import { REACTION_DOWN, REACTION_UP, displayCount } from "../lib/rating";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
 import { genreDisplay, GENRE_ORDER } from "../lib/genre";
 import {
+  clearReleasePath,
   deleteRelease,
   enrichDiscogsRelease,
+  getRelease,
   restoreRelease,
   publishRelease,
   refreshRelease,
@@ -43,6 +47,7 @@ import {
   setReleaseType,
   syncCoverToDisk,
   unpublishRelease,
+  updateReleasePath,
   type RelayError,
   type Release,
 } from "../lib/tauri";
@@ -153,6 +158,7 @@ export function ReleaseDetail({
   const [refreshing, setRefreshing] = useState(false);
   const [syncingCover, setSyncingCover] = useState(false);
   const [enriching, setEnriching] = useState(false);
+  const [linkingPath, setLinkingPath] = useState(false);
   const [latestOp, setLatestOp] = useState<LatestOp | null>(null);
   // Persistent across non-release-switch ops so the copy/njump.me buttons in
   // the action row stay active after a later cover edit / refresh / sync.
@@ -307,6 +313,63 @@ export function ReleaseDetail({
       setLatestOp({ kind: "error", text: String(e) });
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  // Attach (or re-point) a local folder to this release. Completeness is keyed
+  // on file_path, so this is how a Discogs/object-only release you actually own
+  // the files for (a Bandcamp download, a ripped CD) starts counting present
+  // vs. total. The backend recomputes track_count from the folder, so we re-read
+  // the fresh row rather than trusting the stale client copy.
+  async function onPickPath() {
+    if (!release.id || linkingPath) return;
+    let picked: string | null;
+    try {
+      const result = await openDialog({
+        directory: true,
+        multiple: false,
+        title: `Local folder for ${release.artist} — ${release.title}`,
+      });
+      picked = typeof result === "string" ? result : null;
+    } catch (e) {
+      setLatestOp({ kind: "error", text: String(e) });
+      return;
+    }
+    if (!picked) return;
+    setLinkingPath(true);
+    try {
+      await updateReleasePath(release.id, picked);
+      const fresh = await getRelease(release.id);
+      onChanged(fresh ?? { ...release, filePath: picked });
+      setLatestOp({ kind: "info", text: "folder linked" });
+    } catch (e) {
+      setLatestOp({ kind: "error", text: String(e) });
+    } finally {
+      setLinkingPath(false);
+    }
+  }
+
+  // Detach the folder — revert to object-only (completeness falls back to
+  // present = total). Reversible via attach, but confirm since it drops the
+  // present-count.
+  async function onDetachPath() {
+    if (!release.id || linkingPath) return;
+    const ok = await ask(
+      "Unlink the local folder from this release? It reverts to object-only " +
+        "(present = total); you can re-attach a folder any time.",
+      { title: "Detach folder", kind: "warning" },
+    );
+    if (!ok) return;
+    setLinkingPath(true);
+    try {
+      await clearReleasePath(release.id);
+      const fresh = await getRelease(release.id);
+      onChanged(fresh ?? { ...release, filePath: null, trackCount: null });
+      setLatestOp({ kind: "info", text: "folder unlinked" });
+    } catch (e) {
+      setLatestOp({ kind: "error", text: String(e) });
+    } finally {
+      setLinkingPath(false);
     }
   }
 
@@ -671,6 +734,56 @@ export function ReleaseDetail({
                 <Sparkles size={12} />
               )}
               enrich
+            </button>
+          )}
+        </div>
+        {/* Local folder link — completeness is keyed on file_path, so attaching
+            a folder you own the files for (Bandcamp download, ripped CD) turns a
+            Discogs/object-only release into a present-vs-total reading. Edit
+            re-points it; detach reverts to object-only. */}
+        <div className="inline-flex items-center gap-1.5">
+          {release.filePath ? (
+            <>
+              <button
+                type="button"
+                onClick={onPickPath}
+                disabled={linkingPath}
+                title={`Linked: ${release.filePath}\nClick to point at a different folder`}
+                className={SUBTLE_BUTTON_CLS}
+              >
+                {linkingPath ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Pencil size={12} />
+                )}
+                <span className="font-mono max-w-[11rem] truncate">
+                  {release.filePath}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={onDetachPath}
+                disabled={linkingPath}
+                title="Unlink folder (revert to object-only)"
+                className={SUBTLE_BUTTON_CLS}
+              >
+                <Unlink size={12} />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onPickPath}
+              disabled={linkingPath}
+              title="Link a local folder you own the files for — enables present-vs-total completeness"
+              className={SUBTLE_BUTTON_CLS}
+            >
+              {linkingPath ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <FolderPlus size={12} />
+              )}
+              attach folder
             </button>
           )}
         </div>
