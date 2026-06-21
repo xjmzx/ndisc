@@ -22,7 +22,7 @@ import { REACTION_DOWN, REACTION_UP, displayCount } from "../lib/rating";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
-import { LeafDots } from "./LeafIcon";
+import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
 import { genreDisplay, GENRE_ORDER } from "../lib/genre";
@@ -567,8 +567,19 @@ export function ReleaseDetail({
             {release.discTotal != null && release.discTotal > 0 && (
               <>
                 <dt className="text-muted">discs</dt>
-                <dd className="text-fg/90 min-w-0 tabular-nums">
-                  {release.discTotal}
+                <dd className="text-fg/90 min-w-0 flex items-center">
+                  {/* Same green badge as the release scroll's disc mark, but a
+                      touch smaller and a rounded square (not a circle) so it
+                      reads tidily inline next to the label. */}
+                  <CountBadge
+                    value={release.discTotal}
+                    title={`${release.discTotal} disc${
+                      release.discTotal === 1 ? "" : "s"
+                    }`}
+                    shapeClassName="rounded-[3px]"
+                    colorClassName="bg-ok/70 text-bg"
+                    size={17}
+                  />
                 </dd>
               </>
             )}
