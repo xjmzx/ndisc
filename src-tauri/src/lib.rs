@@ -3895,6 +3895,10 @@ struct DiscogsFormat {
     qty: Option<String>,
     #[serde(default)]
     descriptions: Vec<String>,
+    // Free-text qualifier — Discogs stores the vinyl colour here ("Green"),
+    // NOT in `descriptions`; the CSV export appends an abbreviated form of it.
+    #[serde(default)]
+    text: Option<String>,
 }
 
 // Count real tracks in a Discogs tracklist. Discogs interleaves "heading" rows
@@ -4034,22 +4038,23 @@ fn apply_enrichment(
     type Row = (
         Option<i64>,    // track_total
         Option<i64>,    // disc_total
+        Option<String>, // format
         Option<String>, // category
         Option<String>, // label
         Option<String>, // catalog_number
         Option<String>, // country
         Option<i64>,    // last_published_at
     );
-    let (old_tt, old_dt, old_cat, old_label, old_catno, old_country, published): Row = conn
-        .query_row(
-            "SELECT track_total, disc_total, category, label, catalog_number,
+    let (old_tt, old_dt, old_format, old_cat, old_label, old_catno, old_country, published): Row =
+        conn.query_row(
+            "SELECT track_total, disc_total, format, category, label, catalog_number,
                     country, last_published_at
              FROM releases WHERE id = ?1",
             params![release_id],
             |r| {
                 Ok((
                     r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
-                    r.get(6)?,
+                    r.get(6)?, r.get(7)?,
                 ))
             },
         )
@@ -4072,32 +4077,55 @@ fn apply_enrichment(
     let (catalog, c_cn) = fill(old_catno, &enr.catalog);
     let (country, c_co) = fill(old_country, &enr.country);
 
+    // Format gets richer handling than the other metadata: the stored value is
+    // usually non-empty but ABBREVIATED (the Discogs CSV clips "Green"→"Gre"),
+    // so plain fill-empty wouldn't fix it. Replace it with the API's spelled-out
+    // string when the current value is empty, or is recognisably the clipped
+    // form of it; otherwise (a hand-curated, structurally-different format)
+    // leave it be.
+    let (format, c_fmt) = match enr.format.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(full) => {
+            let cur = old_format.as_deref().map(str::trim).unwrap_or("");
+            if cur.is_empty() || format_is_abbrev_of(cur, full) {
+                let changed = cur != full;
+                (Some(full.to_string()), changed)
+            } else {
+                (old_format.clone(), false)
+            }
+        }
+        None => (old_format.clone(), false),
+    };
+
     // A published event is stale if any emitted field moved. track_total is
     // COALESCE'd (a None API result keeps the existing value); disc_total is
     // authoritative/overwritten (a Some→None — a digital release losing a bogus
-    // disc count — is a real change); metadata only changes when newly filled.
+    // disc count — is a real change); metadata only changes when newly filled
+    // (or, for format, replaced with the un-abbreviated form). `format` is a
+    // published tag, so its change must re-flag too.
     let track_changed = enr.track_total.is_some() && enr.track_total != old_tt;
     let disc_changed = enr.disc_total != old_dt;
-    let meta_changed = c_cat || c_lab || c_cn || c_co;
+    let meta_changed = c_cat || c_lab || c_cn || c_co || c_fmt;
     let clear_pub = (track_changed || disc_changed || meta_changed) && published.is_some();
 
     conn.execute(
         "UPDATE releases SET
              track_total = COALESCE(?1, track_total),
              disc_total = ?2,
-             category = ?3,
-             label = ?4,
-             catalog_number = ?5,
-             country = ?6,
+             format = ?3,
+             category = ?4,
+             label = ?5,
+             catalog_number = ?6,
+             country = ?7,
              last_published_at =
-                 CASE WHEN ?7 THEN NULL ELSE last_published_at END,
+                 CASE WHEN ?8 THEN NULL ELSE last_published_at END,
              last_published_naddr =
-                 CASE WHEN ?7 THEN NULL ELSE last_published_naddr END,
+                 CASE WHEN ?8 THEN NULL ELSE last_published_naddr END,
              updated_at = strftime('%s','now')
-         WHERE id = ?8",
+         WHERE id = ?9",
         params![
             enr.track_total,
             enr.disc_total,
+            format,
             category,
             label,
             catalog,
@@ -4122,6 +4150,7 @@ fn counts_from(rel: &DiscogsRelease) -> (Option<i64>, Option<i64>) {
 struct Enrichment {
     track_total: Option<i64>,
     disc_total: Option<i64>,
+    format: Option<String>,
     category: Option<String>,
     label: Option<String>,
     catalog: Option<String>,
@@ -4146,11 +4175,91 @@ fn discogs_format_string(formats: &[DiscogsFormat]) -> String {
         .join(", ")
 }
 
+// Reconstruct the human format string Discogs shows on the site — e.g.
+// `7", Single, Green` or `2x12", Album` — from the API formats. Per medium:
+// an `Nx` quantity prefix (N>1), then the format's descriptions and its colour
+// `text`, joined with ", "; the medium NAME is kept only for non-vinyl (a
+// vinyl's size already rides in `descriptions`, so prepending "Vinyl" would be
+// noise). Multiple media are joined with " + ". This is the un-abbreviated
+// counterpart to the Discogs CSV `Format` column.
+fn discogs_format_display(formats: &[DiscogsFormat]) -> Option<String> {
+    let blocks: Vec<String> = formats
+        .iter()
+        .filter_map(|f| {
+            let mut bits: Vec<String> = Vec::new();
+            if let Some(n) = f.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if !n.eq_ignore_ascii_case("vinyl") {
+                    bits.push(n.to_string());
+                }
+            }
+            bits.extend(
+                f.descriptions.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            );
+            if let Some(t) = f.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                bits.push(t.to_string());
+            }
+            if bits.is_empty() {
+                return None;
+            }
+            let joined = bits.join(", ");
+            let qty = f
+                .qty
+                .as_deref()
+                .and_then(|q| q.trim().parse::<i64>().ok())
+                .filter(|&q| q > 1);
+            Some(match qty {
+                Some(q) => format!("{}x{}", q, joined),
+                None => joined,
+            })
+        })
+        .collect();
+    (!blocks.is_empty()).then(|| blocks.join(" + "))
+}
+
+// Is `stored` merely an abbreviated form of `full`? The Discogs CSV `Format`
+// column clips descriptor terms (vinyl colour → "Gre", and a handful of edition
+// short-codes) while keeping the same tokens in the same order. We treat the
+// stored value as safe-to-replace only when it lines up token-for-token with
+// the reconstructed full string — each stored token being an exact match, a
+// prefix ("Gre" of "Green", "Num" of "Numbered"), or a known non-prefix short
+// code ("Ltd" of "Limited Edition"). Anything structurally different is assumed
+// hand-curated and left alone.
+fn format_is_abbrev_of(stored: &str, full: &str) -> bool {
+    fn toks(s: &str) -> Vec<String> {
+        s.split([',', '+'])
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+    // Discogs short codes that aren't simple prefixes of the spelled-out term.
+    fn alias_matches(short: &str, full: &str) -> bool {
+        matches!(
+            (short, full),
+            ("ltd", "limited edition")
+                | ("re", "reissue")
+                | ("rp", "repress")
+                | ("tp", "test pressing")
+                | ("s/sided", "single sided")
+                | ("w/lbl", "with label")
+                | ("smplr", "sampler")
+                | ("mp", "mispress")
+        )
+    }
+    let (a, b) = (toks(stored), toks(full));
+    if a.is_empty() || a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(&b)
+        .all(|(s, f)| f == s || f.starts_with(s.as_str()) || alias_matches(s, f))
+}
+
 fn enrichment_from(rel: &DiscogsRelease) -> Enrichment {
     let (track_total, disc_total) = counts_from(rel);
     Enrichment {
         track_total,
         disc_total,
+        format: discogs_format_display(&rel.formats),
         category: category_from_discogs_format(&discogs_format_string(&rel.formats))
             .map(|s| s.to_string()),
         label: rel.labels.first().and_then(|l| l.name.as_deref()).and_then(nonempty),
@@ -5139,6 +5248,62 @@ mod discogs_enrich {
         assert_eq!(e.catalog.as_deref(), Some("WARPCD21"));
         assert_eq!(e.category.as_deref(), Some("album"));
         assert_eq!(e.track_total, Some(1));
+    }
+
+    #[test]
+    fn format_display_spells_out_colour_from_text() {
+        // The vinyl colour lives in `text`, not `descriptions`; the rebuilt
+        // string appends it spelled out (vs the CSV's clipped "Gre").
+        let rel = parse(
+            r#"{"tracklist":[],"formats":[
+                {"name":"Vinyl","qty":"1","text":"Green","descriptions":["7\"","Single"]}
+            ]}"#,
+        );
+        assert_eq!(
+            enrichment_from(&rel).format.as_deref(),
+            Some("7\", Single, Green")
+        );
+    }
+
+    #[test]
+    fn format_display_keeps_non_vinyl_name_and_qty_prefix() {
+        // Non-vinyl keeps its medium name; qty>1 becomes an "Nx" prefix.
+        let cd = parse(r#"{"tracklist":[],"formats":[{"name":"CD","qty":"1","descriptions":["Album"]}]}"#);
+        assert_eq!(enrichment_from(&cd).format.as_deref(), Some("CD, Album"));
+        let dbl = parse(r#"{"tracklist":[],"formats":[{"name":"Vinyl","qty":"2","descriptions":["12\"","Album"]}]}"#);
+        assert_eq!(enrichment_from(&dbl).format.as_deref(), Some("2x12\", Album"));
+    }
+
+    #[test]
+    fn format_display_joins_multiple_media() {
+        let rel = parse(
+            r#"{"tracklist":[],"formats":[
+                {"name":"Vinyl","qty":"1","descriptions":["12\"","Album"]},
+                {"name":"CD","qty":"1","descriptions":["Album"]}
+            ]}"#,
+        );
+        assert_eq!(
+            enrichment_from(&rel).format.as_deref(),
+            Some("12\", Album + CD, Album")
+        );
+    }
+
+    #[test]
+    fn abbrev_detection_matches_clipped_and_short_codes() {
+        // Clipped colour, prefix descriptor, and a non-prefix short code.
+        assert!(format_is_abbrev_of("7\", Gre", "7\", Green"));
+        assert!(format_is_abbrev_of("12\", EP, Num, Cle", "12\", EP, Numbered, Clear"));
+        assert!(format_is_abbrev_of("12\", Ltd", "12\", Limited Edition"));
+        // An identical (already-full) string trivially "matches".
+        assert!(format_is_abbrev_of("CD, Album", "CD, Album"));
+    }
+
+    #[test]
+    fn abbrev_detection_rejects_structurally_different() {
+        // Different token count / hand-curated note must NOT be overwritten.
+        assert!(!format_is_abbrev_of("7\", Green vinyl, my note", "7\", Green"));
+        assert!(!format_is_abbrev_of("CD", "12\", Album"));
+        assert!(!format_is_abbrev_of("", "7\", Green"));
     }
 
     #[test]
