@@ -1781,6 +1781,20 @@ fn refresh_release_inner(
         Some(info.track_total.unwrap_or(present).min(99))
     };
 
+    // Audio-visual presence — count recognised video files in the same dir, so
+    // a Refresh (or the bulk Scan-library-changes pass) picks up videos added
+    // after the initial recount. Its >0 truth IS published, so a change on a
+    // published release trips publish-staleness after the write.
+    let new_video_count: Option<i64> = Some(
+        std::fs::read_dir(&dir)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
+            .filter(|p| p.is_file() && is_video(p))
+            .count()
+            .min(99) as i64,
+    );
+
     let mut changes: Vec<String> = Vec::new();
     if new_artist != release.artist {
         changes.push("artist".into());
@@ -1812,6 +1826,9 @@ fn refresh_release_inner(
     if new_track_total != release.track_total {
         changes.push("track_total".into());
     }
+    if new_video_count != release.video_count {
+        changes.push("video".into());
+    }
 
     if changes.is_empty() {
         return Ok(RefreshResult {
@@ -1832,8 +1849,9 @@ fn refresh_release_inner(
              cover_art_path = ?8,
              track_count = ?9,
              track_total = ?10,
+             video_count = ?11,
              updated_at = strftime('%s','now')
-         WHERE id = ?11",
+         WHERE id = ?12",
         params![
             new_artist,
             new_title,
@@ -1845,10 +1863,21 @@ fn refresh_release_inner(
             new_cover_path,
             new_track_count,
             new_track_total,
+            new_video_count,
             release_id,
         ],
     )
     .map_err(|e| e.to_string())?;
+
+    // The `video` tag's emitted value changing on a *published* release makes
+    // its kind:31237 event stale — drop it to "needs republish" so the new tag
+    // goes out. Other refreshed fields are a disk-sync and don't touch publish
+    // state here (consistent with prior behaviour).
+    if release.last_published_naddr.is_some()
+        && video_emit(release.video_count) != video_emit(new_video_count)
+    {
+        mark_unpublished(&conn, release_id)?;
+    }
 
     Ok(RefreshResult {
         status: "ok".into(),
