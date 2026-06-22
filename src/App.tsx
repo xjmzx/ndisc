@@ -578,7 +578,7 @@ export default function App() {
         </div>
       ) : (
         <div className="lg:flex-1 lg:min-h-0">
-          <BatchEditView reloadKey={reloadKey} />
+          <BatchEditView reloadKey={reloadKey} relays={relays} />
         </div>
       )}
 

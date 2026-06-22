@@ -208,7 +208,7 @@ export function ReleaseDetail({
     if (!release.id) return;
     try {
       await setCoverArtUrl(release.id, value);
-      onChanged({ ...release, coverArtUrl: value });
+      applyEdit({ coverArtUrl: value });
       setLatestOp({
         kind: "info",
         text: value ? "cover URL saved" : "cover URL cleared",
@@ -442,40 +442,55 @@ export function ReleaseDetail({
     }
   }
 
+  // Every metadata setter clears the release's publish markers backend-side
+  // (mark_unpublished — the edited field is on the wire of the kind:31237
+  // event). Mirror that here so the publish badge drops to "not yet published"
+  // and the release reads as needing a republish, instead of lying until the
+  // next reselect. No-op visually for already-unpublished releases.
+  function applyEdit(patch: Partial<Release>) {
+    if (release.lastPublishedAt != null) setLastPublish(null);
+    onChanged({
+      ...release,
+      ...patch,
+      lastPublishedAt: null,
+      lastPublishedNaddr: null,
+    });
+  }
+
   async function onChangeType(v: string | null) {
     if (!release.id) return;
     await setReleaseType(release.id, v);
-    onChanged({ ...release, releaseType: v });
+    applyEdit({ releaseType: v });
   }
 
   async function onChangeCategory(v: string | null) {
     if (!release.id) return;
     await setReleaseCategory(release.id, v);
-    onChanged({ ...release, category: v });
+    applyEdit({ category: v });
   }
 
   async function onChangeCountry(v: string | null) {
     if (!release.id) return;
     await setReleaseCountry(release.id, v);
-    onChanged({ ...release, country: v });
+    applyEdit({ country: v });
   }
 
   async function onChangeCondition(v: string | null) {
     if (!release.id) return;
     await setReleaseCondition(release.id, v);
-    onChanged({ ...release, condition: v });
+    applyEdit({ condition: v });
   }
 
   async function onChangeNotes(v: string | null) {
     if (!release.id) return;
     await setReleaseNotes(release.id, v);
-    onChanged({ ...release, notes: v });
+    applyEdit({ notes: v });
   }
 
   async function onChangeLabel(v: string | null) {
     if (!release.id) return;
     await setReleaseLabel(release.id, v);
-    onChanged({ ...release, label: v });
+    applyEdit({ label: v });
   }
 
   // Changes a single genre slot. Cascade-clears later slots that are no
@@ -504,8 +519,7 @@ export function ReleaseDetail({
       present[2] ?? null,
     ];
     await setReleaseGenres(release.id, dense[0], dense[1], dense[2]);
-    onChanged({
-      ...release,
+    applyEdit({
       genrePrimary: dense[0],
       genreSecondary: dense[1],
       genreTertiary: dense[2],
@@ -515,7 +529,7 @@ export function ReleaseDetail({
   async function onChangeCatalogNumber(v: string | null) {
     if (!release.id) return;
     await setReleaseCatalogNumber(release.id, v);
-    onChanged({ ...release, catalogNumber: v });
+    applyEdit({ catalogNumber: v });
   }
 
   // Accepts a bare id or a discogs.com/release/… URL (parsed backend-side; an
@@ -534,7 +548,7 @@ export function ReleaseDetail({
     } else if (id == null && sourceIsDiscogs) {
       source = null;
     }
-    onChanged({ ...release, discogsId: id, source });
+    applyEdit({ discogsId: id, source });
   }
 
   // Pull track + disc counts from Discogs for just this release (vs the batch

@@ -603,6 +603,27 @@ fn set_cover_art_url(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    // cover_art_url is the published `image` tag — editing it makes any prior
+    // kind:31237 event stale.
+    mark_unpublished(&conn, release_id)?;
+    Ok(())
+}
+
+/// Clear a release's published-state markers so it re-enters the "unpublished"
+/// bucket and gets re-emitted by Publish Library → unpublished (the new
+/// replaceable event overwrites the old one by d-tag). Called by every setter
+/// that mutates data carried in the kind:31237 event, so an edited-but-
+/// published release reads as stale. No-op for never-published rows (markers
+/// already NULL). Setters touching ONLY local-only data (file_path,
+/// cover_art_path, track_count) deliberately do NOT call this.
+fn mark_unpublished(conn: &Connection, release_id: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE releases
+         SET last_published_at = NULL, last_published_naddr = NULL
+         WHERE id = ?1",
+        params![release_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -628,6 +649,7 @@ fn set_release_type(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -646,6 +668,7 @@ fn set_release_category(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -664,12 +687,14 @@ fn set_release_country(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
 // Notes are free-form and may be multi-line (the CSV import joins a sleeve
 // condition + collection notes with '\n'); normalize_field only trims the ends,
-// so interior newlines survive. Not a published tag — local annotation only.
+// so interior newlines survive. Notes ARE published — they are the kind:31237
+// event content (see release_event) — so editing them marks the release stale.
 #[tauri::command]
 fn set_release_notes(
     app: tauri::AppHandle,
@@ -685,6 +710,7 @@ fn set_release_notes(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -703,6 +729,7 @@ fn set_release_condition(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -800,6 +827,7 @@ fn set_release_genres(
         params![slots[0], slots[1], slots[2], release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -818,6 +846,7 @@ fn set_release_label(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -836,6 +865,7 @@ fn set_release_catalog_number(
         params![normalized, release_id],
     )
     .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
     Ok(())
 }
 
@@ -909,6 +939,8 @@ fn set_release_discogs_id(
         params![parsed, new_source, release_id],
     )
     .map_err(|e| e.to_string())?;
+    // discogs_id (`i` tag) and source are both published — mark stale.
+    mark_unpublished(&conn, release_id)?;
     Ok(parsed)
 }
 

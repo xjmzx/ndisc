@@ -44,6 +44,7 @@ import {
   type RescanSummary,
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
+import { sourcePlatform } from "../lib/source";
 import { cn } from "../lib/cn";
 
 export interface FilterContext {
@@ -1137,24 +1138,50 @@ export function ReleaseList({
                       )}
                     />
                     {/* Medium — sharpened contrast: physical is a solid filled
-                        disc, digital a hollow ring (intangible — no platter). */}
-                    {r.medium === "physical" ? (
-                      <span
-                        title="physical"
-                        aria-label="physical"
-                        className="grid place-items-center text-medium"
-                      >
-                        <Disc3 size={12} fill="currentColor" />
-                      </span>
-                    ) : r.medium === "digital" ? (
-                      <span
-                        title="digital"
-                        aria-label="digital"
-                        className="grid place-items-center text-medium/70"
-                      >
-                        <Circle size={11} />
-                      </span>
-                    ) : null}
+                        disc, digital a hollow ring (intangible — no platter).
+                        Tinted by source platform (Bandcamp cyan, SoundCloud
+                        orange, …) when one is detected, so a release's origin
+                        reads at a glance; neutral `text-medium` otherwise. The
+                        shape still encodes physical/digital — only colour
+                        changes. */}
+                    {(() => {
+                      const platform = sourcePlatform(r);
+                      const tip = platform ? ` · ${platform.label}` : "";
+                      const tint = platform
+                        ? { color: platform.color }
+                        : undefined;
+                      if (r.medium === "physical") {
+                        return (
+                          <span
+                            title={`physical${tip}`}
+                            aria-label={`physical${tip}`}
+                            className={cn(
+                              "grid place-items-center",
+                              !platform && "text-medium",
+                            )}
+                            style={tint}
+                          >
+                            <Disc3 size={12} fill="currentColor" />
+                          </span>
+                        );
+                      }
+                      if (r.medium === "digital") {
+                        return (
+                          <span
+                            title={`digital${tip}`}
+                            aria-label={`digital${tip}`}
+                            className={cn(
+                              "grid place-items-center",
+                              !platform && "text-medium/70",
+                            )}
+                            style={tint}
+                          >
+                            <Circle size={11} />
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
               </div>
