@@ -43,11 +43,16 @@ export interface Release {
   // quantities). Null for digital / un-enriched rows. DB-local — not published
   // to Nostr yet.
   discTotal?: number | null;
+  // Count of video (audio-visual) files in the release folder, extension-
+  // detected on recount. >0 means the release carries video and IS published
+  // as the additive `video` tag. Null when unscanned, 0 when audio-only.
+  videoCount?: number | null;
 }
 
 export type PublishedFilter = "published" | "unpublished";
 export type LabelFilter = "with_label" | "without_label";
 export type GenreFilter = "with_genre" | "without_genre";
+export type VideoFilter = "with_video" | "without_video";
 
 export interface Stats {
   total: number;
@@ -132,6 +137,7 @@ export async function listReleases(
   publishedFilter?: PublishedFilter,
   labelFilter?: LabelFilter,
   genreFilter?: GenreFilter,
+  videoFilter?: VideoFilter,
 ): Promise<Release[]> {
   return invoke<Release[]>("list_releases", {
     query,
@@ -140,6 +146,7 @@ export async function listReleases(
     publishedFilter,
     labelFilter,
     genreFilter,
+    videoFilter,
   });
 }
 

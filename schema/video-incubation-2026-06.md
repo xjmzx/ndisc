@@ -11,6 +11,60 @@ Date: 2026-06-19 · Owner intent: "do this properly," not as a thin tag.
 
 ---
 
+## DECISIONS LOCKED (2026-06-22)
+
+Owner resolved the pivotal forks; appetite shifted from the 2026-06-19
+"do it properly / stream-based" stance toward a **simple, non-breaking,
+ndisc-first** path. The Layer-2 "properly" work is NOT cancelled — just
+explicitly deferred behind the cheap wire change.
+
+1. **Mechanism — additive `video` flag tag, NOT a `type` enum value.**
+   `type` values are mutually exclusive, so `type=video` would strip a
+   music-video's "music" identity. The real use case is "filter
+   /data/music releases that *contain* video," i.e. a music release with
+   a video file. So video presence is modelled **orthogonally** to `type`,
+   as a new OPTIONAL tag. This falls squarely under changePolicy additive
+   exception (2) — **no `type` enum change, no changePolicy amendment, no
+   v3 bump.** Standalone `type=video` releases are NOT pursued now (can be
+   added later if a true A/V-works collection appears).
+
+2. **Detection — extension-based.** Recognize known video extensions in
+   the release folder (candidate set: `.mp4 .mkv .mov .webm .m4v .avi
+   .wmv .flv .mpg .mpeg .ogv`). Simple, local, mirrors the `track_count`
+   scan. ACCEPTED CAVEAT: an audio-only `.mp4`/`.mkv` will false-positive;
+   stream-based probing (ffprobe) is deferred to the Layer-2 work.
+
+3. **Scope — ndisc-side wire first.** Land detection + flag + filter in
+   ndisc (emitter), publish the tag, re-vendor `release.v2.json` + re-pin
+   SHA across glmps×2 + ndisc.view. Defer the cross-suite file-awareness
+   layer (smpl/tree, terrain-roots video root, stream probing) to later.
+
+### `video` tag spec (additive, release.v2.json)
+
+- Wire: `["video", "<count>"]` — integer (count of recognized video files
+  in the release folder) rendered as a string, like `tracks`/`discs`.
+  **Emitted only when ≥ 1**; omitted otherwise. Consumers treat *presence*
+  as "this release carries audio-visual content"; the value is an optional
+  richer hint (how many video files).
+- Local storage: a new `video_count` column on `releases` (INTEGER, NULL =
+  unscanned/unknown), populated by a folder-walk pass like `recount_tracks`.
+  Local-derived, per-device — but UNLIKE `track_count`, its >0 truth IS
+  published (a release property: "this release has video"), so it bumps
+  publish-staleness via `mark_unpublished` when it changes.
+- Schema: add `video` to `release.v2.json` tags with a `tracks`/`discs`-
+  style ADDITIVE note; does NOT bump the schema version. Re-vendor + re-pin
+  SHA into glmps×2 + ndisc.view (the usual ritual; `prebuild` freeze-check
+  guards it). Consumers already lenient (ndisc.view doesn't read `type`,
+  parser requires only `d`), so absent-tag = no A/V data, never an error.
+- UI (ndisc): a "has video" filter (sibling to publishedFilter/genreFilter)
+  + a small row indicator. Reuse suite glyph language; exact treatment TBD.
+
+Open/deferred unchanged: Layer-2 file-awareness, smpl/tree video handling,
+standalone `type=video`, sub-kinds (`avkind`), companion-vs-standalone for
+true A/V works. Revisit alongside terrain-roots.
+
+---
+
 ## Why this exists
 
 The library is overwhelmingly audio, but a handful of artists and releases

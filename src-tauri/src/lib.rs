@@ -120,6 +120,14 @@ pub struct Release {
     // `discs` tag would be an additive contract wave). Capped at 99.
     #[serde(default)]
     pub disc_total: Option<i64>,
+    // Number of video files (audio-visual content) in the release folder,
+    // extension-detected on recount (see VIDEO_EXTS). Local-derived per device,
+    // but UNLIKE track_count its >0 truth IS published — the additive `video`
+    // tag on kind:31237 (release.v2 additive amendment 2026-06) — so a release
+    // that carries video is discoverable by A/V-aware consumers. Null when
+    // unscanned; 0 when scanned and audio-only. Capped at 99.
+    #[serde(default)]
+    pub video_count: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -232,6 +240,8 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "track_total", "INTEGER")?;
     // Physical disc count, from Discogs enrichment. See Release.disc_total.
     ensure_column(&conn, "releases", "disc_total", "INTEGER")?;
+    // Video-file count (audio-visual presence). See Release.video_count.
+    ensure_column(&conn, "releases", "video_count", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
     backfill_type_category(&conn)?;
@@ -961,7 +971,8 @@ fn export_markdown(
         needs_cover,
         published_filter,
         label_filter,
-        None,
+        None, // genre_filter — export is not genre-scoped
+        None, // video_filter — export is not video-scoped
     )?;
     let md = build_markdown(&releases);
     std::fs::write(&dest_path, md).map_err(|e| e.to_string())?;
@@ -1131,6 +1142,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         track_count: row.get(26)?,
         track_total: row.get(27)?,
         disc_total: row.get(28)?,
+        video_count: row.get(29)?,
     })
 }
 
@@ -1140,7 +1152,7 @@ const RELEASE_SELECT_COLS: &str =
      discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
-     disc_total";
+     disc_total, video_count";
 
 #[tauri::command]
 fn list_releases(
@@ -1151,6 +1163,7 @@ fn list_releases(
     published_filter: Option<String>,
     label_filter: Option<String>,
     genre_filter: Option<String>,
+    video_filter: Option<String>,
 ) -> Result<Vec<Release>, String> {
     let conn = open(&app)?;
     let q = query.unwrap_or_default();
@@ -1187,6 +1200,13 @@ fn list_releases(
         _ => "",
     };
 
+    // Audio-visual presence — video_count > 0 means the release carries video.
+    let video_clause = match video_filter.as_deref() {
+        Some("with_video") => "AND video_count > 0",
+        Some("without_video") => "AND (video_count IS NULL OR video_count = 0)",
+        _ => "",
+    };
+
     let select_sql = format!(
         "SELECT {cols}
          FROM releases
@@ -1197,12 +1217,14 @@ fn list_releases(
            {published}
            {label}
            {genre}
+           {video}
          ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
         cols = RELEASE_SELECT_COLS,
         cover = cover_filter,
         published = published_clause,
         label = label_clause,
         genre = genre_clause,
+        video = video_clause,
     );
     let mut stmt = conn
         .prepare(&select_sql)
@@ -1241,39 +1263,72 @@ fn get_release(app: tauri::AppHandle, id: i64) -> Result<Option<Release>, String
 /// grain, where each leaf folder is one release). Capped at 99 ("0–99 leaves").
 /// None when the folder can't be read (e.g. an unmounted drive) so the caller
 /// leaves track_count untouched and retries later.
-fn count_audio_in_dir(dir: &str) -> Option<i64> {
+/// Count audio + video files in a folder in a single directory read.
+/// Returns (audio_count, video_count), each capped at 99. None if the dir
+/// can't be read.
+fn count_media_in_dir(dir: &str) -> Option<(i64, i64)> {
     let entries = std::fs::read_dir(dir).ok()?;
-    let mut n: i64 = 0;
+    let (mut audio, mut video): (i64, i64) = (0, 0);
     for e in entries.flatten() {
         let p = e.path();
-        if p.is_file() && is_audio(&p) {
-            n += 1;
-            if n >= 99 {
-                break;
+        if !p.is_file() {
+            continue;
+        }
+        if is_audio(&p) {
+            if audio < 99 {
+                audio += 1;
             }
+        } else if is_video(&p) && video < 99 {
+            video += 1;
         }
     }
-    Some(n)
+    Some((audio, video))
 }
 
-/// Backfill / refresh each release's leaf count (track_count) from the audio
-/// files in its folder. Default fills only releases whose count is unknown
-/// (NULL) — cheap to call on every launch; `force` recounts every release that
-/// has a folder. Returns how many rows were updated. Local-only; never touches
-/// the Nostr publish path.
+/// The `video` tag is emitted only when the count is > 0; this is the form a
+/// change is compared against to decide publish-staleness (NULL/0 both mean
+/// "no tag"). Returns the emitted value, or None when nothing would be emitted.
+fn video_emit(count: Option<i64>) -> Option<i64> {
+    count.filter(|&n| n > 0)
+}
+
+/// Backfill / refresh each release's leaf count (track_count) AND video count
+/// (video_count) from its folder, in one walk. Default fills only releases
+/// missing EITHER count (NULL) — cheap to call on every launch; `force`
+/// recounts every release that has a folder. Returns how many rows were
+/// updated.
+///
+/// track_count is local-only and never affects publishing. video_count's >0
+/// truth IS published (the additive `video` tag), so when a recount changes a
+/// *published* release's emitted video value (e.g. the first scan finds video
+/// on an already-published release), its publish markers are cleared via
+/// mark_unpublished — it now reads as "needs republish" so the new tag can be
+/// emitted. Audio-only releases (video stays 0) are never affected.
 #[tauri::command]
 fn recount_tracks(app: tauri::AppHandle, force: Option<bool>) -> Result<usize, String> {
     let conn = open(&app)?;
     let where_clause = if force.unwrap_or(false) {
         "file_path IS NOT NULL AND file_path <> ''"
     } else {
-        "track_count IS NULL AND file_path IS NOT NULL AND file_path <> ''"
+        "(track_count IS NULL OR video_count IS NULL) \
+         AND file_path IS NOT NULL AND file_path <> ''"
     };
-    let targets: Vec<(i64, String)> = {
-        let sql = format!("SELECT id, file_path FROM releases WHERE {}", where_clause);
+    let targets: Vec<(i64, String, Option<i64>, Option<String>)> = {
+        let sql = format!(
+            "SELECT id, file_path, video_count, last_published_naddr \
+             FROM releases WHERE {}",
+            where_clause
+        );
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let mapped = stmt
-            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                ))
+            })
             .map_err(|e| e.to_string())?;
         let mut v = Vec::new();
         for m in mapped {
@@ -1282,13 +1337,20 @@ fn recount_tracks(app: tauri::AppHandle, force: Option<bool>) -> Result<usize, S
         v
     };
     let mut updated = 0usize;
-    for (id, path) in targets {
-        if let Some(n) = count_audio_in_dir(&path) {
+    for (id, path, old_video, published_naddr) in targets {
+        if let Some((audio, video)) = count_media_in_dir(&path) {
             conn.execute(
-                "UPDATE releases SET track_count = ?1 WHERE id = ?2",
-                params![n, id],
+                "UPDATE releases SET track_count = ?1, video_count = ?2 WHERE id = ?3",
+                params![audio, video, id],
             )
             .map_err(|e| e.to_string())?;
+            // Only a *published* release whose emitted video value actually
+            // changes needs to drop to "needs republish".
+            if published_naddr.is_some()
+                && video_emit(old_video) != video_emit(Some(video))
+            {
+                mark_unpublished(&conn, id)?;
+            }
             updated += 1;
         }
     }
@@ -2434,6 +2496,13 @@ fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
         push_tag(&mut tags, "discs", &dt.to_string())?;
     }
 
+    // v2 additive (2026-06): `video` — count of audio-visual files in the
+    // release, emitted only when > 0. Presence marks the release as carrying
+    // video; A/V-unaware consumers ignore it. See video-incubation note.
+    if let Some(vc) = r.video_count.filter(|&n| n > 0) {
+        push_tag(&mut tags, "video", &vc.to_string())?;
+    }
+
     let content = r.notes.clone().unwrap_or_default();
     EventBuilder::new(Kind::Custom(KIND_RELEASE), content)
         .tags(tags)
@@ -2979,6 +3048,22 @@ const AUDIO_EXTS: &[&str] = &[
     "flac", "mp3", "m4a", "alac", "aac", "ogg", "opus", "wav", "wave", "aiff",
     "aif", "ape", "wv", "dsf", "dff", "mka",
 ];
+
+// Recognised video (audio-visual) container extensions. Extension-based by
+// design (see schema/video-incubation-2026-06.md): simple and cheap. Accepted
+// caveat — an audio-only .mp4/.mkv would count as video; stream-level probing
+// is deferred to the cross-suite file-awareness layer.
+const VIDEO_EXTS: &[&str] = &[
+    "mp4", "mkv", "mov", "webm", "m4v", "avi", "wmv", "flv", "mpg", "mpeg",
+    "ogv",
+];
+
+fn is_video(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| VIDEO_EXTS.iter().any(|x| x.eq_ignore_ascii_case(e)))
+        .unwrap_or(false)
+}
 
 const COVER_IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp"];
 
@@ -4749,6 +4834,7 @@ mod schema_v1 {
             track_count: None,
             track_total: None,
             disc_total: None,
+            video_count: None,
         }
     }
 
@@ -4921,6 +5007,7 @@ mod schema_v2 {
             track_count: None,
             track_total: None,
             disc_total: None,
+            video_count: None,
         }
     }
 

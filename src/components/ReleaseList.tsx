@@ -4,6 +4,7 @@ import {
   ChevronUp,
   Circle,
   Disc3,
+  Film,
   FolderSearch,
   ImageOff,
   Music,
@@ -42,6 +43,7 @@ import {
   type ReconcileSummary,
   type Release,
   type RescanSummary,
+  type VideoFilter,
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
 import { sourcePlatform } from "../lib/source";
@@ -98,6 +100,7 @@ export function ReleaseList({
     useState<"" | PublishedFilter>("");
   const [labelFilter, setLabelFilter] = useState<"" | LabelFilter>("");
   const [genreFilter, setGenreFilter] = useState<"" | GenreFilter>("");
+  const [videoFilter, setVideoFilter] = useState<"" | VideoFilter>("");
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -456,6 +459,7 @@ export function ReleaseList({
         publishedFilter || undefined,
         labelFilter || undefined,
         genreFilter || undefined,
+        videoFilter || undefined,
       );
       setItems(list);
     } catch (e) {
@@ -468,7 +472,7 @@ export function ReleaseList({
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, medium, needsCoverOnly, publishedFilter, labelFilter, genreFilter]);
+  }, [reloadKey, medium, needsCoverOnly, publishedFilter, labelFilter, genreFilter, videoFilter]);
 
   // Bubble filter state + visible-items count up so other panels (like the
   // Nostr publish-library button) can render contextual UI.
@@ -612,6 +616,16 @@ export function ReleaseList({
           tooltipDefault="Filter by presence of a genre tag — click cycles has / no / any"
           tooltipFilled="Genre: has genre (click for no genre)"
           tooltipOutlined="Genre: no genre (click to clear)"
+        />
+        <FilterToggle
+          Icon={Film}
+          value={videoFilter}
+          onChange={(v) => setVideoFilter(v as "" | VideoFilter)}
+          filledValue="with_video"
+          outlinedValue="without_video"
+          tooltipDefault="Filter by audio-visual content — click cycles has video / audio-only / any"
+          tooltipFilled="Video: has video (click for audio-only)"
+          tooltipOutlined="Video: audio-only (click to clear)"
         />
         <button
           onClick={() => setNeedsCoverOnly((v) => !v)}
@@ -1111,6 +1125,18 @@ export function ReleaseList({
                       shapeClassName="rounded-full"
                       colorClassName="bg-ok/70 text-bg"
                     />
+                  )}
+                  {/* Audio-visual marker — present when the release folder
+                      holds video files. Discoverability only; the count is in
+                      the tooltip. */}
+                  {r.videoCount != null && r.videoCount > 0 && (
+                    <span
+                      className="shrink-0 grid place-items-center text-fg/55"
+                      title={`${r.videoCount} video file${r.videoCount === 1 ? "" : "s"}`}
+                      aria-label="has video"
+                    >
+                      <Film size={12} />
+                    </span>
                   )}
                   {/* State cluster: publish dot + medium share one mauve
                       rounded-rectangle bg (non-interactive — state only). */}
