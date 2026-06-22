@@ -184,6 +184,26 @@ or migrated until explicitly requested.
 
 ---
 
+## Worked example / test case — Boards of Canada "Hi Scores"
+
+The canonical both-forms release to build/verify against (surfaced 2026-06-23):
+
+- DB row **id 314**, `Boards of Canada — Hi Scores`, `medium=digital`,
+  `discogs_id=1249369`, with a local digital copy. The user *also* owns the
+  **CD** and has added it to their Discogs collection CSV.
+- **Target after sources model:** ONE identity carrying a `discogs` source (the
+  CD → physical aspect) + a `local` source (the files → digital aspect) ⇒
+  derived `medium = both`. No second row, no hand-set enum.
+- **Today's failure modes it exercises:** re-importing the CSV either *skips*
+  (CD edition id == 1249369 → dedupe-on-discogs_id no-op, stays `digital`) or
+  *inserts a duplicate physical row* (CD is a different edition id) — neither
+  yields "both." This is a concrete instance of the duplication noted in
+  [[ndisc-bandcamp-enrich]].
+- **Casing gotcha for the collapse heuristic:** the digital rows are spelled
+  `Boards of Canada` while Discogs-CSV physical rows are `Boards Of Canada`
+  (capital O). Naive name-match would miss the pair → reinforces the
+  "explicit same-release link, never auto-merge" decision (§Open questions).
+
 ## Open questions
 
 - **Collapse trigger:** fully automatic (name/format heuristic) vs. an explicit
