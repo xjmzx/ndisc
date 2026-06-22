@@ -6,6 +6,7 @@ import {
   Lock,
   LogOut,
   LineChart,
+  Table2,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -20,6 +21,7 @@ import { AddReleaseForm } from "./components/AddReleaseForm";
 import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
 import { StatsView } from "./components/StatsView";
+import { BatchEditView } from "./components/BatchEditView";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
 import { clearStaleBundleUrls } from "./lib/labelSeed";
 import {
@@ -244,7 +246,7 @@ export default function App() {
   // Top-level view switch. Stats replaces the 3-panel library grid; the top
   // nav (title, library stats chip, toolbar) persists across views. Phase 3
   // wires the LineChart toolbar button to flip this state.
-  const [view, setView] = useState<"library" | "stats">("library");
+  const [view, setView] = useState<"library" | "stats" | "table">("library");
 
   useEffect(() => {
     initDb()
@@ -494,6 +496,20 @@ export default function App() {
           >
             <LineChart size={14} />
           </ToolbarIconButton>
+          <ToolbarIconButton
+            tone="digital"
+            pressed={view === "table"}
+            title={
+              view === "table"
+                ? "Return to library"
+                : "Batch-edit metadata table"
+            }
+            onClick={() =>
+              setView((v) => (v === "table" ? "library" : "table"))
+            }
+          >
+            <Table2 size={14} />
+          </ToolbarIconButton>
         </div>
       </header>
 
@@ -556,9 +572,13 @@ export default function App() {
             </div>
           </div>
         </div>
-      ) : (
+      ) : view === "stats" ? (
         <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]">
           <StatsView reloadKey={reloadKey} />
+        </div>
+      ) : (
+        <div className="lg:flex-1 lg:min-h-0">
+          <BatchEditView reloadKey={reloadKey} />
         </div>
       )}
 
