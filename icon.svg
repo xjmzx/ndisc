@@ -2,7 +2,7 @@
 <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#313244"/>
+      <stop offset="0%" stop-color="#0b0b10"/>
       <stop offset="100%" stop-color="#1e1e2e"/>
     </linearGradient>
     <radialGradient id="vinyl" cx="0.5" cy="0.5" r="0.5">
@@ -12,10 +12,8 @@
     </radialGradient>
   </defs>
   <rect x="4" y="4" width="120" height="120" rx="22" ry="22" fill="url(#bg)"/>
-  <rect x="4" y="4" width="120" height="120" rx="22" ry="22"
-        fill="none" stroke="#89b4fa" stroke-width="3" opacity="0.6"/>
-  <text x="64" y="34" font-family="Helvetica, Arial, sans-serif" font-size="20"
-        font-weight="bold" fill="#89b4fa" text-anchor="middle">disco</text>
+  <text x="64" y="46" font-family="'Ubuntu Sans', Ubuntu, Arial, sans-serif"
+        font-size="32" font-weight="bold" fill="#89b4fa" text-anchor="middle">ndisc</text>
   <!-- vinyl record -->
   <circle cx="64" cy="78" r="32" fill="url(#vinyl)" stroke="#a6e3a1"
           stroke-width="0.5" opacity="0.9"/>
