@@ -91,3 +91,59 @@ jobs:
           files: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb
+
+  build-windows-x86_64:
+    name: Build Windows x86_64
+    # Runs after the Linux job so the release (and its notes) already exist;
+    # this job only appends the Windows installer to it.
+    needs: build-linux-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm deps
+        run: npm ci
+
+      # Windows runners ship the MSVC build tools and WebView2 runtime, so
+      # there's no apt-get equivalent needed here. The NSIS toolset itself is
+      # downloaded automatically by the Tauri bundler on first run.
+      - name: Build Tauri bundle (NSIS installer)
+        run: npm run tauri build -- --bundles nsis
+
+      # Reuse the Linux job's tag logic. `shell: bash` is required because the
+      # default shell on windows runners is PowerShell, which can't parse the
+      # `${GITHUB_REF#refs/tags/}` bash expansion below.
+      - name: Determine tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Appends the .exe to the release the Linux job already published. No
+      # `name`/`generate_release_notes` here — the Linux job owns those; this
+      # step only adds its asset so the two jobs don't clobber each other.
+      - name: Upload Windows installer to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          files: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
