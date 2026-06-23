@@ -195,6 +195,7 @@ export function CurrentView({ npub, relays, reloadKey }: Props) {
 
       {editing && (
         <Composer
+          key={editing.id ?? "new"}
           draft={editing}
           setDraft={setEditing}
           releaseOptions={releaseOptions}
@@ -288,6 +289,12 @@ function Composer({
   const set = (patch: Partial<FeedDraft>) => setDraft({ ...draft, ...patch });
   const pickedId = releaseIdFromRef(draft.releaseRef ?? null);
 
+  // Raw text for the topics field — kept local so an in-progress comma/space
+  // survives. Parsed into draft.topics on change; not re-derived from the array
+  // (which would strip the trailing separator mid-type). Seeded once per
+  // edit-session (the Composer is keyed by draft id, so this remounts).
+  const [topicsText, setTopicsText] = useState(draft.topics.join(", "));
+
   return (
     <div className="rounded-lg border border-mauve/30 bg-panel p-3 flex flex-col gap-2">
       <input
@@ -337,15 +344,16 @@ function Composer({
       <input
         className="bg-surface rounded px-2 py-1.5 text-sm text-fg placeholder:text-muted"
         placeholder="Topics, comma-separated (e.g. shoegaze, reissue)"
-        value={draft.topics.join(", ")}
-        onChange={(e) =>
+        value={topicsText}
+        onChange={(e) => {
+          setTopicsText(e.target.value);
           set({
             topics: e.target.value
               .split(",")
               .map((t) => t.trim().toLowerCase())
               .filter(Boolean),
-          })
-        }
+          });
+        }}
       />
 
       <div className="flex items-center gap-2 pt-1">
@@ -376,20 +384,25 @@ function LineList({
   value: string[];
   onChange: (v: string[]) => void;
 }) {
+  // Raw text held locally so a trailing newline survives while typing; parsed
+  // to the array on change rather than re-derived from it. Seeded once (the
+  // parent Composer is keyed per draft, so this remounts per edit-session).
+  const [text, setText] = useState(value.join("\n"));
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs text-muted">{label}</label>
       <textarea
         className="bg-surface rounded px-2 py-1.5 text-xs font-mono text-fg placeholder:text-muted min-h-[2.5rem]"
-        value={value.join("\n")}
-        onChange={(e) =>
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
           onChange(
             e.target.value
               .split("\n")
               .map((s) => s.trim())
               .filter(Boolean),
-          )
-        }
+          );
+        }}
       />
     </div>
   );
