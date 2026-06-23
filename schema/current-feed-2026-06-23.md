@@ -6,10 +6,9 @@
 > contributor **registry** and per-post **sign-off** that gate a small curated
 > feed. It is a **published-contract addition** (new event flow on relays),
 > unlike the local-only `sources` note. Origin: the Windows/handoff prototype in
-> `~/Downloads/Claude/` (SPEC + `*.mjs` reference scripts). Do not cite as spec
-> until the kind-collision decision (§1) is made.
+> `~/Downloads/Claude/` (SPEC + `*.mjs` reference scripts).
 
-Date: 2026-06-23
+Date: 2026-06-23 · **kind decision LOCKED 2026-06-23: feed note = `31239`** (§1)
 
 ---
 
@@ -41,7 +40,7 @@ Four event kinds, **all authority rooted in one owner key**
 | Kind  | NIP   | Role                          | Signed by         | `d` namespace        |
 |-------|-------|-------------------------------|-------------------|----------------------|
 | 31237 | 33    | release (already shipped)     | owner             | `disco-vault:<id>`   |
-| **31238 → see §1** | 33 | **feed note** (commentary → release) | owner + contributors | `glmps:<id>` |
+| **31239** | 33 | **feed note** (commentary → release) | owner + contributors | `glmps:<id>` |
 | 30000 | 51    | contributor registry (people set) | owner         | `glmps:contributors` |
 | 4550  | 72    | per-note sign-off (approval)  | owner             | —                    |
 | 5     | 09    | unpublish / revoke            | author/owner      | —                    |
@@ -75,36 +74,40 @@ by `d`, keep latest `created_at`, honour kind:5 deletes.
 
 ---
 
-## 1. ⚠ Kind collision — the one decision that gates everything
+## 1. Kind: feed note = `31239` — DECIDED 2026-06-23
 
-**ndisc already publishes `kind:31238` as the `labels.v1` manifest**
-(`KIND_LABELS`, `src-tauri/src/lib.rs:29`; `schema/labels.v1.json`). The handoff
-proposal also assigns `kind:31238` to feed notes. Both are NIP-33 addressable
-and deduped by `d`-tag, so at the protocol level they coexist only because their
-`d` namespaces differ:
+**Decision (owner, sole ndisc authoring authority): feed notes take their own
+kind, `31239`.** This was the one gating choice; it is now settled, and the rest
+of this note reads against it.
 
-- labels.v1 → `d` = the verbatim label-name string
-- feed note → `d` = `glmps:<id>`
+Why it was a choice at all: **ndisc already publishes `kind:31238` as the
+`labels.v1` manifest** (`KIND_LABELS`, `src-tauri/src/lib.rs:29`;
+`schema/labels.v1.json`), and the handoff prototype reused 31238 for feed notes.
+Both are NIP-33 addressable and deduped by `d`-tag, so they would have coexisted
+only by `d`-namespace (`<label-name>` vs `glmps:<id>`) — and the prototype's
+`resolveFeed` / `subscribeFeed` filter on `{kind, author}` **only**, so a
+`{ kinds:[31238], authors:[OWNER] }` subscription would have ingested label
+manifests as malformed feed notes. A distinct kind removes that hazard entirely:
+no `d`-prefix discrimination, simple per-kind subscriptions, `labels.v1` left
+exactly as-is.
 
-But a consumer subscribing `{ kinds:[31238], authors:[OWNER] }` receives **both**
-streams interleaved. The prototype's `resolveFeed` / `subscribeFeed` filter on
-`{kind, author}` **only** — so they would ingest label manifests as malformed
-feed notes (no `glmps:` `d`, no `a` reference, wrong content shape). The
-`labels.v1` schema's `changePolicy` would also need to admit a co-tenant.
+**The suite's owner-authored kind map is now:**
 
-**Options (pick one before writing the spec into the contract):**
+| Kind  | Purpose            | Schema            |
+|-------|--------------------|-------------------|
+| 31237 | release            | `release.v2.json` |
+| 31238 | labels.v1 manifest | `labels.v1.json`  |
+| 31239 | **feed note**      | `feed.v1.json` (TBD) |
 
-- **(A) Give feed notes a distinct kind** — e.g. `31239`. Cleanest: no `d`
-  discrimination needed, subscriptions stay simple, `labels.v1` untouched.
-  Costs one new kind constant + viewer subscription line. **Recommended.**
-- **(B) Keep 31238, discriminate by `d`-prefix everywhere.** Every reader must
-  filter `d.startsWith("glmps:")` for feed notes vs treat the rest as labels.
-  Cheaper on paper, but bakes a fragile string convention into three apps and
-  the prototype scripts already don't do it. Higher long-term risk.
+**Consequences to carry through (the prototype scripts hard-code 31238):**
+- `config.mjs` / `feed-resolve.mjs` / `publish-feed.mjs` / `glmps-feed-subscribe.js`
+  all set `FEED_KIND = 31238` → must become `31239` when ported in-app.
+- The viewers (glmps ×2, ndisc.view) add `31239` to their subscription kinds;
+  their existing 31238 label handling is untouched.
 
-This is a contract-level call (touches what glmps + ndisc.view subscribe to), so
-it belongs to the suite-versioning two-axis process — a new published flow, not
-an additive tag. See [[suite-versioning]].
+This is still a contract-level addition (a new published flow the viewers must
+learn), so it rides the suite-versioning two-axis process — a coordinated wave,
+not an additive-tag bump. See [[suite-versioning]].
 
 ---
 
@@ -114,7 +117,7 @@ The view is **the live feed, matched against the local discography** — the sam
 "coherence with reference to sources" posture as the [[ndisc-sources-model]]
 note, applied to the feed:
 
-- **Feed column (live):** poll `{ kinds:[<feed>,30000,4550,5], authors:[OWNER] }`
+- **Feed column (live):** poll `{ kinds:[31239,30000,4550,5], authors:[OWNER] }`
   on the app's relay set, run the trust gate, render notes newest-first (lead
   image, title, body, topics, links).
 - **Match column (local):** each note's `a` reference resolves to a local
@@ -167,7 +170,7 @@ in the same handoff. Track it with [[feedback-genre-palette]] /
 
 ## 5. Decisions for the owner (open items)
 
-1. **§1 kind collision** — 31239 (recommended) vs `d`-namespaced 31238.
+1. ~~**§1 kind**~~ — **DECIDED: feed note = `31239`** (own kind, not 31238). See §1.
 2. **Curation default** — `requireApproval` on (curated; contributor notes need
    4550) vs off (registry membership alone suffices). Prototype defaults **on**.
 3. **`current` vs `table`** — fourth button, or does `current` replace the
@@ -194,10 +197,12 @@ renders a `<CurrentView>` in the same full-bleed slot as `StatsView` /
 
 ## 7. Build shape (NOT committed)
 
-Strictly a sketch; nothing built until requested, and §1 decided first:
+Strictly a sketch; nothing built until requested. §1 (kind) is decided — `31239`:
 
-1. Resolve the kind collision (§1) → pin a feed kind + schema (`feed.v1.json`).
-2. Read path: in-app `subscribeFeed` + `resolveFeed` (port the two `.mjs`),
+1. ✓ Kind decided (`31239`, §1). Next: pin the schema (`feed.v1.json`) + a SHA,
+   the same way `release.v2.json` / `labels.v1.json` are pinned.
+2. Read path: in-app `subscribeFeed` + `resolveFeed` (port the two `.mjs`, with
+   `FEED_KIND = 31239`),
    render the feed column.
 3. Reconciliation: resolve each `a` → local release; surface match/stale states.
 4. Authoring + publish (keychain signer), drafts persistence, publish-state.
