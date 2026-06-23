@@ -621,3 +621,37 @@ export async function unpublishFeedNote(
 ): Promise<PublishResult> {
   return invoke<PublishResult>("unpublish_feed_note", { id, relays });
 }
+
+// Contributor curation — registry (kind:30000) + sign-off (kind:4550) / revoke.
+
+/** Replace the contributor registry. Accepts npub or hex; the full list is
+ *  published each call (empty list removes all contributors). */
+export async function publishRegistry(
+  contributors: string[],
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("publish_registry", { contributors, relays });
+}
+
+/** Owner sign-off (kind:4550) on a contributor feed note. */
+export async function approveFeedNote(
+  noteAddress: string,
+  noteEventId: string,
+  authorPubkey: string,
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("approve_feed_note", {
+    noteAddress,
+    noteEventId,
+    authorPubkey,
+    relays,
+  });
+}
+
+/** Revoke a prior sign-off (kind:5 referencing the kind:4550 event). */
+export async function revokeApproval(
+  approvalEventId: string,
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("revoke_approval", { approvalEventId, relays });
+}

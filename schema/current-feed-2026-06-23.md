@@ -226,8 +226,17 @@ nav, the shared template); Phases 4–5 still parked.
    (consumers authored the frozen candidate read-side-ready; ndisc adopted it
    verbatim — same reverse-flow as the `discs` amendment). CHANGELOG carries the
    `feed.v1 @ 077fe7a6…` lines. This commit is the consumer-wave pre-req.
-5. ⏳ Curation: registry editor (30000) + approve/revoke (4550) — deferrable
-   per §5.4. Phase 1's author filter is owner-only; contributors widen it.
+5. ✓ **Curation (Phase 5, shipped 2026-06-23):** Rust `publish_registry`
+   (kind:30000, full-replace people set, npub/hex→hex), `approve_feed_note`
+   (kind:4550 `a/e/p/k`), `revoke_approval` (kind:5 → the 4550); pure
+   `registry_event` / `approval_event` builders pinned by `schema_feed_v1`
+   (73 Rust tests). `useFeed` now runs a second subscription for registered
+   contributors' notes + exposes raw `events`; `lib/curation.ts` (ndisc-only,
+   NOT shared) derives the moderation queue (`contributorNotes` with approval
+   state) + `currentContributors`. `CurrentView` gains a Curation panel:
+   contributor registry editor (add/remove npub, Publish registry) + a queue of
+   contributor notes with Approve / Revoke. **No contract change** — emits the
+   30000/4550 shapes already frozen in `feed.v1.json`; no SHA bump, no wave.
 6. ⏳ Propagate the template: copy `lib/feed.ts` byte-identical into ndisc.view
    + glmps×2, wire their existing nostr-tools subs (read-only viewers). Lands on
    the build device per [[reference-glmps-ndisc-spec]] (this machine's clones are

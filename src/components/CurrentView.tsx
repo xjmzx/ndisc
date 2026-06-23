@@ -18,8 +18,11 @@ import {
   Trash2,
   Send,
   Undo2,
+  Users,
+  X,
+  ShieldCheck,
 } from "lucide-react";
-import { nip19 } from "nostr-tools";
+import { nip19, type Event as NostrEvent } from "nostr-tools";
 import {
   listReleases,
   listFeedDrafts,
@@ -27,10 +30,14 @@ import {
   deleteFeedDraft,
   publishFeedNote,
   unpublishFeedNote,
+  publishRegistry,
+  approveFeedNote,
+  revokeApproval,
   type Release,
   type FeedDraft,
 } from "../lib/tauri";
 import { releaseIdFromRef, releaseRef, type FeedNote } from "../lib/feed";
+import { contributorNotes } from "../lib/curation";
 import { useFeed } from "../hooks/useFeed";
 import { Section } from "./Section";
 import { DB_BUTTON_CLS, SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
@@ -48,7 +55,7 @@ const BLANK: FeedDraft = {
 };
 
 export function CurrentView({ npub, relays, reloadKey }: Props) {
-  const { notes, loading } = useFeed(npub, relays);
+  const { notes, events, contributors, loading } = useFeed(npub, relays);
 
   const myHex = useMemo(() => {
     if (!npub) return null;
@@ -224,6 +231,17 @@ export function CurrentView({ npub, relays, reloadKey }: Props) {
           </ul>
         )}
       </div>
+
+      {/* Curation — owner-only: who may contribute + sign off their notes */}
+      {myHex && (
+        <Curation
+          myHex={myHex}
+          relays={relays}
+          events={events}
+          contributors={contributors}
+          byId={byId}
+        />
+      )}
 
       {/* Live on relays — the round-trip truth (shared resolveFeed) */}
       <div className="flex flex-col gap-2">
@@ -570,6 +588,248 @@ function Tag({
       {icon}
       {text}
     </span>
+  );
+}
+
+// ── Curation (owner-only) ───────────────────────────────────────────────────
+
+function npubOf(hex: string): string {
+  try {
+    return nip19.npubEncode(hex);
+  } catch {
+    return hex;
+  }
+}
+function shortNpub(hex: string): string {
+  const n = npubOf(hex);
+  return n.startsWith("npub1") ? `${n.slice(0, 12)}…${n.slice(-6)}` : n;
+}
+
+function Curation({
+  myHex,
+  relays,
+  events,
+  contributors,
+  byId,
+}: {
+  myHex: string;
+  relays: string[];
+  events: NostrEvent[];
+  contributors: string[];
+  byId: Map<number, Release>;
+}) {
+  const [regList, setRegList] = useState<string[]>(contributors);
+  const [dirty, setDirty] = useState(false);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  // Re-seed from the live registry unless the owner is mid-edit.
+  useEffect(() => {
+    if (!dirty) setRegList(contributors);
+  }, [contributors, dirty]);
+
+  const queue = useMemo(
+    () => contributorNotes(events, myHex),
+    [events, myHex],
+  );
+
+  const addContributor = () => {
+    const v = input.trim();
+    if (!v) return;
+    const ok = v.startsWith("npub1") || /^[0-9a-f]{64}$/i.test(v);
+    if (!ok) {
+      setStatus("enter an npub1… or 64-char hex pubkey");
+      return;
+    }
+    const hex = v.startsWith("npub1")
+      ? (() => {
+          try {
+            const d = nip19.decode(v);
+            return d.type === "npub" ? (d.data as string) : null;
+          } catch {
+            return null;
+          }
+        })()
+      : v.toLowerCase();
+    if (!hex) {
+      setStatus("could not decode that npub");
+      return;
+    }
+    if (regList.includes(hex)) {
+      setStatus("already in the registry");
+      return;
+    }
+    setRegList([...regList, hex]);
+    setDirty(true);
+    setInput("");
+    setStatus(null);
+  };
+
+  const removeContributor = (hex: string) => {
+    setRegList(regList.filter((h) => h !== hex));
+    setDirty(true);
+  };
+
+  const publishReg = async () => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await publishRegistry(regList, relays);
+      setDirty(false);
+      setStatus(`registry published — ${regList.length} contributor(s)`);
+    } catch (e) {
+      setStatus(`registry publish failed — ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async (n: (typeof queue)[number]) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await approveFeedNote(n.address, n.eventId, n.pubkey, relays);
+      setStatus("signed off");
+    } catch (e) {
+      setStatus(`approve failed — ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (n: (typeof queue)[number]) => {
+    if (!n.approvalEventId) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      await revokeApproval(n.approvalEventId, relays);
+      setStatus("sign-off revoked");
+    } catch (e) {
+      setStatus(`revoke failed — ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-surface/60 bg-panel p-3">
+      <h3 className="text-xs uppercase tracking-wide text-muted flex items-center gap-1.5">
+        <Users size={13} /> Curation
+      </h3>
+
+      {status && (
+        <p className="text-xs font-mono text-mauve bg-mauve/10 rounded px-2 py-1">
+          {status}
+        </p>
+      )}
+
+      {/* Contributor registry editor */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11px] text-muted">
+          Contributors (kind:30000 — who may post to the feed)
+        </span>
+        {regList.length === 0 ? (
+          <p className="text-xs text-muted">
+            Owner-only feed — no contributors yet.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {regList.map((hex) => (
+              <li
+                key={hex}
+                className="flex items-center gap-2 text-xs font-mono text-fg/80"
+              >
+                <span className="truncate" title={npubOf(hex)}>
+                  {shortNpub(hex)}
+                </span>
+                <button
+                  className="ml-auto text-muted hover:text-auburn"
+                  onClick={() => removeContributor(hex)}
+                  title="Remove"
+                >
+                  <X size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex items-center gap-1.5 pt-0.5">
+          <input
+            className="flex-1 bg-surface rounded px-2 py-1 text-xs font-mono text-fg placeholder:text-muted"
+            placeholder="npub1… to add"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addContributor()}
+          />
+          <button className={SUBTLE_BUTTON_CLS} onClick={addContributor}>
+            <Plus size={11} /> Add
+          </button>
+          <button
+            className={DB_BUTTON_CLS}
+            onClick={publishReg}
+            disabled={busy || !dirty}
+            title={dirty ? "Publish the registry" : "No unsaved changes"}
+          >
+            <Send size={11} /> Publish registry
+          </button>
+        </div>
+      </div>
+
+      {/* Moderation queue — contributor notes awaiting / holding sign-off */}
+      {queue.length > 0 && (
+        <div className="flex flex-col gap-1.5 pt-1">
+          <span className="text-[11px] text-muted">
+            Contributor notes ({queue.length})
+          </span>
+          <ul className="flex flex-col gap-1.5">
+            {queue.map((n) => (
+              <li
+                key={n.address}
+                className="rounded bg-surface/60 p-2 flex flex-col gap-1"
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-semibold text-fg truncate">
+                    {n.title || n.body?.slice(0, 40) || "(untitled)"}
+                  </span>
+                  <span className="text-[10px] font-mono text-muted shrink-0">
+                    {shortNpub(n.pubkey)}
+                  </span>
+                  <span
+                    className={
+                      "ml-auto text-[10px] uppercase tracking-wide font-mono shrink-0 " +
+                      (n.approved ? "text-digital" : "text-auburn")
+                    }
+                  >
+                    {n.approved ? "signed off" : "pending"}
+                  </span>
+                </div>
+                <ReleaseMatch ref_={n.release} byId={byId} />
+                <div className="flex items-center gap-1.5">
+                  {n.approved ? (
+                    <button
+                      className={SUBTLE_BUTTON_CLS}
+                      onClick={() => revoke(n)}
+                      disabled={busy}
+                    >
+                      <Undo2 size={11} /> Revoke
+                    </button>
+                  ) : (
+                    <button
+                      className={DB_BUTTON_CLS}
+                      onClick={() => approve(n)}
+                      disabled={busy}
+                    >
+                      <ShieldCheck size={11} /> Approve
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 

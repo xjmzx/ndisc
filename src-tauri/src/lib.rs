@@ -30,6 +30,8 @@ const KIND_LABELS: u16 = 31238;
 // Feed note — its OWN kind, deliberately NOT 31238 (that is labels.v1). The
 // commentary-points-at-a-release channel. See schema/feed.v1.json.
 const KIND_FEED: u16 = 31239;
+const KIND_REGISTRY: u16 = 30000; // NIP-51 contributor people set
+const KIND_APPROVAL: u16 = 4550; // NIP-72 per-note sign-off
 const LABELS_D_TAG: &str = "disco-vault:labels";
 const LABELS_ALT: &str = "ndisc record-label image library";
 
@@ -2938,6 +2940,194 @@ fn build_feed_naddr(keys: &Keys, d: &str, relays: &[String]) -> Result<String, S
     nip19.to_bech32().map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Contributor curation — registry (kind:30000) + sign-off (kind:4550)
+// ---------------------------------------------------------------------------
+// The owner curates a small feed: a NIP-51 people set names who may contribute,
+// and a NIP-72 approval blesses each contributor note. Both are owner-signed
+// (the keychain key, asserted by `load_nsec`) — the trust gate in lib/feed.ts
+// keys every check on this pubkey. Mirrors the prototype registry.mjs /
+// approve.mjs. The published wire form is pinned by schema/feed.v1.json.
+
+const REGISTRY_D_TAG: &str = "glmps:contributors";
+
+/// Accept an npub or 64-char hex pubkey, return canonical lowercase hex.
+fn to_hex_pubkey(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    let pk = if s.starts_with("npub1") {
+        PublicKey::from_bech32(s).map_err(|e| e.to_string())?
+    } else {
+        PublicKey::from_hex(s).map_err(|e| e.to_string())?
+    };
+    Ok(pk.to_hex())
+}
+
+/// Build the kind:30000 contributor-registry event from already-hex pubkeys.
+/// Tag shape pinned to schema/feed.v1.json (`contributor_registry`).
+fn registry_event(keys: &Keys, contributor_hexes: &[String]) -> Result<Event, String> {
+    let mut tags: Vec<Tag> = vec![
+        Tag::parse(["d", REGISTRY_D_TAG]).map_err(|e| e.to_string())?,
+        Tag::parse(["title", "glmps contributors"]).map_err(|e| e.to_string())?,
+    ];
+    for hex in contributor_hexes {
+        tags.push(Tag::parse(["p", hex]).map_err(|e| e.to_string())?);
+    }
+    EventBuilder::new(Kind::Custom(KIND_REGISTRY), "")
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|e| e.to_string())
+}
+
+/// Build the kind:4550 sign-off event for a contributor note. Tag shape pinned
+/// to schema/feed.v1.json (`approval`).
+fn approval_event(
+    keys: &Keys,
+    note_address: &str,
+    note_event_id: &str,
+    author_hex: &str,
+) -> Result<Event, String> {
+    let tags = vec![
+        Tag::parse(["a", note_address]).map_err(|e| e.to_string())?,
+        Tag::parse(["e", note_event_id]).map_err(|e| e.to_string())?,
+        Tag::parse(["p", author_hex]).map_err(|e| e.to_string())?,
+        Tag::parse(["k", &KIND_FEED.to_string()]).map_err(|e| e.to_string())?,
+    ];
+    EventBuilder::new(Kind::Custom(KIND_APPROVAL), "")
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|e| e.to_string())
+}
+
+/// Publish (replace) the contributor registry — a NIP-51 kind:30000 people set,
+/// `d=glmps:contributors`, one `p` tag per allowed contributor. Replaceable:
+/// each call carries the FULL list; an empty list removes all contributors.
+#[tauri::command]
+async fn publish_registry(
+    contributors: Vec<String>,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    // Normalise to hex + dedupe, preserving order.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut hexes: Vec<String> = Vec::new();
+    for c in &contributors {
+        if c.trim().is_empty() {
+            continue;
+        }
+        let hex = to_hex_pubkey(c)?;
+        if seen.insert(hex.clone()) {
+            hexes.push(hex);
+        }
+    }
+
+    let event = registry_event(&keys, &hexes)?;
+    let event_id = event.id.to_string();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+    if accepted_by.is_empty() {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
+/// Owner sign-off on a contributor feed note — a NIP-72 kind:4550 approval
+/// carrying `a` (note address), `e` (note event id), `p` (author), `k`=31239.
+#[tauri::command]
+async fn approve_feed_note(
+    note_address: String,
+    note_event_id: String,
+    author_pubkey: String,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let author_hex = to_hex_pubkey(&author_pubkey)?;
+    let event = approval_event(&keys, &note_address, &note_event_id, &author_hex)?;
+    let event_id = event.id.to_string();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+    if accepted_by.is_empty() {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
+/// Revoke an approval — NIP-09 kind:5 referencing the kind:4550 event id.
+#[tauri::command]
+async fn revoke_approval(
+    approval_event_id: String,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let tags = vec![
+        Tag::parse(["e", &approval_event_id]).map_err(|e| e.to_string())?,
+        Tag::parse(["k", &KIND_APPROVAL.to_string()]).map_err(|e| e.to_string())?,
+    ];
+
+    let event = EventBuilder::new(Kind::EventDeletion, "")
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let event_id = event.id.to_string();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
 /// Inbound shape for `publish_labels`. Carries the per-label image URL
 /// the frontend already has (from `localStorage["ndisc.labels"]`).
 /// Entries with an empty `name` or `image_url` are dropped at the Rust
@@ -5101,7 +5291,10 @@ pub fn run() {
             save_feed_draft,
             delete_feed_draft,
             publish_feed_note,
-            unpublish_feed_note
+            unpublish_feed_note,
+            publish_registry,
+            approve_feed_note,
+            revoke_approval
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -5773,6 +5966,41 @@ mod schema_feed_v1 {
             tag1(&feed_event(&Keys::generate(), &untitled).unwrap(), "alt"),
             Some("body becomes alt".into())
         );
+    }
+
+    // Curation events (Phase 5) — registry (30000) + sign-off (4550).
+
+    #[test]
+    fn registry_is_30000_with_fixed_d_and_p_tags() {
+        let ev = registry_event(
+            &Keys::generate(),
+            &["aa".repeat(32), "bb".repeat(32)],
+        )
+        .unwrap();
+        assert_eq!(u16::from(ev.kind), 30000);
+        assert_eq!(tag1(&ev, "d"), Some("glmps:contributors".into()));
+        assert_eq!(tag_all(&ev, "p"), vec!["aa".repeat(32), "bb".repeat(32)]);
+    }
+
+    #[test]
+    fn empty_registry_has_no_p_tags() {
+        let ev = registry_event(&Keys::generate(), &[]).unwrap();
+        assert_eq!(u16::from(ev.kind), 30000);
+        assert!(tag_all(&ev, "p").is_empty());
+    }
+
+    #[test]
+    fn approval_is_4550_with_a_e_p_k_tags() {
+        let addr = "31239:cc00112233445566778899aabbccddeeff00112233445566778899aabbccddee:glmps:5";
+        let note_id = "ff".repeat(32);
+        let author = "dd".repeat(32);
+        let ev = approval_event(&Keys::generate(), addr, &note_id, &author).unwrap();
+        assert_eq!(u16::from(ev.kind), 4550);
+        assert_eq!(tag1(&ev, "a"), Some(addr.into()));
+        assert_eq!(tag1(&ev, "e"), Some(note_id));
+        assert_eq!(tag1(&ev, "p"), Some(author));
+        // k references the approved kind — the feed note kind, 31239.
+        assert_eq!(tag1(&ev, "k"), Some("31239".into()));
     }
 }
 
