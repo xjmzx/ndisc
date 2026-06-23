@@ -70,27 +70,30 @@ addition is a repeatable optional `genre` tag.
 - **Repeatable**, 0–3 occurrences per event.
 - **Ordered** — tag order IS the priority order (first = primary, second =
   secondary, third = tertiary).
-- **Each value** is one of 35 active slugs (restructured 2026-06):
+- **Each value** is one of 38 active slugs (2026-06b round):
 
 ```
-acoustic:    ambient, blues, classical, experimental, folk, funk, hip-hop,
-             jazz, latin, metal, pop, poetry, reggae, rnb, rock, soul, soundtrack
+acoustic:    ambient, blues, classical, disco, experimental, folk, funk,
+             hip-hop, jazz, latin, metal, pop, reggae, rnb, rock, soul,
+             soundtrack, spoken
 electronic:  acid, bass, breaks, dnb, downtempo, electro, electronic, footwork,
-             house, jungle, techno
+             garage, house, jungle, techno
 bridge:      dub, noise
-tertiary:    boom-bap, lo-fi, spiritual, trance, trap
+tertiary:    boom-bap, conscious, lo-fi, trance, trap, turntablism
 ```
 
-- **All 35 active slugs are pure peers.** The acoustic / electronic / bridge /
+- **All 38 active slugs are pure peers.** The acoustic / electronic / bridge /
   tertiary grouping is palette + semantic grouping only; there's no hierarchy
   or gate. A release MAY be tagged `electronic` + `techno` + `dub` if that's
   how the meaning composes.
-- **Deprecated** — four compound slash-pairs (`classical-folk`, `dnb-jungle`,
-  `drone-noise`, `footwork-trap`) were retired in the 2026-06 restructure
-  (split/collapsed into atomic slugs). They are **never emitted** on new
-  events but remain **valid for reading** legacy / cross-relay events, where
-  they still display with a slash. Mapping: `classical-folk`→`classical`+`folk`,
-  `dnb-jungle`→`dnb`+`jungle`, `drone-noise`→`noise`, `footwork-trap`→`footwork`.
+- **Deprecated** — never emitted on new events, but **valid for reading**
+  legacy / cross-relay events. Two kinds:
+  - Four compound slash-pairs from the original v2 set, retired in the 2026-06
+    restructure (split/collapsed into atomic slugs), which **display with a
+    slash**: `classical-folk`→`classical`+`folk`, `dnb-jungle`→`dnb`+`jungle`,
+    `drone-noise`→`noise`, `footwork-trap`→`footwork`.
+  - Two 1:1 renames from the 2026-06b round, which **display verbatim**:
+    `poetry`→`spoken`, `spiritual`→`conscious`.
 
 ### Invariants (enforced at capture, validated on read)
 
@@ -134,9 +137,19 @@ bridge                               tertiary (optional)
                                        --c-g-trance:      120 100 245
                                        --c-g-trap:        128  84  96
 
-deprecated (legacy reads only, render with slash)
+2026-06b additions
+  acoustic    --c-g-disco:         222  92 156
+  acoustic    --c-g-spoken:        158 148 180   (= poetry, renamed)
+  electronic  --c-g-garage:         52 200 176
+  tertiary    --c-g-conscious:     178 118  56   (= spiritual, renamed)
+  tertiary    --c-g-turntablism:   110 122 134
+
+deprecated (legacy reads only)
+  compound pairs render with a slash:
   --c-g-classical-folk:232 220 195   --c-g-drone-noise:   159 110 145
   --c-g-dnb-jungle:    160  39 135   --c-g-footwork-trap: 255 133 200
+  1:1 renames render verbatim (keep their var for legacy reads):
+  --c-g-poetry:        158 148 180   --c-g-spiritual:     178 118  56
 ```
 
 ### Slug display
