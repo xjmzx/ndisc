@@ -1,7 +1,7 @@
 # Changelog
 
-**Contract:** `release.v2` @ `179fd5631454aa6c8feac5b20a27257f96b73413953e663c52ae7516f6a843fd`
-(2026-06 genre restructure + additive `discs` tag)
+**Contract:** `release.v2` @ `91e16cf1da861ad3116d7d15ad13d7ae32fbdf26c367e2701236cb10cfc38962`
+(2026-06b genre round — 38 active slugs + additive `discs` tag)
 
 **Feed contract:** `feed.v1` @ `077fe7a6f70831ccf7c9640185c29e0b9c289ea22a1e4283064a1803ed1ea50c`
 (kind:31239 feed-note channel — frozen 2026-06-23, pinned by `mod schema_feed_v1`)
@@ -33,6 +33,16 @@ wave; an app-only change bumps ndisc alone. See
   their subscriptions in the same wave — see the consumer-wave checklist.
 
 ### Contract (release.v2 — coordinated with ndisc.view + glmps×2)
+- Genre **2026-06b round — now 38 active slugs.** Two 1:1 renames done the
+  additive way (new slug active, old retired to `deprecated`, backfill remaps
+  local rows): **`poetry` → `spoken`** and **`spiritual` → `conscious`** (both
+  widen their catch: spoken-word, conscious hip-hop and beyond). Three new
+  slugs: **`disco`** + **`spoken`** (acoustic), **`garage`** (electronic),
+  **`conscious`** + **`turntablism`** (tertiary). Additive, no v3 bump; SHA
+  re-pinned `179fd563…` → `91e16cf1…`. `backfill_genre_renames_2026_06b` clears
+  publish-state on affected rows so the new slug re-emits; emitter +
+  `schema_v2` tests updated. Glmps-side hue/CSS-var assignment for the new
+  slugs lands in the same wave (build device).
 - Genre vocabulary **restructured to 35 active slugs** in four groups
   (acoustic / electronic / bridge / tertiary); the four compound slash-pairs
   (`classical-folk`, `dnb-jungle`, `drone-noise`, `footwork-trap`) retired to

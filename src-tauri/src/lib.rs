@@ -275,7 +275,43 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     backfill_genre_v2(&conn)?;
     backfill_genre_slug_renames(&conn)?;
     backfill_genre_restructure_2026_06(&conn)?;
+    backfill_genre_renames_2026_06b(&conn)?;
     Ok(conn)
+}
+
+/// 2026-06b genre round: 1:1 renames poetry → spoken, spiritual → conscious
+/// (both retired to `deprecated`, remapped here). Published rows carrying the
+/// old slug have their publish-state cleared so the new slug re-emits (the
+/// on-relay kind:31237 keeps the old slug until republished; v2 readers treat
+/// the retired slug as a valid legacy read). Idempotent — once remapped no row
+/// matches, so repeat launches are no-ops and won't re-clear publish state.
+fn backfill_genre_renames_2026_06b(conn: &Connection) -> Result<(), String> {
+    // Clear publish-state on affected published rows BEFORE the rename (after it
+    // they no longer match the old slug).
+    conn.execute(
+        "UPDATE releases
+            SET last_published_at = NULL, last_published_naddr = NULL
+          WHERE last_published_at IS NOT NULL
+            AND ( genre_primary   IN ('poetry','spiritual')
+               OR genre_secondary IN ('poetry','spiritual')
+               OR genre_tertiary  IN ('poetry','spiritual') )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    for col in &["genre_primary", "genre_secondary", "genre_tertiary", "genre"] {
+        conn.execute(
+            &format!("UPDATE releases SET {c} = 'spoken' WHERE {c} = 'poetry'", c = col),
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            &format!("UPDATE releases SET {c} = 'conscious' WHERE {c} = 'spiritual'", c = col),
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// One-shot renames of genre slugs that were superseded between v2 minor
@@ -779,16 +815,17 @@ fn set_release_condition(
 // the emitter must never write them — backfill_genre_slug_renames migrates any
 // local rows still carrying them to the atomic slugs.
 const GENRE_ACOUSTIC: &[&str] = &[
-    "ambient", "blues", "classical", "experimental", "folk", "funk",
-    "hip-hop", "jazz", "latin", "metal", "pop", "poetry", "reggae", "rnb",
-    "rock", "soul", "soundtrack",
+    "ambient", "blues", "classical", "disco", "experimental", "folk", "funk",
+    "hip-hop", "jazz", "latin", "metal", "pop", "reggae", "rnb",
+    "rock", "soul", "soundtrack", "spoken",
 ];
 const GENRE_ELECTRONIC: &[&str] = &[
     "acid", "bass", "breaks", "dnb", "downtempo", "electro", "electronic",
-    "footwork", "house", "jungle", "techno",
+    "footwork", "garage", "house", "jungle", "techno",
 ];
 const GENRE_BRIDGE: &[&str] = &["dub", "noise"];
-const GENRE_TERTIARY: &[&str] = &["boom-bap", "lo-fi", "spiritual", "trance", "trap"];
+const GENRE_TERTIARY: &[&str] =
+    &["boom-bap", "conscious", "lo-fi", "trance", "trap", "turntablism"];
 
 fn is_valid_genre_slug(s: &str) -> bool {
     GENRE_ACOUSTIC.iter().any(|&g| g == s)
@@ -5695,8 +5732,8 @@ mod schema_v2 {
         // the other slugs added in the restructure, must all validate.
         for slug in [
             "classical", "folk", "dnb", "jungle", "noise", "footwork", "blues",
-            "latin", "metal", "poetry", "rnb", "soul", "boom-bap", "lo-fi",
-            "spiritual", "trance", "trap",
+            "latin", "metal", "spoken", "rnb", "soul", "boom-bap", "lo-fi",
+            "conscious", "trance", "trap", "disco", "garage", "turntablism",
         ] {
             let slots = [Some(slug.to_string()), None, None];
             assert!(
@@ -5807,6 +5844,20 @@ mod schema_v2 {
             None,
         ];
         assert!(validate_genre_slots(&slots).is_err());
+    }
+
+    #[test]
+    fn validate_genre_slots_rejects_renamed_2026_06b() {
+        // poetry → spoken, spiritual → conscious: the old slugs are retired to
+        // `deprecated` and must NOT be emittable (valid on read only).
+        for old in ["poetry", "spiritual"] {
+            let slots = [Some(old.to_string()), None, None];
+            assert!(
+                validate_genre_slots(&slots).is_err(),
+                "retired slug '{}' must be rejected by the emitter validator",
+                old
+            );
+        }
     }
 
     #[test]
