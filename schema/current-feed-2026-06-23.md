@@ -97,7 +97,7 @@ exactly as-is.
 |-------|--------------------|-------------------|
 | 31237 | release            | `release.v2.json` |
 | 31238 | labels.v1 manifest | `labels.v1.json`  |
-| 31239 | **feed note**      | `feed.v1.json` (TBD) |
+| 31239 | **feed note**      | `feed.v1.json` (drafted, unfrozen) |
 
 **Consequences to carry through (the prototype scripts hard-code 31238):**
 - `config.mjs` / `feed-resolve.mjs` / `publish-feed.mjs` / `glmps-feed-subscribe.js`
@@ -199,8 +199,10 @@ renders a `<CurrentView>` in the same full-bleed slot as `StatsView` /
 
 Strictly a sketch; nothing built until requested. §1 (kind) is decided — `31239`:
 
-1. ✓ Kind decided (`31239`, §1). Next: pin the schema (`feed.v1.json`) + a SHA,
-   the same way `release.v2.json` / `labels.v1.json` are pinned.
+1. ✓ Kind decided (`31239`, §1). ✓ Schema drafted — `feed.v1.json` (the four
+   kinds, tag shapes, trust gate, subscription filters). It stays **unfrozen**
+   (mirroring `labels.v1.json`); freeze + SHA-pin only when ndisc ships the
+   emitter and a contract test pins its output to the file.
 2. Read path: in-app `subscribeFeed` + `resolveFeed` (port the two `.mjs`, with
    `FEED_KIND = 31239`),
    render the feed column.

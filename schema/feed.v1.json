@@ -1,0 +1,120 @@
+{
+  "$comment": "Canonical Nostr wire contract for the ndisc/glmps FEED-NOTE channel — owner-authored commentary that points at a release, plus the contributor registry and per-note sign-off that gate a small curated feed. ndisc is the publisher; the glmps web viewers + ndisc.view are consumers. UNFROZEN — promoted to frozen + SHA-pinned (mirroring release.v2.json) once ndisc implements feed publishing and a contract test pins its output to this file. Design rationale: schema/current-feed-2026-06-23.md. Prototype reference: ~/Downloads/Claude/ (feed-resolve.mjs, publish-feed.mjs, registry.mjs, approve.mjs, glmps-feed-subscribe.js).",
+  "schemaVersion": "feed.v1",
+  "frozen": false,
+  "canonicalHome": "xjmzx/ndisc — schema/feed.v1.json (planned)",
+  "authority": {
+    "model": "single owner key — the root of all trust in this channel",
+    "ownerNpub": "npub1j9kztnc85ednd7ncqhe37ag0evnltn8z6wd84jfqx4ts4gn89gks0vxesa",
+    "ownerPubkey": "916c25cf07a65b36fa7805f31f750fcb27f5cce2d39a7ac92035570aa2672a2d",
+    "note": "Viewers trust this pubkey as the root: the registry (kind:30000) and every sign-off (kind:4550) only count when authored by it. The owner secret stays in the platform keychain (ndisc) — the prototype's GLMPS_NSEC env path is throwaway, not the production signer."
+  },
+  "kinds": {
+    "feed_note": {
+      "kind": 31239,
+      "class": "addressable / parameterized-replaceable (range 30000-39999)",
+      "addressableBy": ["pubkey", "kind", "d-tag"],
+      "kindRationale": "Its OWN kind, deliberately NOT 31238 — that number is already taken by the labels.v1 manifest (KIND_LABELS). A distinct kind keeps per-kind subscriptions simple and avoids any d-tag discrimination between label manifests and feed notes. Decided 2026-06-23 (see current-feed-2026-06-23.md §1).",
+      "content": "The note body — plain text, the owner's words. May be an empty string when the note is carried entirely by its image(s).",
+      "writtenBy": "owner AND registered contributors (each signs with their own key)",
+      "tags": {
+        "d": {
+          "required": true,
+          "format": "glmps:<id>",
+          "note": "Stable per-author note id. The glmps: prefix namespaces feed notes; dedupe keeps the latest created_at for a given (kind, pubkey, d)."
+        },
+        "a": {
+          "required": false,
+          "format": "31237:<owner pubkey hex>:disco-vault:<integer release id>",
+          "note": "Reference to the release this note is about. The viewer hydrates artist/title/year/cover from the referenced kind:31237 — the note copies NO release metadata. Optional: a note may stand alone (no release reference)."
+        },
+        "title": { "required": false, "type": "string", "note": "Short headline. Present unless empty." },
+        "published_at": { "required": false, "type": "string", "note": "Unix seconds rendered as a string (NIP-23 convention). Falls back to the event created_at when absent. Sort key for the feed." },
+        "image": { "required": false, "type": "string", "repeatable": true, "note": "Photo URL(s), typically nostr.build. First = lead image; the rest form a gallery, order preserved." },
+        "r": { "required": false, "type": "string", "repeatable": true, "note": "External link(s) — label page, shop, bandcamp, etc." },
+        "t": { "required": false, "type": "string", "repeatable": true, "note": "Topic/genre tag(s), lowercase. Relay-filterable (#t)." },
+        "alt": { "required": false, "type": "string", "note": "NIP-31 human-readable fallback so generic clients show something. Emitter sets it to the title, else the first ~80 chars of the body." }
+      },
+      "rule": "Consumers MUST require only `d` structurally and treat every other tag as optional. The note's release context comes from resolving `a` against a kind:31237 event — a note whose `a` resolves to no known release is shown with a 'release unavailable' affordance, never dropped."
+    },
+    "contributor_registry": {
+      "kind": 30000,
+      "spec": "NIP-51 people set",
+      "class": "addressable / parameterized-replaceable",
+      "writtenBy": "owner only",
+      "content": "Empty string.",
+      "tags": {
+        "d": { "required": true, "value": "glmps:contributors", "note": "Fixed identifier — exactly one registry per owner." },
+        "title": { "required": false, "type": "string", "note": "Recommended: 'glmps contributors'." },
+        "p": { "required": false, "type": "string", "repeatable": true, "note": "One pubkey (hex) per allowed contributor. Replaceable: each publish is the FULL list — publishing an empty list removes all contributors." }
+      },
+      "rule": "Owner-signed only. A registry authored by any other key is ignored. This is the 'who may contribute' list."
+    },
+    "approval": {
+      "kind": 4550,
+      "spec": "NIP-72 post approval",
+      "class": "regular event",
+      "writtenBy": "owner only",
+      "content": "Optional — may carry the approved event's JSON. The address+id in the tags are sufficient to gate; consumers need not parse content.",
+      "tags": {
+        "a": { "required": true, "format": "31239:<author pubkey hex>:glmps:<id>", "note": "Addressable coordinate of the approved feed note." },
+        "e": { "required": true, "type": "string", "note": "Event id of the specific approved note." },
+        "p": { "required": true, "type": "string", "note": "Author pubkey (hex) of the approved note." },
+        "k": { "required": true, "value": "31239", "note": "Kind of the approved event. Redundant with `a`; consumers may ignore." }
+      },
+      "rule": "Owner-signed only. This is the per-note 'blessed' flag for the curated mode. Revoke a sign-off with a NIP-09 kind:5 referencing the approval event."
+    },
+    "deletion": {
+      "kind": 5,
+      "spec": "NIP-09",
+      "content": "Empty string (or a short reason).",
+      "tags": {
+        "a": {
+          "required": false,
+          "format": "31239:<author pubkey hex>:glmps:<id>",
+          "note": "Unpublish a feed note by its addressable coordinate. Honoured client-side."
+        },
+        "e": {
+          "required": false,
+          "type": "string",
+          "note": "Delete by event id — used to REVOKE a prior kind:4550 sign-off (reference the approval event's id)."
+        }
+      },
+      "rule": "Consumers MUST apply deletions client-side. Some relays (e.g. Primal) do not enforce kind:5, so server-side filtering cannot be relied on. A kind:5 from the OWNER revokes owner content or sign-offs; a kind:5 from a contributor removes only that contributor's own note."
+    }
+  },
+  "trustGate": {
+    "_comment": "What a viewer computes over the raw event stream to decide which feed notes to show. All authority keys on the owner pubkey. Reference implementation: feed-resolve.mjs.",
+    "requireApproval": {
+      "default": true,
+      "note": "Curated mode. When true, a contributor note is shown only if it ALSO has a matching owner kind:4550 sign-off. When false, registry membership alone suffices (trusted mode)."
+    },
+    "steps": [
+      "1. Owner-authored feed notes (pubkey == owner) are ALWAYS shown.",
+      "2. Resolve the latest owner-signed kind:30000 (d=glmps:contributors) -> the set of allowed contributor pubkeys.",
+      "3. A contributor note is shown only if its author is in that set AND, when requireApproval, an owner kind:4550 approval exists for its address.",
+      "4. Dedupe by (kind, pubkey, d) keeping the latest created_at.",
+      "5. Apply kind:5 deletions client-side.",
+      "6. Sort by published_at (falling back to created_at), newest first."
+    ]
+  },
+  "consumes": {
+    "release": {
+      "kind": 31237,
+      "direction": "read-only",
+      "note": "A feed note's `a` tag references a release.v2 event; the viewer reads that event to hydrate artist/title/year/cover. The feed channel never writes kind:31237."
+    },
+    "profile": {
+      "kind": 0,
+      "direction": "read-only",
+      "note": "Author display (name / nip05 / picture), as elsewhere in the suite. Never published by this channel."
+    }
+  },
+  "subscription": {
+    "note": "Viewers add kind 31239 alongside the releases they already read, same author + relays. Existing 31238 (labels.v1) handling is untouched — the distinct kind means no discrimination is needed.",
+    "feed": { "kinds": [31239, 5], "authors": ["<owner pubkey>"] },
+    "trust": { "kinds": [30000, 4550], "authors": ["<owner pubkey>"] }
+  },
+  "changePolicy": "UNFROZEN until ndisc ships the feed emitter; at that point freeze + SHA-pin (mirroring release.v2.json) and add a contract test pinning ndisc's output to this file. Once frozen, the same posture as release.v2 applies: ADDITIVE optional tags that consumers may ignore are permitted without a version bump; any BREAKING change (renaming/removing tags, changing semantics, making an optional tag required, changing the kind) is a coordinated feed.v2 bump — add feed.v2.json and migrate consumers, never edit this file. When freezing or amending, re-vendor this file into the glmps + ndisc.view consumers and re-pin their SHA. Adopting this contract is a coordinated suite wave, not a local-only change.",
+  "rollout": "ndisc gains a `current` view (the feed authoring + curation + live-match surface; current-feed-2026-06-23.md). The prototype .mjs scripts hard-code FEED_KIND=31238 and must be ported with FEED_KIND=31239. glmps (×2) and ndisc.view add kind 31239 to their subscriptions; A/V- and feed-unaware older builds simply show no feed until upgraded."
+}
