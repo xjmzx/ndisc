@@ -49,6 +49,14 @@ wave; an app-only change bumps ndisc alone. See
   vendoring this SHA).
 
 ### App
+- **`current` view** — a third top-level view (Radio toolbar toggle) for the
+  feed-note channel: compose / publish / unpublish notes that point at a release
+  (drafts persist locally), an owner curation panel (contributor registry +
+  per-note Approve / Revoke), and a live-on-relays section reading the channel
+  back through the shared trust gate. _Fix:_ the topics field and the image/link
+  line-lists swallowed the separator while typing (a trailing comma/newline was
+  stripped before the next entry) — they now hold the raw text and parse on
+  change, so multi-value entry works.
 - **Discogs enrichment** — physical (Discogs-imported) releases now get
   track + disc counts from the Discogs API (the CSV export carries neither),
   fetched by the stored `discogs_id`. New keychain-backed Discogs token, a
