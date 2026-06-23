@@ -3,12 +3,34 @@
 **Contract:** `release.v2` @ `179fd5631454aa6c8feac5b20a27257f96b73413953e663c52ae7516f6a843fd`
 (2026-06 genre restructure + additive `discs` tag)
 
+**Feed contract:** `feed.v1` @ `077fe7a6f70831ccf7c9640185c29e0b9c289ea22a1e4283064a1803ed1ea50c`
+(kind:31239 feed-note channel — frozen 2026-06-23, pinned by `mod schema_feed_v1`)
+
+ndisc now sits on two frozen contracts — `release.v2` (the discography wire) and
+`feed.v1` (the feed-note channel) — each on its own SHA, each moved as its own
+coordinated wave.
+
 ndisc uses two version axes — this app's semver (below) and the shared
 `release.vN` contract (above). A contract change moves the whole suite in one
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
 ## 0.1.4-beta.1 — unreleased
+
+### Contract (feed.v1 — frozen, coordinated with ndisc.view + glmps×2)
+- **`feed.v1` frozen.** The feed-note channel wire contract
+  (`schema/feed.v1.json`) is flipped `frozen: true` and SHA-pinned
+  `077fe7a6…`. It pins: kind:31239 feed notes (`d=glmps:<id>`, optional `a`
+  release reference, repeatable `image` / `r` / `t`, `alt` fallback; body in
+  content), the NIP-51 contributor registry (kind:30000, `d=glmps:contributors`),
+  the NIP-72 per-note sign-off (kind:4550), and the client-side trust gate +
+  NIP-09 kind:5 deletes. Authority roots on the single owner key.
+- **Emitter** shipped in Phase 4 (`feed_event` / `publish_feed_note` /
+  `unpublish_feed_note`); output pinned by the `mod schema_feed_v1` contract
+  test. The macOS/Linux desktop client is pinned by that test — it does not
+  vendor the JSON.
+- **Consumers** (ndisc.view + glmps×2) vendor this SHA and add kind:31239 to
+  their subscriptions in the same wave — see the consumer-wave checklist.
 
 ### Contract (release.v2 — coordinated with ndisc.view + glmps×2)
 - Genre vocabulary **restructured to 35 active slugs** in four groups

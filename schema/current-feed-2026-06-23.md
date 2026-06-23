@@ -219,9 +219,13 @@ nav, the shared template); Phases 4–5 still parked.
    `save` clears publish-state (edit → needs-republish). Frontend: `tauri.ts`
    `FeedDraft` bindings, `lib/feed.ts` `releaseRef`, `CurrentView` composer +
    drafts list + publish/unpublish actions. `schema_feed_v1` test (7) pins the
-   emitter to `feed.v1.json`; 70 Rust tests pass, tsc clean. **⏳ STILL TO DO:
-   freeze (`frozen:true`) + create `feed.v1.json.sha256` after a real publish
-   round-trip confirms the wire bytes.**
+   emitter to `feed.v1.json`; 70 Rust tests pass, tsc clean.
+   ✓ **FROZEN 2026-06-23** after a confirmed publish round-trip: `feed.v1.json`
+   `frozen:true` + `feed.v1.json.sha256` pinned
+   **`077fe7a6f70831ccf7c9640185c29e0b9c289ea22a1e4283064a1803ed1ea50c`**
+   (consumers authored the frozen candidate read-side-ready; ndisc adopted it
+   verbatim — same reverse-flow as the `discs` amendment). CHANGELOG carries the
+   `feed.v1 @ 077fe7a6…` lines. This commit is the consumer-wave pre-req.
 5. ⏳ Curation: registry editor (30000) + approve/revoke (4550) — deferrable
    per §5.4. Phase 1's author filter is owner-only; contributors widen it.
 6. ⏳ Propagate the template: copy `lib/feed.ts` byte-identical into ndisc.view

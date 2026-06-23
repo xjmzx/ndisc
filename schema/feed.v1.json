@@ -1,8 +1,8 @@
 {
-  "$comment": "Canonical Nostr wire contract for the ndisc/glmps FEED-NOTE channel — owner-authored commentary that points at a release, plus the contributor registry and per-note sign-off that gate a small curated feed. ndisc is the publisher; the glmps web viewers + ndisc.view are consumers. UNFROZEN — promoted to frozen + SHA-pinned (mirroring release.v2.json) once ndisc implements feed publishing and a contract test pins its output to this file. Design rationale: schema/current-feed-2026-06-23.md. Prototype reference: ~/Downloads/Claude/ (feed-resolve.mjs, publish-feed.mjs, registry.mjs, approve.mjs, glmps-feed-subscribe.js).",
+  "$comment": "Canonical Nostr wire contract for the ndisc/glmps FEED-NOTE channel — owner-authored commentary that points at a release, plus the contributor registry and per-note sign-off that gate a small curated feed. ndisc is the publisher; the glmps web viewers + ndisc.view are consumers. Source of truth: xjmzx/ndisc src-tauri/src/lib.rs (feed_event / publish_feed_note / unpublish_feed_note); the contract test `mod schema_feed_v1` pins ndisc's output to this file. Design rationale: schema/current-feed-2026-06-23.md.",
   "schemaVersion": "feed.v1",
-  "frozen": false,
-  "canonicalHome": "xjmzx/ndisc — schema/feed.v1.json (planned)",
+  "frozen": true,
+  "canonicalHome": "xjmzx/ndisc — schema/feed.v1.json",
   "authority": {
     "model": "single owner key — the root of all trust in this channel",
     "ownerNpub": "npub1j9kztnc85ednd7ncqhe37ag0evnltn8z6wd84jfqx4ts4gn89gks0vxesa",
@@ -115,6 +115,6 @@
     "feed": { "kinds": [31239, 5], "authors": ["<owner pubkey>"] },
     "trust": { "kinds": [30000, 4550], "authors": ["<owner pubkey>"] }
   },
-  "changePolicy": "UNFROZEN until ndisc ships the feed emitter; at that point freeze + SHA-pin (mirroring release.v2.json) and add a contract test pinning ndisc's output to this file. Once frozen, the same posture as release.v2 applies: ADDITIVE optional tags that consumers may ignore are permitted without a version bump; any BREAKING change (renaming/removing tags, changing semantics, making an optional tag required, changing the kind) is a coordinated feed.v2 bump — add feed.v2.json and migrate consumers, never edit this file. When freezing or amending, re-vendor this file into the glmps + ndisc.view consumers and re-pin their SHA. Adopting this contract is a coordinated suite wave, not a local-only change.",
+  "changePolicy": "FROZEN 2026-06-23 — pinned by the `mod schema_feed_v1` contract test in ndisc. ADDITIVE optional tags that consumers may ignore are permitted without a version bump; any BREAKING change (renaming/removing tags, changing semantics, making an optional tag required, changing the kind) is a coordinated feed.v2 bump — add feed.v2.json and migrate consumers, never edit this file. When an additive amendment lands, re-vendor this file into the glmps + ndisc.view consumers and re-pin their SHA. Adopting or amending this contract is a coordinated suite wave, not a local-only change.",
   "rollout": "ndisc gains a `current` view (the feed authoring + curation + live-match surface; current-feed-2026-06-23.md). The prototype .mjs scripts hard-code FEED_KIND=31238 and must be ported with FEED_KIND=31239. glmps (×2) and ndisc.view add kind 31239 to their subscriptions; A/V- and feed-unaware older builds simply show no feed until upgraded."
 }
