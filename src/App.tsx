@@ -7,6 +7,7 @@ import {
   LogOut,
   LineChart,
   Table2,
+  Radio,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -22,6 +23,7 @@ import { LabelPanel, type LabelEntry } from "./components/LabelPanel";
 import { LabelviewPanel } from "./components/LabelviewPanel";
 import { StatsView } from "./components/StatsView";
 import { BatchEditView } from "./components/BatchEditView";
+import { CurrentView } from "./components/CurrentView";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
 import { clearStaleBundleUrls } from "./lib/labelSeed";
 import {
@@ -246,7 +248,9 @@ export default function App() {
   // Top-level view switch. Stats replaces the 3-panel library grid; the top
   // nav (title, library stats chip, toolbar) persists across views. Phase 3
   // wires the LineChart toolbar button to flip this state.
-  const [view, setView] = useState<"library" | "stats" | "table">("library");
+  const [view, setView] = useState<
+    "library" | "stats" | "table" | "current"
+  >("library");
 
   useEffect(() => {
     initDb()
@@ -510,6 +514,20 @@ export default function App() {
           >
             <Table2 size={14} />
           </ToolbarIconButton>
+          <ToolbarIconButton
+            tone="digital"
+            pressed={view === "current"}
+            title={
+              view === "current"
+                ? "Return to library"
+                : "Current — the feed-note channel"
+            }
+            onClick={() =>
+              setView((v) => (v === "current" ? "library" : "current"))
+            }
+          >
+            <Radio size={14} />
+          </ToolbarIconButton>
         </div>
       </header>
 
@@ -576,9 +594,13 @@ export default function App() {
         <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]">
           <StatsView reloadKey={reloadKey} />
         </div>
-      ) : (
+      ) : view === "table" ? (
         <div className="lg:flex-1 lg:min-h-0">
           <BatchEditView reloadKey={reloadKey} relays={relays} />
+        </div>
+      ) : (
+        <div className="lg:flex-1 lg:min-h-0">
+          <CurrentView npub={npub} relays={relays} reloadKey={reloadKey} />
         </div>
       )}
 

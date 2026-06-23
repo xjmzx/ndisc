@@ -195,20 +195,33 @@ renders a `<CurrentView>` in the same full-bleed slot as `StatsView` /
 
 ---
 
-## 7. Build shape (NOT committed)
+## 7. Build shape
 
-Strictly a sketch; nothing built until requested. §1 (kind) is decided — `31239`:
+§1 (kind) decided — `31239`. **Phase 1 SHIPPED in ndisc 2026-06-23** (read +
+nav, the shared template); Phases 4–5 still parked.
 
 1. ✓ Kind decided (`31239`, §1). ✓ Schema drafted — `feed.v1.json` (the four
    kinds, tag shapes, trust gate, subscription filters). It stays **unfrozen**
    (mirroring `labels.v1.json`); freeze + SHA-pin only when ndisc ships the
-   emitter and a contract test pins its output to the file.
-2. Read path: in-app `subscribeFeed` + `resolveFeed` (port the two `.mjs`, with
-   `FEED_KIND = 31239`),
-   render the feed column.
-3. Reconciliation: resolve each `a` → local release; surface match/stale states.
-4. Authoring + publish (keychain signer), drafts persistence, publish-state.
-5. Curation: registry editor (30000) + approve/revoke (4550) — deferrable per §5.4.
+   emitter (Phase 4) and a contract test pins its output to the file.
+2. ✓ **Read path (Phase 1, shipped):** `src/lib/feed.ts` (the SHARED template —
+   `FEED_KIND=31239`, `parseFeedNote`, `resolveFeed` trust gate; byte-identical
+   target for ndisc.view + glmps, like `lib/rating.ts`/`lib/source.ts`) +
+   `src/hooks/useFeed.tsx` (nostr-tools `SimplePool` subscription, owner-only
+   author filter for now) + `src/components/CurrentView.tsx`.
+3. ✓ **Reconciliation (Phase 1, shipped):** each note's `a` → local release via
+   `releaseIdFromRef`; surfaces matched / "not in this DB" / "release not
+   published". Nav: `current` is a peer 4th toolbar toggle (`Radio` glyph,
+   `digital` tone) beside stats + table; `view` union gained `"current"`.
+4. ⏳ Authoring + publish (Rust keychain signer, `KIND_FEED=31239`,
+   `publish_feed_note`), drafts persistence, publish-state — **then freeze +
+   SHA-pin `feed.v1.json` + a `schema_feed_v1` contract test.**
+5. ⏳ Curation: registry editor (30000) + approve/revoke (4550) — deferrable
+   per §5.4. Phase 1's author filter is owner-only; contributors widen it.
+6. ⏳ Propagate the template: copy `lib/feed.ts` byte-identical into ndisc.view
+   + glmps×2, wire their existing nostr-tools subs (read-only viewers). Lands on
+   the build device per [[reference-glmps-ndisc-spec]] (this machine's clones are
+   stale; upleb has no push from here).
 
 Reference implementation lives at `~/Downloads/Claude/` (`SPEC.md`,
 `feed-resolve.mjs`, `publish-feed.mjs`, `registry.mjs`, `approve.mjs`,
