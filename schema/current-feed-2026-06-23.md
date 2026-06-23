@@ -213,9 +213,15 @@ nav, the shared template); Phases 4–5 still parked.
    `releaseIdFromRef`; surfaces matched / "not in this DB" / "release not
    published". Nav: `current` is a peer 4th toolbar toggle (`Radio` glyph,
    `digital` tone) beside stats + table; `view` union gained `"current"`.
-4. ⏳ Authoring + publish (Rust keychain signer, `KIND_FEED=31239`,
-   `publish_feed_note`), drafts persistence, publish-state — **then freeze +
-   SHA-pin `feed.v1.json` + a `schema_feed_v1` contract test.**
+4. ✓ **Authoring + publish (Phase 4, shipped 2026-06-23):** Rust `KIND_FEED=31239`,
+   `feed_event` emitter, `feed_notes` table, commands `list/save/delete_feed_draft`
+   + `publish_feed_note` / `unpublish_feed_note` (keychain signer, kind:5 delete);
+   `save` clears publish-state (edit → needs-republish). Frontend: `tauri.ts`
+   `FeedDraft` bindings, `lib/feed.ts` `releaseRef`, `CurrentView` composer +
+   drafts list + publish/unpublish actions. `schema_feed_v1` test (7) pins the
+   emitter to `feed.v1.json`; 70 Rust tests pass, tsc clean. **⏳ STILL TO DO:
+   freeze (`frozen:true`) + create `feed.v1.json.sha256` after a real publish
+   round-trip confirms the wire bytes.**
 5. ⏳ Curation: registry editor (30000) + approve/revoke (4550) — deferrable
    per §5.4. Phase 1's author filter is owner-only; contributors widen it.
 6. ⏳ Propagate the template: copy `lib/feed.ts` byte-identical into ndisc.view

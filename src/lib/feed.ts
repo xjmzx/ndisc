@@ -13,6 +13,7 @@
 
 import type { Event as NostrEvent } from "nostr-tools";
 
+export const RELEASE_KIND = 31237; // ndisc release — what a feed note points at
 export const FEED_KIND = 31239; // feed note (parallel to ndisc's 31237 release)
 export const REGISTRY_KIND = 30000; // NIP-51 people set: who may contribute
 export const REGISTRY_D = "glmps:contributors";
@@ -127,6 +128,11 @@ export function resolveFeed(
     if (!prev || ev.created_at > prev.createdAt) byAddr.set(address, note);
   }
   return [...byAddr.values()].sort((a, b) => b.publishedAt - a.publishedAt);
+}
+
+/** Build the `a` coordinate a feed note uses to reference a release. */
+export function releaseRef(ownerHex: string, releaseId: number): string {
+  return `${RELEASE_KIND}:${ownerHex}:disco-vault:${releaseId}`;
 }
 
 /** release id from a feed note's `a` reference, e.g. "31237:<hex>:disco-vault:314" → 314. */

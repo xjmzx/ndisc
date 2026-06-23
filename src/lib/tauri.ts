@@ -575,3 +575,49 @@ export async function publishLibrary(
     labelFilter: filter?.labelFilter,
   });
 }
+
+// Feed-note drafts — the `current` view authoring side. The published wire
+// form is kind:31239 (schema/feed.v1.json); these are the local, editable
+// source rows. last_published_at NULL = draft / needs-republish.
+export interface FeedDraft {
+  id?: number | null;
+  title?: string | null;
+  body?: string | null;
+  releaseRef?: string | null; // the `a` coordinate, or null (standalone)
+  images: string[];
+  links: string[];
+  topics: string[];
+  publishedAt?: number | null;
+  lastPublishedAt?: number | null;
+  lastPublishedEvent?: string | null;
+  createdAt?: number | null;
+  updatedAt?: number | null;
+}
+
+export async function listFeedDrafts(): Promise<FeedDraft[]> {
+  return invoke<FeedDraft[]>("list_feed_drafts");
+}
+
+/** Insert (id null) or update a draft; returns the row id. Editing a
+ *  previously published draft clears its publish-state → needs republish. */
+export async function saveFeedDraft(draft: FeedDraft): Promise<number> {
+  return invoke<number>("save_feed_draft", { draft });
+}
+
+export async function deleteFeedDraft(id: number): Promise<void> {
+  return invoke("delete_feed_draft", { id });
+}
+
+export async function publishFeedNote(
+  id: number,
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("publish_feed_note", { id, relays });
+}
+
+export async function unpublishFeedNote(
+  id: number,
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("unpublish_feed_note", { id, relays });
+}

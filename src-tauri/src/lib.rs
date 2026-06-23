@@ -27,6 +27,9 @@ const LEGACY_KEYRING_SERVICE: &str = "disco-vault";
 const LEGACY_BUNDLE_ID: &str = "uk.fizx.discovault";
 const KIND_RELEASE: u16 = 31237;
 const KIND_LABELS: u16 = 31238;
+// Feed note — its OWN kind, deliberately NOT 31238 (that is labels.v1). The
+// commentary-points-at-a-release channel. See schema/feed.v1.json.
+const KIND_FEED: u16 = 31239;
 const LABELS_D_TAG: &str = "disco-vault:labels";
 const LABELS_ALT: &str = "ndisc record-label image library";
 
@@ -56,6 +59,27 @@ CREATE INDEX IF NOT EXISTS releases_artist_idx ON releases(artist);
 CREATE INDEX IF NOT EXISTS releases_title_idx  ON releases(title);
 CREATE INDEX IF NOT EXISTS releases_year_idx   ON releases(year);
 CREATE INDEX IF NOT EXISTS releases_medium_idx ON releases(medium);
+
+-- Feed-note drafts (the `current` view authoring side). The published wire
+-- form is kind:31239 per schema/feed.v1.json; this table is the local,
+-- editable source. The d-tag identifier is derived from `id` (glmps:<id>),
+-- so the row id IS the stable replaceable-event identity. images/links/topics
+-- are JSON arrays of strings. last_published_at NULL = draft or needs-republish
+-- (an edit clears it, mirroring the release publish-state model).
+CREATE TABLE IF NOT EXISTS feed_notes (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    title                TEXT,
+    body                 TEXT,
+    release_ref          TEXT,           -- the `a` coordinate, or NULL (standalone)
+    images               TEXT NOT NULL DEFAULT '[]',  -- JSON array of URLs
+    links                TEXT NOT NULL DEFAULT '[]',  -- JSON array of URLs
+    topics               TEXT NOT NULL DEFAULT '[]',  -- JSON array of lowercased slugs
+    published_at         INTEGER,        -- the published_at tag value (seconds)
+    last_published_at    INTEGER,        -- publish-state; NULL = draft / stale
+    last_published_event TEXT,           -- event id of the last publish
+    created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 "#;
 
 #[derive(Serialize, Deserialize)]
@@ -2620,6 +2644,300 @@ async fn unpublish_release(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Feed notes — kind:31239 authoring (the `current` view publish side)
+// ---------------------------------------------------------------------------
+// Local drafts live in the `feed_notes` table; publishing emits a kind:31239
+// event per schema/feed.v1.json (the SHARED wire contract glmps + ndisc.view
+// read via lib/feed.ts resolveFeed). Signing goes through the keychain owner
+// key, exactly like releases/reactions — the nsec never leaves the OS keychain.
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedDraft {
+    pub id: Option<i64>,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub release_ref: Option<String>,
+    #[serde(default)]
+    pub images: Vec<String>,
+    #[serde(default)]
+    pub links: Vec<String>,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    pub published_at: Option<i64>,
+    pub last_published_at: Option<i64>,
+    pub last_published_event: Option<String>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
+fn feed_d_tag(note_id: i64) -> String {
+    format!("glmps:{}", note_id)
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+fn json_str_array(s: &str) -> Vec<String> {
+    serde_json::from_str(s).unwrap_or_default()
+}
+
+fn feed_row_to_draft(row: &rusqlite::Row) -> rusqlite::Result<FeedDraft> {
+    let images: String = row.get("images")?;
+    let links: String = row.get("links")?;
+    let topics: String = row.get("topics")?;
+    Ok(FeedDraft {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        body: row.get("body")?,
+        release_ref: row.get("release_ref")?,
+        images: json_str_array(&images),
+        links: json_str_array(&links),
+        topics: json_str_array(&topics),
+        published_at: row.get("published_at")?,
+        last_published_at: row.get("last_published_at")?,
+        last_published_event: row.get("last_published_event")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+const FEED_SELECT_COLS: &str =
+    "id, title, body, release_ref, images, links, topics, published_at, \
+     last_published_at, last_published_event, created_at, updated_at";
+
+/// Build the kind:31239 feed-note event from a stored draft. Tag shape is
+/// pinned to schema/feed.v1.json and the `schema_feed_v1` test.
+fn feed_event(keys: &Keys, draft: &FeedDraft) -> Result<Event, String> {
+    let id = draft.id.ok_or_else(|| "draft has no id".to_string())?;
+    let mut tags: Vec<Tag> = Vec::new();
+    push_tag(&mut tags, "d", &feed_d_tag(id))?;
+    if let Some(t) = draft.title.as_deref() {
+        push_tag(&mut tags, "title", t)?;
+    }
+    if let Some(a) = draft.release_ref.as_deref() {
+        push_tag(&mut tags, "a", a)?;
+    }
+    let published_at = draft.published_at.unwrap_or_else(now_secs);
+    push_tag(&mut tags, "published_at", &published_at.to_string())?;
+    for url in &draft.images {
+        push_tag(&mut tags, "image", url)?;
+    }
+    for url in &draft.links {
+        push_tag(&mut tags, "r", url)?;
+    }
+    for t in &draft.topics {
+        push_tag(&mut tags, "t", &t.to_lowercase())?;
+    }
+    // NIP-31 fallback so generic clients show something readable.
+    let body = draft.body.clone().unwrap_or_default();
+    let alt = draft
+        .title
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| body.chars().take(80).collect());
+    push_tag(&mut tags, "alt", &alt)?;
+
+    EventBuilder::new(Kind::Custom(KIND_FEED), body)
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_feed_drafts(app: tauri::AppHandle) -> Result<Vec<FeedDraft>, String> {
+    let conn = open(&app)?;
+    let sql = format!(
+        "SELECT {FEED_SELECT_COLS} FROM feed_notes ORDER BY updated_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], feed_row_to_draft)
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// Insert a new draft or update an existing one. Any edit to a previously
+/// published draft clears its publish-state (last_published_at/_event → NULL)
+/// so it surfaces as "needs republish" — the release mark_unpublished pattern.
+#[tauri::command]
+fn save_feed_draft(app: tauri::AppHandle, draft: FeedDraft) -> Result<i64, String> {
+    let conn = open(&app)?;
+    let images = serde_json::to_string(&draft.images).map_err(|e| e.to_string())?;
+    let links = serde_json::to_string(&draft.links).map_err(|e| e.to_string())?;
+    let topics = serde_json::to_string(&draft.topics).map_err(|e| e.to_string())?;
+    match draft.id {
+        Some(id) => {
+            conn.execute(
+                "UPDATE feed_notes
+                 SET title = ?1, body = ?2, release_ref = ?3,
+                     images = ?4, links = ?5, topics = ?6,
+                     last_published_at = NULL, last_published_event = NULL,
+                     updated_at = strftime('%s','now')
+                 WHERE id = ?7",
+                params![draft.title, draft.body, draft.release_ref, images, links, topics, id],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(id)
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO feed_notes (title, body, release_ref, images, links, topics)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![draft.title, draft.body, draft.release_ref, images, links, topics],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+}
+
+/// Delete a draft locally. Does NOT touch relays — use `unpublish_feed_note`
+/// first if the note is live and you want it gone from the network too.
+#[tauri::command]
+fn delete_feed_draft(app: tauri::AppHandle, id: i64) -> Result<(), String> {
+    let conn = open(&app)?;
+    conn.execute("DELETE FROM feed_notes WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn publish_feed_note(
+    app: tauri::AppHandle,
+    id: i64,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let mut draft: FeedDraft = {
+        let conn = open(&app)?;
+        let sql = format!("SELECT {FEED_SELECT_COLS} FROM feed_notes WHERE id = ?1");
+        conn.query_row(&sql, params![id], feed_row_to_draft)
+            .map_err(|e| e.to_string())?
+    };
+    // Stamp published_at on first publish; keep it stable across republishes.
+    let published_at = draft.published_at.unwrap_or_else(now_secs);
+    draft.published_at = Some(published_at);
+
+    let event = feed_event(&keys, &draft)?;
+    let event_id = event.id.to_string();
+    let naddr = build_feed_naddr(&keys, &feed_d_tag(id), &relays).unwrap_or_default();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    if !accepted_by.is_empty() {
+        let conn = open(&app)?;
+        conn.execute(
+            "UPDATE feed_notes
+             SET published_at = ?1,
+                 last_published_at = strftime('%s','now'),
+                 last_published_event = ?2
+             WHERE id = ?3",
+            params![published_at, event_id, id],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr,
+        accepted_by,
+        rejected,
+    })
+}
+
+/// NIP-09 delete of a published feed note (kind:5 referencing its address) +
+/// clear local publish-state. The draft row stays for re-editing.
+#[tauri::command]
+async fn unpublish_feed_note(
+    app: tauri::AppHandle,
+    id: i64,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let address = format!(
+        "{}:{}:{}",
+        KIND_FEED,
+        keys.public_key(),
+        feed_d_tag(id)
+    );
+    let tag_a = Tag::parse(["a", &address]).map_err(|e| e.to_string())?;
+    let tag_k = Tag::parse(["k", &KIND_FEED.to_string()]).map_err(|e| e.to_string())?;
+
+    let event = EventBuilder::new(Kind::EventDeletion, "")
+        .tags([tag_a, tag_k])
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let event_id = event.id.to_string();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    if !accepted_by.is_empty() {
+        let conn = open(&app)?;
+        conn.execute(
+            "UPDATE feed_notes
+             SET last_published_at = NULL, last_published_event = NULL
+             WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
+    })
+}
+
+fn build_feed_naddr(keys: &Keys, d: &str, relays: &[String]) -> Result<String, String> {
+    let relay_hints: Vec<RelayUrl> = relays
+        .iter()
+        .take(3)
+        .filter_map(|r| RelayUrl::parse(r).ok())
+        .collect();
+    let coordinate = Coordinate::new(Kind::Custom(KIND_FEED), keys.public_key())
+        .identifier(d.to_string());
+    let nip19 = Nip19Coordinate::new(coordinate, relay_hints);
+    nip19.to_bech32().map_err(|e| e.to_string())
+}
+
 /// Inbound shape for `publish_labels`. Carries the per-label image URL
 /// the frontend already has (from `localStorage["ndisc.labels"]`).
 /// Entries with an empty `name` or `image_url` are dropped at the Rust
@@ -4778,7 +5096,12 @@ pub fn run() {
             publish_release,
             publish_library,
             unpublish_release,
-            reconcile_published
+            reconcile_published,
+            list_feed_drafts,
+            save_feed_draft,
+            delete_feed_draft,
+            publish_feed_note,
+            unpublish_feed_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -5330,6 +5653,126 @@ mod schema_v2 {
             None,
         ];
         assert!(validate_genre_slots(&slots).is_ok());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema contract test — kind:31239 feed note v1 (schema/feed.v1.json)
+// ---------------------------------------------------------------------------
+// Pins feed_event()'s output to the feed.v1 wire contract shared with the
+// glmps + ndisc.view viewers (lib/feed.ts). A failure here means the emitter
+// drifted from the contract: that is a coordinated feed.v2 bump, never a test
+// edit. The kind is 31239 — its own kind, NOT 31238 (labels.v1).
+#[cfg(test)]
+mod schema_feed_v1 {
+    use super::*;
+
+    fn base_draft() -> FeedDraft {
+        FeedDraft {
+            id: Some(7),
+            title: None,
+            body: None,
+            release_ref: None,
+            images: vec![],
+            links: vec![],
+            topics: vec![],
+            published_at: Some(1_700_000_000),
+            last_published_at: None,
+            last_published_event: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn tag1(ev: &Event, name: &str) -> Option<String> {
+        ev.tags.iter().find_map(|t| {
+            let s = t.as_slice();
+            (s.len() >= 2 && s[0] == name).then(|| s[1].clone())
+        })
+    }
+    fn tag_all(ev: &Event, name: &str) -> Vec<String> {
+        ev.tags
+            .iter()
+            .filter_map(|t| {
+                let s = t.as_slice();
+                (s.len() >= 2 && s[0] == name).then(|| s[1].clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn kind_is_31239_not_31238() {
+        let ev = feed_event(&Keys::generate(), &base_draft()).unwrap();
+        assert_eq!(u16::from(ev.kind), 31239);
+        assert_ne!(u16::from(ev.kind), KIND_LABELS);
+    }
+
+    #[test]
+    fn d_tag_is_glmps_id() {
+        let ev = feed_event(&Keys::generate(), &base_draft()).unwrap();
+        assert_eq!(tag1(&ev, "d"), Some("glmps:7".into()));
+    }
+
+    #[test]
+    fn body_is_content_and_published_at_emitted() {
+        let d = FeedDraft {
+            body: Some("a few words".into()),
+            ..base_draft()
+        };
+        let ev = feed_event(&Keys::generate(), &d).unwrap();
+        assert_eq!(ev.content, "a few words");
+        assert_eq!(tag1(&ev, "published_at"), Some("1700000000".into()));
+    }
+
+    #[test]
+    fn release_reference_is_an_a_tag() {
+        let d = FeedDraft {
+            release_ref: Some("31237:abc:disco-vault:314".into()),
+            ..base_draft()
+        };
+        let ev = feed_event(&Keys::generate(), &d).unwrap();
+        assert_eq!(tag1(&ev, "a"), Some("31237:abc:disco-vault:314".into()));
+    }
+
+    #[test]
+    fn standalone_note_has_no_a_tag() {
+        let ev = feed_event(&Keys::generate(), &base_draft()).unwrap();
+        assert_eq!(tag1(&ev, "a"), None);
+    }
+
+    #[test]
+    fn images_links_topics_are_repeatable_and_topics_lowercased() {
+        let d = FeedDraft {
+            images: vec!["https://img/1.jpg".into(), "https://img/2.jpg".into()],
+            links: vec!["https://label/x".into()],
+            topics: vec!["Shoegaze".into(), "Reissue".into()],
+            ..base_draft()
+        };
+        let ev = feed_event(&Keys::generate(), &d).unwrap();
+        assert_eq!(tag_all(&ev, "image"), vec!["https://img/1.jpg", "https://img/2.jpg"]);
+        assert_eq!(tag_all(&ev, "r"), vec!["https://label/x"]);
+        assert_eq!(tag_all(&ev, "t"), vec!["shoegaze", "reissue"]);
+    }
+
+    #[test]
+    fn alt_falls_back_to_title_then_body() {
+        let titled = FeedDraft {
+            title: Some("A headline".into()),
+            body: Some("the body".into()),
+            ..base_draft()
+        };
+        assert_eq!(
+            tag1(&feed_event(&Keys::generate(), &titled).unwrap(), "alt"),
+            Some("A headline".into())
+        );
+        let untitled = FeedDraft {
+            body: Some("body becomes alt".into()),
+            ..base_draft()
+        };
+        assert_eq!(
+            tag1(&feed_event(&Keys::generate(), &untitled).unwrap(), "alt"),
+            Some("body becomes alt".into())
+        );
     }
 }
 
