@@ -8,6 +8,7 @@ import {
   LineChart,
   Table2,
   Radio,
+  Library,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -484,8 +485,22 @@ export default function App() {
             </>
           )}
 
-          {/* stats group — digital (cyan) cluster, distinct from mauve/auburn */}
+          {/* view-switch group — digital (cyan) cluster, distinct from
+              mauve/auburn. Home/discography first, then the alt views; the
+              active view is always lit so there's a clear way back. */}
           <span className="w-px h-6 bg-surface shrink-0" aria-hidden="true" />
+          <ToolbarIconButton
+            tone="digital"
+            pressed={view === "library"}
+            title={
+              view === "library"
+                ? "Discography (current view)"
+                : "Back to discography"
+            }
+            onClick={() => setView("library")}
+          >
+            <Library size={14} />
+          </ToolbarIconButton>
           <ToolbarIconButton
             tone="digital"
             pressed={view === "stats"}
