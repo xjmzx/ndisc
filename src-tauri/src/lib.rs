@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS releases (
     file_path       TEXT,           -- digital: path to file/folder
     cover_art_path  TEXT,
     discogs_id      INTEGER,
-    bandcamp_id     TEXT,           -- Bandcamp receipt/order id (Windows-only); repurposed from the dead musicbrainz_id column
+    bandcamp_id     TEXT,           -- Bandcamp order/receipt id (local-only, purchase provenance); repurposed from the dead musicbrainz_id column
     added_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -282,8 +282,10 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
 
 /// One-shot rename of the legacy `musicbrainz_id` column to `bandcamp_id`.
 /// The MusicBrainz slot was never populated by any code path, so it is
-/// repurposed to hold a Bandcamp receipt/order id (Windows-only). Local-only:
-/// never emitted to Nostr (the frozen v2 `i` tag has no bandcamp namespace; the
+/// repurposed to hold a Bandcamp order/receipt id (purchase provenance). The
+/// migration itself is all-platform; only the catalog that fills the column is
+/// Windows-side today. Local-only: never emitted to Nostr (the frozen v2 `i`
+/// tag has no bandcamp namespace; the
 /// Bandcamp link travels via `source`). Idempotent — once renamed, or on a fresh
 /// DB already created with `bandcamp_id`, the column check makes it a no-op.
 /// SQLite `RENAME COLUMN` preserves existing row data.
