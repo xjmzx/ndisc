@@ -267,7 +267,7 @@ export function BatchEditView({
               key={r.id}
               className={cn(
                 "grid items-center gap-3 px-4 py-1 font-mono text-xs",
-                "border-b border-surface/30 hover:bg-surface/30 transition-colors",
+                "border-b border-fg/25 hover:bg-surface/30 transition-colors",
                 GRID,
               )}
             >
