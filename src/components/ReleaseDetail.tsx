@@ -4,6 +4,7 @@ import {
   Copy,
   ExternalLink,
   FileMusic,
+  FolderOpen,
   FolderPlus,
   ImageDown,
   Image as ImageIcon,
@@ -21,7 +22,7 @@ import {
 } from "lucide-react";
 import { useReactions } from "../hooks/useReactions";
 import { REACTION_DOWN, REACTION_UP, displayCount } from "../lib/rating";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
@@ -908,6 +909,16 @@ export function ReleaseDetail({
               aria-label="Refresh from disk"
             >
               <RefreshCcw size={14} />
+            </button>
+          )}
+          {release.filePath && (
+            <button
+              onClick={() => revealItemInDir(release.filePath!)}
+              className={ACTION_ICON_BUTTON_CLS}
+              title="Show this release in the file manager"
+              aria-label="Open in file manager"
+            >
+              <FolderOpen size={14} />
             </button>
           )}
           {release.filePath && release.coverArtUrl && (
