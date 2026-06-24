@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS releases (
     file_path       TEXT,           -- digital: path to file/folder
     cover_art_path  TEXT,
     discogs_id      INTEGER,
-    musicbrainz_id  TEXT,
+    bandcamp_id     TEXT,           -- Bandcamp order/receipt id (local-only, purchase provenance); repurposed from the dead musicbrainz_id column
     added_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -104,7 +104,7 @@ pub struct Release {
     pub cover_art_path: Option<String>,
     pub cover_art_url: Option<String>,
     pub discogs_id: Option<i64>,
-    pub musicbrainz_id: Option<String>,
+    pub bandcamp_id: Option<String>,
     pub release_type: Option<String>,
     pub category: Option<String>,
     // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
@@ -250,6 +250,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
     conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+    rename_legacy_musicbrainz_column(&conn)?;
     ensure_column(&conn, "releases", "cover_art_url", "TEXT")?;
     ensure_column(&conn, "releases", "release_type", "TEXT")?;
     ensure_column(&conn, "releases", "category", "TEXT")?;
@@ -277,6 +278,84 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     backfill_genre_restructure_2026_06(&conn)?;
     backfill_genre_renames_2026_06b(&conn)?;
     Ok(conn)
+}
+
+/// One-shot rename of the legacy `musicbrainz_id` column to `bandcamp_id`.
+/// The MusicBrainz slot was never populated by any code path, so it is
+/// repurposed to hold a Bandcamp order/receipt id (purchase provenance). The
+/// migration itself is all-platform; only the catalog that fills the column is
+/// Windows-side today. Local-only: never emitted to Nostr (the frozen v2 `i`
+/// tag has no bandcamp namespace; the
+/// Bandcamp link travels via `source`). Idempotent — once renamed, or on a fresh
+/// DB already created with `bandcamp_id`, the column check makes it a no-op.
+/// SQLite `RENAME COLUMN` preserves existing row data.
+fn rename_legacy_musicbrainz_column(conn: &Connection) -> Result<(), String> {
+    let has = |name: &str| -> Result<bool, String> {
+        conn.prepare("SELECT 1 FROM pragma_table_info('releases') WHERE name = ?1")
+            .map_err(|e| e.to_string())?
+            .exists([name])
+            .map_err(|e| e.to_string())
+    };
+    if has("musicbrainz_id")? && !has("bandcamp_id")? {
+        conn.execute(
+            "ALTER TABLE releases RENAME COLUMN musicbrainz_id TO bandcamp_id",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod bandcamp_id_migration {
+    use rusqlite::Connection;
+
+    fn has(c: &Connection, name: &str) -> bool {
+        c.prepare("SELECT 1 FROM pragma_table_info('releases') WHERE name = ?1")
+            .unwrap()
+            .exists([name])
+            .unwrap()
+    }
+
+    /// Existing Linux/macOS user DB: legacy `musicbrainz_id` column with data
+    /// is renamed to `bandcamp_id`, row data preserved, and re-running is safe.
+    #[test]
+    fn renames_legacy_column_and_preserves_data() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE releases (id INTEGER PRIMARY KEY, artist TEXT, musicbrainz_id TEXT);",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO releases (artist, musicbrainz_id) VALUES ('Aphex', 'keep-me')",
+            [],
+        )
+        .unwrap();
+        super::rename_legacy_musicbrainz_column(&c).unwrap();
+        assert!(has(&c, "bandcamp_id") && !has(&c, "musicbrainz_id"));
+        let v: String = c
+            .query_row("SELECT bandcamp_id FROM releases WHERE artist = 'Aphex'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, "keep-me");
+        super::rename_legacy_musicbrainz_column(&c).unwrap(); // idempotent
+    }
+
+    /// Already-migrated DB (the live 120-row Windows catalog): `bandcamp_id`
+    /// present, no `musicbrainz_id` — the migration must be a clean no-op so
+    /// the shipped v0.1.4-beta.2 DB stays openable.
+    #[test]
+    fn noop_on_already_migrated_db() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE releases (id INTEGER PRIMARY KEY, bandcamp_id TEXT);")
+            .unwrap();
+        c.execute("INSERT INTO releases (bandcamp_id) VALUES ('order-7891')", [])
+            .unwrap();
+        super::rename_legacy_musicbrainz_column(&c).unwrap();
+        let v: String = c
+            .query_row("SELECT bandcamp_id FROM releases", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, "order-7891");
+    }
 }
 
 /// 2026-06b genre round: 1:1 renames poetry → spoken, spiritual → conscious
@@ -573,7 +652,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
         "INSERT INTO releases
          (id, artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
-          discogs_id, musicbrainz_id, release_type, category,
+          discogs_id, bandcamp_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary,
           last_published_at, last_published_naddr, added_at, updated_at,
           track_count, track_total)
@@ -596,7 +675,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.cover_art_path,
             release.cover_art_url,
             release.discogs_id,
-            release.musicbrainz_id,
+            release.bandcamp_id,
             release.release_type,
             release.category,
             release.genre_primary,
@@ -621,7 +700,7 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
         "INSERT INTO releases
          (artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
-          discogs_id, musicbrainz_id, release_type, category,
+          discogs_id, bandcamp_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
@@ -641,7 +720,7 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
             release.cover_art_path,
             release.cover_art_url,
             release.discogs_id,
-            release.musicbrainz_id,
+            release.bandcamp_id,
             release.release_type,
             release.category,
             release.genre_primary,
@@ -1191,7 +1270,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         file_path: row.get(12)?,
         cover_art_path: row.get(13)?,
         discogs_id: row.get(14)?,
-        musicbrainz_id: row.get(15)?,
+        bandcamp_id: row.get(15)?,
         added_at: row.get(16)?,
         updated_at: row.get(17)?,
         cover_art_url: row.get(18)?,
@@ -1212,7 +1291,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
 const RELEASE_SELECT_COLS: &str =
     "id, artist, title, year, medium, format, label, catalog_number,
      country, condition, notes, source, file_path, cover_art_path,
-     discogs_id, musicbrainz_id, added_at, updated_at, cover_art_url,
+     discogs_id, bandcamp_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
      disc_total, video_count";
@@ -2554,9 +2633,9 @@ fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
     if let Some(d_id) = r.discogs_id {
         push_tag(&mut tags, "i", &format!("discogs:release:{}", d_id))?;
     }
-    if let Some(mb) = r.musicbrainz_id.as_deref() {
-        push_tag(&mut tags, "i", &format!("musicbrainz:release:{}", mb))?;
-    }
+    // bandcamp_id is intentionally NOT emitted as an `i` tag: the frozen v2
+    // schema's `i` namespace is discogs/musicbrainz only, with no Bandcamp slot.
+    // The Bandcamp link reaches consumers via the in-contract `source` URL.
     if let Some(url) = r.cover_art_url.as_deref() {
         push_tag(&mut tags, "image", url)?;
     }
@@ -5403,7 +5482,7 @@ mod schema_v1 {
             cover_art_path: None,
             cover_art_url: None,
             discogs_id: None,
-            musicbrainz_id: None,
+            bandcamp_id: None,
             release_type: None,
             category: None,
             genre_primary: None,
@@ -5481,7 +5560,7 @@ mod schema_v1 {
             source: Some("https://www.discogs.com/release/12345".into()),
             cover_art_url: Some("https://i.nostr.build/example.jpg".into()),
             discogs_id: Some(12345),
-            musicbrainz_id: Some("0000-aphex-saw8592".into()),
+            bandcamp_id: Some("0000-aphex-saw8592".into()),
             release_type: Some("music".into()),
             category: Some("album".into()),
             ..base_release()
@@ -5510,10 +5589,12 @@ mod schema_v1 {
             Some("https://i.nostr.build/example.jpg"),
         );
 
-        // `i` is repeatable (NIP-73): discogs + musicbrainz external IDs.
+        // `i` carries the discogs external ID (NIP-73). bandcamp_id is
+        // local-only and intentionally never emitted — assert its absence.
         let ids = i_tags(&ev);
         assert!(ids.contains(&"discogs:release:12345".to_string()));
-        assert!(ids.contains(&"musicbrainz:release:0000-aphex-saw8592".to_string()));
+        assert!(!ids.iter().any(|s| s.starts_with("musicbrainz:")));
+        assert!(!ids.iter().any(|s| s.starts_with("bandcamp:")));
     }
 
     #[test]
@@ -5576,7 +5657,7 @@ mod schema_v2 {
             cover_art_path: None,
             cover_art_url: None,
             discogs_id: None,
-            musicbrainz_id: None,
+            bandcamp_id: None,
             release_type: None,
             category: None,
             genre_primary: None,
