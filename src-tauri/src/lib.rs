@@ -304,6 +304,58 @@ fn rename_legacy_musicbrainz_column(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod bandcamp_id_migration {
+    use rusqlite::Connection;
+
+    fn has(c: &Connection, name: &str) -> bool {
+        c.prepare("SELECT 1 FROM pragma_table_info('releases') WHERE name = ?1")
+            .unwrap()
+            .exists([name])
+            .unwrap()
+    }
+
+    /// Existing Linux/macOS user DB: legacy `musicbrainz_id` column with data
+    /// is renamed to `bandcamp_id`, row data preserved, and re-running is safe.
+    #[test]
+    fn renames_legacy_column_and_preserves_data() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE releases (id INTEGER PRIMARY KEY, artist TEXT, musicbrainz_id TEXT);",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO releases (artist, musicbrainz_id) VALUES ('Aphex', 'keep-me')",
+            [],
+        )
+        .unwrap();
+        super::rename_legacy_musicbrainz_column(&c).unwrap();
+        assert!(has(&c, "bandcamp_id") && !has(&c, "musicbrainz_id"));
+        let v: String = c
+            .query_row("SELECT bandcamp_id FROM releases WHERE artist = 'Aphex'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, "keep-me");
+        super::rename_legacy_musicbrainz_column(&c).unwrap(); // idempotent
+    }
+
+    /// Already-migrated DB (the live 120-row Windows catalog): `bandcamp_id`
+    /// present, no `musicbrainz_id` — the migration must be a clean no-op so
+    /// the shipped v0.1.4-beta.2 DB stays openable.
+    #[test]
+    fn noop_on_already_migrated_db() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE releases (id INTEGER PRIMARY KEY, bandcamp_id TEXT);")
+            .unwrap();
+        c.execute("INSERT INTO releases (bandcamp_id) VALUES ('order-7891')", [])
+            .unwrap();
+        super::rename_legacy_musicbrainz_column(&c).unwrap();
+        let v: String = c
+            .query_row("SELECT bandcamp_id FROM releases", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, "order-7891");
+    }
+}
+
 /// 2026-06b genre round: 1:1 renames poetry → spoken, spiritual → conscious
 /// (both retired to `deprecated`, remapped here). Published rows carrying the
 /// old slug have their publish-state cleared so the new slug re-emits (the
