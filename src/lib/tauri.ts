@@ -17,7 +17,7 @@ export interface Release {
   coverArtPath?: string | null;
   coverArtUrl?: string | null;
   discogsId?: number | null;
-  musicbrainzId?: string | null;
+  bandcampId?: string | null;
   releaseType?: string | null;
   category?: string | null;
   // v2: three ordered genre slots (primary / secondary / tertiary). Each
