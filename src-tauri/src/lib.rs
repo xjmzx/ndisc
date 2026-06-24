@@ -4637,6 +4637,273 @@ fn import_discogs_csv(
     Ok(summary)
 }
 
+// ---------------------------------------------------------------------------
+// Bandcamp collection import (mirrors the Discogs CSV import). Folds a Bandcamp
+// collection CSV (columns: artist,title,link,receipt[,art_id,type]) into the
+// catalog: ENRICHES an existing release when artist+title fuzzy-match (sets the
+// `source` link if empty, `bandcamp_id` receipt, cover from art_id) — the Linux
+// /data/music case — else INSERTS a new digital release — the Windows case.
+// Cross-platform; the only published tag it touches is `source` (same shape).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanBandcampReport {
+    pub total_rows: usize,
+    pub with_link: usize,
+    pub with_receipt: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BandcampImportSummary {
+    pub scanned: usize,
+    pub enriched: usize,
+    pub inserted: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
+}
+
+// Fold common Latin-1 accents to ASCII so "Röskva" matches a "Roskva" folder.
+fn bc_fold(c: char) -> char {
+    match c {
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+        'è' | 'é' | 'ê' | 'ë' => 'e',
+        'ì' | 'í' | 'î' | 'ï' => 'i',
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => 'o',
+        'ù' | 'ú' | 'û' | 'ü' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        'ý' | 'ÿ' => 'y',
+        _ => c,
+    }
+}
+
+// Lowercase + accent-fold + split into ASCII-alphanumeric tokens (len > 1).
+fn bc_tokens(s: &str) -> Vec<String> {
+    let folded: String = s
+        .chars()
+        .flat_map(|c| c.to_lowercase())
+        .map(bc_fold)
+        .collect();
+    folded
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() > 1)
+        .map(|t| t.to_string())
+        .collect()
+}
+
+fn bc_cover_url(art_id: &str) -> Option<String> {
+    let id = art_id.trim();
+    if id.is_empty() || id == "0" {
+        None
+    } else {
+        Some(format!("https://f4.bcbits.com/img/a{}_16.jpg", id))
+    }
+}
+
+#[tauri::command]
+fn scan_bandcamp_csv(path: String) -> Result<ScanBandcampReport, String> {
+    let mut reader = csv::Reader::from_path(&path).map_err(|e| e.to_string())?;
+    let mut report = ScanBandcampReport {
+        total_rows: 0,
+        with_link: 0,
+        with_receipt: 0,
+    };
+    for result in reader.deserialize::<HashMap<String, String>>() {
+        let row = result.map_err(|e| e.to_string())?;
+        report.total_rows += 1;
+        if row.get("link").map(|s| !s.trim().is_empty()).unwrap_or(false) {
+            report.with_link += 1;
+        }
+        if row.get("receipt").map(|s| !s.trim().is_empty()).unwrap_or(false) {
+            report.with_receipt += 1;
+        }
+    }
+    Ok(report)
+}
+
+struct BcRel {
+    id: i64,
+    artist: Vec<String>,
+    title: Vec<String>,
+    has_source: bool,
+    has_cover: bool,
+    digital: bool,
+}
+
+#[tauri::command]
+fn import_bandcamp_csv(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<BandcampImportSummary, String> {
+    let mut reader = csv::Reader::from_path(&path).map_err(|e| e.to_string())?;
+    let rows: Vec<HashMap<String, String>> = reader
+        .deserialize::<HashMap<String, String>>()
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let total = rows.len();
+    let mut summary = BandcampImportSummary {
+        scanned: total,
+        enriched: 0,
+        inserted: 0,
+        skipped: 0,
+        errors: Vec::new(),
+    };
+    let _ = app.emit("import:started", total);
+
+    let mut conn = open(&app)?;
+
+    // Index every existing release once for fuzzy artist+title matching.
+    let mut existing: Vec<BcRel> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, artist, title, source, cover_art_url, medium FROM releases")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            let (id, artist, title, source, cover, medium) = row.map_err(|e| e.to_string())?;
+            existing.push(BcRel {
+                id,
+                artist: bc_tokens(&artist),
+                title: bc_tokens(&title),
+                has_source: source.map(|s| !s.trim().is_empty()).unwrap_or(false),
+                has_cover: cover.map(|s| !s.trim().is_empty()).unwrap_or(false),
+                digital: medium.as_deref() == Some("digital"),
+            });
+        }
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for (i, row) in rows.iter().enumerate() {
+        let artist = nonempty(row.get("artist").map(String::as_str).unwrap_or(""));
+        let title = nonempty(row.get("title").map(String::as_str).unwrap_or(""));
+        let link = nonempty(row.get("link").map(String::as_str).unwrap_or(""));
+        let receipt = nonempty(row.get("receipt").map(String::as_str).unwrap_or(""));
+        let art_id = row.get("art_id").map(String::as_str).unwrap_or("");
+        let typ = row.get("type").map(String::as_str).unwrap_or("");
+
+        let (Some(artist), Some(title)) = (artist, title) else {
+            summary.errors.push(format!("row {}: missing artist or title", i + 1));
+            continue;
+        };
+        let Some(link) = link else {
+            // Nothing to fold in without a release link.
+            summary.skipped += 1;
+            continue;
+        };
+
+        let _ = app.emit(
+            "import:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: format!("{} — {}", artist, title),
+            },
+        );
+
+        let at = bc_tokens(&artist);
+        let tt = bc_tokens(&title);
+        let cover = bc_cover_url(art_id);
+
+        // Best fuzzy match: artist tokens ≥60% present AND title tokens ≥60%.
+        let mut best: Option<usize> = None;
+        let mut best_score = 0.0f32;
+        if !at.is_empty() && !tt.is_empty() {
+            for (idx, rel) in existing.iter().enumerate() {
+                if rel.artist.is_empty() || rel.title.is_empty() {
+                    continue;
+                }
+                let a_ov =
+                    at.iter().filter(|t| rel.artist.contains(t)).count() as f32 / at.len() as f32;
+                if a_ov < 0.6 {
+                    continue;
+                }
+                let t_cov =
+                    tt.iter().filter(|t| rel.title.contains(t)).count() as f32 / tt.len() as f32;
+                if t_cov < 0.6 {
+                    continue;
+                }
+                let score = a_ov + t_cov + if rel.digital { 0.1 } else { 0.0 };
+                if score > best_score {
+                    best_score = score;
+                    best = Some(idx);
+                }
+            }
+        }
+
+        if let Some(idx) = best {
+            // Enrich: set source only if empty (protect Discogs URLs); set the
+            // receipt; set cover only if empty.
+            let rel_id = existing[idx].id;
+            let set_source = !existing[idx].has_source;
+            let set_cover = !existing[idx].has_cover && cover.is_some();
+            match tx.execute(
+                "UPDATE releases SET
+                   source        = CASE WHEN ?2 THEN ?3 ELSE source END,
+                   bandcamp_id   = COALESCE(?4, bandcamp_id),
+                   cover_art_url = CASE WHEN ?5 THEN ?6 ELSE cover_art_url END,
+                   updated_at    = strftime('%s','now')
+                 WHERE id = ?1",
+                params![rel_id, set_source, link, receipt, set_cover, cover],
+            ) {
+                Ok(_) => {
+                    summary.enriched += 1;
+                    if set_source {
+                        existing[idx].has_source = true;
+                    }
+                    if set_cover {
+                        existing[idx].has_cover = true;
+                    }
+                }
+                Err(e) => summary.errors.push(format!("row {}: {}", i + 1, e)),
+            }
+        } else {
+            // Insert a new digital release (purchased, not yet filed locally).
+            let category = match typ {
+                "a" => Some("album"),
+                "t" => Some("single"),
+                _ => None,
+            };
+            let inserted_tokens = (at, tt);
+            match tx.execute(
+                "INSERT INTO releases
+                   (artist, title, medium, source, bandcamp_id, cover_art_url,
+                    release_type, category)
+                 VALUES (?1, ?2, 'digital', ?3, ?4, ?5, 'music', ?6)",
+                params![artist, title, link, receipt, cover, category],
+            ) {
+                Ok(_) => {
+                    summary.inserted += 1;
+                    existing.push(BcRel {
+                        id: tx.last_insert_rowid(),
+                        artist: inserted_tokens.0,
+                        title: inserted_tokens.1,
+                        has_source: true,
+                        has_cover: cover.is_some(),
+                        digital: true,
+                    });
+                }
+                Err(e) => summary.errors.push(format!("row {}: {}", i + 1, e)),
+            }
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(summary)
+}
+
 /// Infer a category from a Discogs CSV Format column. Discogs typically
 /// puts the broad release type as a substring like "12\", EP" or "LP, Album".
 fn category_from_discogs_format(format: &str) -> Option<&'static str> {
@@ -5383,6 +5650,8 @@ pub fn run() {
             import_directory,
             scan_discogs_csv,
             import_discogs_csv,
+            scan_bandcamp_csv,
+            import_bandcamp_csv,
             set_discogs_token,
             get_discogs_token_status,
             clear_discogs_token,

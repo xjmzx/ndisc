@@ -108,6 +108,20 @@ export interface ScanDiscogsReport {
   withCondition: number;
 }
 
+export interface ScanBandcampReport {
+  totalRows: number;
+  withLink: number;
+  withReceipt: number;
+}
+
+export interface BandcampImportSummary {
+  scanned: number;
+  enriched: number;
+  inserted: number;
+  skipped: number;
+  errors: string[];
+}
+
 export interface ImportProgress {
   current: number;
   total: number;
@@ -305,6 +319,16 @@ export async function importDiscogsCsv(
   mediumFilter?: "physical" | "digital",
 ): Promise<ImportSummary> {
   return invoke<ImportSummary>("import_discogs_csv", { path, mediumFilter });
+}
+
+export async function scanBandcampCsv(path: string): Promise<ScanBandcampReport> {
+  return invoke<ScanBandcampReport>("scan_bandcamp_csv", { path });
+}
+
+export async function importBandcampCsv(
+  path: string,
+): Promise<BandcampImportSummary> {
+  return invoke<BandcampImportSummary>("import_bandcamp_csv", { path });
 }
 
 // --- Discogs metadata enrichment --------------------------------------------
