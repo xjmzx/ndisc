@@ -258,6 +258,15 @@ export async function setReleaseDiscogsId(
   return invoke<number | null>("set_release_discogs_id", { releaseId, value });
 }
 
+// Manually set/clear a release's physical disc count (null or <=0 clears).
+// Discogs enrichment stays canonical and may overwrite on a later enrich.
+export async function setReleaseDiscTotal(
+  releaseId: number,
+  value: number | null,
+): Promise<void> {
+  return invoke("set_release_disc_total", { releaseId, value });
+}
+
 export interface LabelCount {
   name: string;
   count: number;

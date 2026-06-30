@@ -17,6 +17,7 @@ import {
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
 import { SimplePool, nip19 } from "nostr-tools";
+import { cn } from "./lib/cn";
 import { ReleaseList, type FilterContext } from "./components/ReleaseList";
 import { ReleaseDetail } from "./components/ReleaseDetail";
 import { AddReleaseForm } from "./components/AddReleaseForm";
@@ -75,6 +76,10 @@ function loadLabels(): LabelEntry[] {
 }
 
 const THEME_STORAGE_KEY = "ndisc.theme";
+// Collapse the release-detail / add-release card to its header strip so the
+// Nostr + Label panels grow up to fill the right column. Shared suite gesture
+// (cf. ndisc.smpl / ndisc.tree flank collapse). Persisted.
+const DETAIL_COLLAPSED_KEY = "ndisc.detailCollapsed";
 type Theme = "fizx" | "upleb";
 
 function loadTheme(): Theme {
@@ -252,6 +257,12 @@ export default function App() {
   const [view, setView] = useState<
     "library" | "stats" | "table" | "current"
   >("library");
+  const [detailCollapsed, setDetailCollapsed] = useState(
+    () => localStorage.getItem(DETAIL_COLLAPSED_KEY) === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem(DETAIL_COLLAPSED_KEY, detailCollapsed ? "1" : "0");
+  }, [detailCollapsed]);
 
   useEffect(() => {
     initDb()
@@ -560,8 +571,16 @@ export default function App() {
               relays={relays}
             />
           </div>
-          <div className="flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto
-                          [scrollbar-gutter:stable]">
+          <div
+            className={cn(
+              "flex flex-col gap-2 lg:min-h-0 [scrollbar-gutter:stable]",
+              // Expanded: the column scrolls as a whole (the detail card is
+              // tall). Collapsed: the card is a strip, so the column stops
+              // scrolling and the panel grid below flexes to fill the freed
+              // height — the panels grow up into view.
+              detailCollapsed ? "lg:overflow-hidden" : "lg:overflow-y-auto",
+            )}
+          >
             {selected ? (
               <ReleaseDetail
                 release={selected}
@@ -569,11 +588,22 @@ export default function App() {
                 onDeleted={reload}
                 onChanged={handleReleaseChanged}
                 showUndoToast={showUndoToast}
+                collapsed={detailCollapsed}
+                onToggleCollapsed={() => setDetailCollapsed((v) => !v)}
               />
             ) : (
-              <AddReleaseForm onAdded={reload} />
+              <AddReleaseForm
+                onAdded={reload}
+                collapsed={detailCollapsed}
+                onToggleCollapsed={() => setDetailCollapsed((v) => !v)}
+              />
             )}
-            <div className="grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-stretch">
+            <div
+              className={cn(
+                "grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-stretch",
+                detailCollapsed && "lg:flex-1 lg:min-h-0",
+              )}
+            >
               <NostrPanel
                 relays={relays}
                 setRelays={setRelays}
@@ -586,6 +616,7 @@ export default function App() {
                 setLabels={setLabels}
                 reloadKey={reloadKey}
                 onPick={promptAddLabel}
+                fill={detailCollapsed}
               />
               <LabelPanel
                 labels={labels}

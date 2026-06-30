@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, ImageOff, Link2Off, List, Search, X } from "lucide-react";
+import { cn } from "../lib/cn";
 import { Section } from "./Section";
 import { listDistinctLabels, type LabelCount } from "../lib/tauri";
 import { genreDisplay } from "../lib/genre";
@@ -10,6 +11,10 @@ interface Props {
   setLabels: (next: LabelEntry[]) => void;
   reloadKey: number;
   onPick: (name: string, existingUrl: string, existingSite: string) => void;
+  // When the right column's detail card is collapsed this panel flexes to
+  // fill the freed height — so let the label list grow to fill it (≈24+ rows)
+  // instead of its compact fixed 8-row footprint. Responsive to actual height.
+  fill?: boolean;
 }
 
 const MAX_DISPLAY = 36;
@@ -33,6 +38,7 @@ export function LabelviewPanel({
   setLabels,
   reloadKey,
   onPick,
+  fill = false,
 }: Props) {
   const [distinct, setDistinct] = useState<LabelCount[]>([]);
   const [query, setQuery] = useState("");
@@ -235,13 +241,23 @@ export function LabelviewPanel({
   );
 
   return (
-    <Section title={searchField} icon={<List size={16} />} right={headerRight}>
-      {/* Fixed height absorbing the rows freed by moving search + the
-          labelled indicator into the header, so the panel keeps its footprint
-          (empty library or not) without needing the body to be collapsible. */}
+    <Section
+      title={searchField}
+      icon={<List size={16} />}
+      right={headerRight}
+      className={cn(fill && "min-h-0")}
+      bodyClassName={cn(fill && "min-h-0")}
+    >
+      {/* Compact mode: a fixed height (≈8 rows) absorbing the rows freed by
+          moving search + the labelled indicator into the header, so the panel
+          keeps its footprint (empty library or not). Fill mode (detail card
+          collapsed): the list flexes to fill the freed column height, growing
+          the visible row count to whatever fits (≈24+). */}
       <ul
-        className="h-[200px] overflow-y-auto pr-1 space-y-0.5
-                   [scrollbar-gutter:stable]"
+        className={cn(
+          "overflow-y-auto pr-1 space-y-0.5 [scrollbar-gutter:stable]",
+          fill ? "flex-1 min-h-0" : "h-[200px]",
+        )}
       >
         {visible.map((name) => {
           const entry = byName.get(normaliseName(name));

@@ -1021,6 +1021,33 @@ fn set_release_catalog_number(
     Ok(())
 }
 
+// Manually set (or clear, on None/<=0) a release's physical disc count. Discogs
+// enrichment also fills disc_total (and stays canonical — a later enrich on a
+// Discogs-linked release will overwrite this), but this lets non-Discogs
+// releases get a disc count, and acts as an override otherwise. Capped at 99
+// to mirror track_total's sanity clamp. Publishes via the additive `discs` tag.
+#[tauri::command]
+fn set_release_disc_total(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: Option<i64>,
+) -> Result<(), String> {
+    let normalized = match value {
+        Some(n) if n > 0 => Some(n.min(99)),
+        _ => None,
+    };
+    let conn = open(&app)?;
+    conn.execute(
+        "UPDATE releases
+         SET disc_total = ?1, updated_at = strftime('%s','now')
+         WHERE id = ?2",
+        params![normalized, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    mark_unpublished(&conn, release_id)?;
+    Ok(())
+}
+
 // Parse a Discogs release id from free text — a bare integer, or a
 // discogs.com release URL (…/release/123456[-slug]). Empty input clears the id.
 fn parse_discogs_input(raw: &str) -> Result<Option<i64>, String> {
@@ -5634,6 +5661,7 @@ pub fn run() {
             set_release_label,
             set_release_catalog_number,
             set_release_discogs_id,
+            set_release_disc_total,
             set_release_genres,
             list_distinct_labels,
             export_markdown,

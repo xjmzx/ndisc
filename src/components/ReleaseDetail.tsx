@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Check,
   Copy,
+  Disc,
   ExternalLink,
   FileMusic,
   FolderOpen,
@@ -40,6 +41,7 @@ import {
   setCoverArtUrl,
   setReleaseCatalogNumber,
   setReleaseDiscogsId,
+  setReleaseDiscTotal,
   setReleaseCategory,
   setReleaseCondition,
   setReleaseCountry,
@@ -135,6 +137,10 @@ interface Props {
   onDeleted: () => void;
   onChanged: (updated: Release) => void;
   showUndoToast?: (message: string, undo: () => void | Promise<void>) => void;
+  // Collapse the detail card to its header strip — the shared suite gesture.
+  // When collapsed the header (artist / title) reads as a one-line summary.
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 // Status block at the bottom of the detail panel shows exactly one of:
@@ -154,6 +160,8 @@ export function ReleaseDetail({
   onDeleted,
   onChanged,
   showUndoToast,
+  collapsed,
+  onToggleCollapsed,
 }: Props) {
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
@@ -533,6 +541,15 @@ export function ReleaseDetail({
     applyEdit({ catalogNumber: v });
   }
 
+  // Manual disc-count entry — for non-Discogs releases (or as an override).
+  // Empty/0 clears; the backend caps at 99. Enrich stays canonical.
+  async function onChangeDiscTotal(v: number | null) {
+    if (!release.id) return;
+    const next = v != null && v > 0 ? Math.min(v, 99) : null;
+    await setReleaseDiscTotal(release.id, next);
+    applyEdit({ discTotal: next });
+  }
+
   // Accepts a bare id or a discogs.com/release/… URL (parsed backend-side; an
   // invalid value rejects and EditableText surfaces it inline). Mirrors the
   // backend's source-canonicalisation so the optimistic update stays coherent.
@@ -610,6 +627,8 @@ export function ReleaseDetail({
         </>
       }
       icon={<FileMusic size={16} />}
+      collapsed={collapsed}
+      onTitleClick={onToggleCollapsed}
     >
       <div className="flex gap-4 items-stretch">
         <CoverArt
@@ -649,25 +668,17 @@ export function ReleaseDetail({
                 </dd>
               </>
             )}
-            {release.discTotal != null && release.discTotal > 0 && (
-              <>
-                <dt className="text-muted">discs</dt>
-                <dd className="text-fg/90 min-w-0 flex items-center">
-                  {/* Same green badge as the release scroll's disc mark, but a
-                      touch smaller and a rounded square (not a circle) so it
-                      reads tidily inline next to the label. */}
-                  <CountBadge
-                    value={release.discTotal}
-                    title={`${release.discTotal} disc${
-                      release.discTotal === 1 ? "" : "s"
-                    }`}
-                    shapeClassName="rounded-[3px]"
-                    colorClassName="bg-ok/70 text-bg"
-                    size={17}
-                  />
-                </dd>
-              </>
-            )}
+            {/* Discs — always shown so the count is manually editable, not
+                only Discogs-enriched. A muted disc icon stands in when unset
+                (click to type); the green badge shows a set count (click to
+                edit). Backend caps at 99; enrich stays canonical. */}
+            <dt className="text-muted">discs</dt>
+            <dd className="text-fg/90 min-w-0 flex items-center">
+              <DiscCountField
+                value={release.discTotal ?? null}
+                onChange={onChangeDiscTotal}
+              />
+            </dd>
           </dl>
           <div className="flex items-center gap-3 shrink-0">
             {release.id != null && lastPublish && (
@@ -1070,6 +1081,86 @@ function NaRow({ label, value }: { label: string; value: string | null }) {
         )}
       </dd>
     </>
+  );
+}
+
+// Inline editable disc count. Unset → a muted disc icon (the "ready to input"
+// affordance); set → the green count badge. Either is a click target that
+// opens a tiny number input (Enter / blur commits, Escape reverts, empty
+// clears). Kept inline to match the dl's compact tracks/discs rhythm.
+function DiscCountField({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  function begin() {
+    setDraft(value != null ? String(value) : "");
+    setEditing(true);
+  }
+  function commit() {
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? null : parseInt(trimmed, 10);
+    const next = parsed != null && Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : null;
+    setEditing(false);
+    if (next !== value) onChange(next);
+  }
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        min={1}
+        max={99}
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setEditing(false);
+        }}
+        placeholder="#"
+        aria-label="disc count"
+        className="w-12 px-1.5 py-0.5 rounded bg-surface text-fg text-xs
+                   tabular-nums outline-none border border-transparent
+                   focus:border-accent/50 [appearance:textfield]
+                   [&::-webkit-inner-spin-button]:appearance-none"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={begin}
+      title={
+        value != null
+          ? `${value} disc${value === 1 ? "" : "s"} — click to edit`
+          : "Set disc count"
+      }
+      aria-label={value != null ? `${value} discs — edit` : "Set disc count"}
+      className="inline-flex items-center rounded hover:bg-surface
+                 transition-colors p-0.5"
+    >
+      {value != null ? (
+        <CountBadge
+          value={value}
+          title={`${value} disc${value === 1 ? "" : "s"}`}
+          shapeClassName="rounded-[3px]"
+          colorClassName="bg-ok/70 text-bg"
+          size={17}
+        />
+      ) : (
+        <Disc size={15} className="text-muted/50 hover:text-muted" />
+      )}
+    </button>
   );
 }
 
