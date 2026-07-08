@@ -467,6 +467,52 @@ export async function scanLibraryChanges(): Promise<LibraryScanSummary> {
   return invoke<LibraryScanSummary>("scan_library_changes");
 }
 
+// One-click library reconcile: discover new album folders under the root, then
+// refresh every existing release against disk. `root` defaults to the derived
+// common path prefix of all local releases (see get_library_root).
+export interface LibraryReconcileSummary {
+  root: string;
+  imported: number;
+  skipped: number;
+  refreshed: number;
+  noChanges: number;
+  orphaned: number;
+  noAudio: number;
+  orphans: OrphanInfo[];
+  errors: string[];
+  scannedAt: number;
+}
+
+export async function reconcileLibrary(
+  root?: string,
+): Promise<LibraryReconcileSummary> {
+  return invoke<LibraryReconcileSummary>("reconcile_library", {
+    root: root ?? null,
+  });
+}
+
+export async function getLibraryRoot(): Promise<string | null> {
+  return invoke<string | null>("get_library_root");
+}
+
+export async function setLibraryRoot(root: string): Promise<void> {
+  return invoke<void>("set_library_root", { root });
+}
+
+export interface LibrarySummary {
+  releases: number;
+  tracks: number;
+  incomplete: number;
+  videos: number;
+  orphaned: number;
+  lastScannedAt: number | null;
+  libraryRoot: string | null;
+}
+
+export async function getLibrarySummary(): Promise<LibrarySummary> {
+  return invoke<LibrarySummary>("get_library_summary");
+}
+
 export interface OrphanEvent {
   id: number;
   artist: string;

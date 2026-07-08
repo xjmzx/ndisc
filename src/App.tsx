@@ -429,7 +429,7 @@ export default function App() {
         {/* Library stats — centred between the title and the toolbar. */}
         <div className="hidden lg:flex flex-1 items-center justify-center
                         min-w-0 px-4">
-          <LibraryStats stats={lib.stats} />
+          <LibraryStats stats={lib.stats} summary={lib.summary} />
         </div>
 
         {/* Toolbar: library | db | nostr — three divider-separated groups. */}

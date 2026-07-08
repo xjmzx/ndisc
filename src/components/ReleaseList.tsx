@@ -5,7 +5,9 @@ import {
   Circle,
   Disc3,
   Film,
+  FolderCog,
   FolderSearch,
+  FolderSync,
   ImageOff,
   Music,
   MoreVertical,
@@ -25,17 +27,21 @@ import { CountBadge, LeafDots } from "./LeafIcon";
 import {
   deleteRelease,
   extractEmbeddedCovers,
+  getLibraryRoot,
   listReleases,
+  reconcileLibrary,
   reconcilePublished,
   rescanLocalCovers,
   scanLibraryChanges,
   setCoverArtUrl,
+  setLibraryRoot,
   unpublishRelease,
   updateReleasePath,
   type ExtractSummary,
   type ImportProgress,
   type GenreFilter,
   type LabelFilter,
+  type LibraryReconcileSummary,
   type LibraryScanSummary,
   type OrphanEvent,
   type OrphanInfo,
@@ -149,7 +155,15 @@ export function ReleaseList({
   // Cover-cleanup background ops. Extract reads embedded artwork from audio
   // file tags; rescan walks album directories for a wider set of cover
   // filename patterns.
-  type OpKind = "extract" | "rescan" | "scan" | "reconcile";
+  // "reconcile" = relay publish-state backfill; "reconcileDisk" = the two-phase
+  // disk sync (discover new folders + refresh existing) behind "Rescan library
+  // folder". Distinct axes, distinct summaries.
+  type OpKind =
+    | "extract"
+    | "rescan"
+    | "scan"
+    | "reconcile"
+    | "reconcileDisk";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   const [opSummary, setOpSummary] = useState<
@@ -157,6 +171,7 @@ export function ReleaseList({
     | { kind: "rescan"; data: RescanSummary }
     | { kind: "scan"; data: LibraryScanSummary }
     | { kind: "reconcile"; data: ReconcileSummary }
+    | { kind: "reconcileDisk"; data: LibraryReconcileSummary }
     | null
   >(null);
 
@@ -219,6 +234,66 @@ export function ReleaseList({
       } catch (e) {
         setError(String(e));
       } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
+
+    // Disk reconcile — two phases (discover new folders, then refresh
+    // existing) with their own import:*/scan:* progress events. Root is the
+    // configured/derived library folder; bail with a nudge if there's none.
+    if (kind === "reconcileDisk") {
+      const root = await getLibraryRoot().catch(() => null);
+      if (!root) {
+        setError(
+          "No library folder is set yet — use “Set library folder…” first.",
+        );
+        return;
+      }
+      const yes = await ask(
+        `Rescan the library folder for changes?\n\n${root}\n\n` +
+          "Phase 1 discovers album folders on disk not yet in the library " +
+          "and adds them (existing releases are skipped). Phase 2 re-reads " +
+          "every release with a path — recounting tracks and videos, " +
+          "backfilling empty labels/notes, and flagging any whose folder " +
+          "has gone missing (orphans). Curated labels and Discogs data are " +
+          "preserved.",
+        { title: "Rescan library folder", kind: "info" },
+      );
+      if (!yes) return;
+
+      setActiveOp("reconcileDisk");
+      setOpSummary(null);
+      setOpProgress({ current: 0, total: 0, currentDir: "" });
+      setError(null);
+
+      const unlisteners: UnlistenFn[] = [];
+      try {
+        for (const ev of ["import:started", "scan:started"]) {
+          unlisteners.push(
+            await listen<number>(ev, (e) => {
+              setOpProgress((p) => ({
+                current: 0,
+                total: e.payload,
+                currentDir: p?.currentDir ?? "",
+              }));
+            }),
+          );
+        }
+        for (const ev of ["import:progress", "scan:progress"]) {
+          unlisteners.push(
+            await listen<ImportProgress>(ev, (e) => {
+              setOpProgress(e.payload);
+            }),
+          );
+        }
+        const data = await reconcileLibrary();
+        setOpSummary({ kind: "reconcileDisk", data });
+        await reload();
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        unlisteners.forEach((f) => f());
         setActiveOp(null);
       }
       return;
@@ -312,6 +387,33 @@ export function ReleaseList({
     }
   }
 
+  // Override the auto-derived reconcile root. Prefilled with the current
+  // effective root so the picker opens where the library already lives.
+  async function setLibraryFolder() {
+    setMaintMenuOpen(false);
+    const current = await getLibraryRoot().catch(() => null);
+    let picked: string | null;
+    try {
+      const result = await openDialog({
+        directory: true,
+        multiple: false,
+        title: "Set your music library folder",
+        defaultPath: current ?? undefined,
+      });
+      picked = typeof result === "string" ? result : null;
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
+    if (!picked) return;
+    try {
+      await setLibraryRoot(picked);
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function deleteOrphan(e: React.MouseEvent, orphan: OrphanInfo) {
     e.preventDefault();
     e.stopPropagation();
@@ -327,16 +429,28 @@ export function ReleaseList({
     try {
       await deleteRelease(orphan.id);
       setOpSummary((prev) => {
-        if (!prev || prev.kind !== "scan") return prev;
-        return {
-          kind: "scan",
-          data: {
-            ...prev.data,
-            scanned: Math.max(0, prev.data.scanned - 1),
-            orphaned: Math.max(0, prev.data.orphaned - 1),
-            orphans: prev.data.orphans.filter((o) => o.id !== orphan.id),
-          },
-        };
+        if (prev?.kind === "scan") {
+          return {
+            kind: "scan",
+            data: {
+              ...prev.data,
+              scanned: Math.max(0, prev.data.scanned - 1),
+              orphaned: Math.max(0, prev.data.orphaned - 1),
+              orphans: prev.data.orphans.filter((o) => o.id !== orphan.id),
+            },
+          };
+        }
+        if (prev?.kind === "reconcileDisk") {
+          return {
+            kind: "reconcileDisk",
+            data: {
+              ...prev.data,
+              orphaned: Math.max(0, prev.data.orphaned - 1),
+              orphans: prev.data.orphans.filter((o) => o.id !== orphan.id),
+            },
+          };
+        }
+        return prev;
       });
       await reload();
     } catch (err) {
@@ -367,16 +481,29 @@ export function ReleaseList({
     try {
       await updateReleasePath(orphan.id, picked);
       setOpSummary((prev) => {
-        if (!prev || prev.kind !== "scan") return prev;
-        return {
-          kind: "scan",
-          data: {
-            ...prev.data,
-            orphaned: Math.max(0, prev.data.orphaned - 1),
-            refreshed: prev.data.refreshed + 1,
-            orphans: prev.data.orphans.filter((o) => o.id !== orphan.id),
-          },
-        };
+        if (prev?.kind === "scan") {
+          return {
+            kind: "scan",
+            data: {
+              ...prev.data,
+              orphaned: Math.max(0, prev.data.orphaned - 1),
+              refreshed: prev.data.refreshed + 1,
+              orphans: prev.data.orphans.filter((o) => o.id !== orphan.id),
+            },
+          };
+        }
+        if (prev?.kind === "reconcileDisk") {
+          return {
+            kind: "reconcileDisk",
+            data: {
+              ...prev.data,
+              orphaned: Math.max(0, prev.data.orphaned - 1),
+              refreshed: prev.data.refreshed + 1,
+              orphans: prev.data.orphans.filter((o) => o.id !== orphan.id),
+            },
+          };
+        }
+        return prev;
       });
       await reload();
     } catch (err) {
@@ -698,6 +825,25 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<FolderSync size={14} />}
+                label="Rescan library folder"
+                detail="Find new folders + refresh existing"
+                active={activeOp === "reconcileDisk"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("reconcileDisk");
+                }}
+              />
+              <MaintMenuItem
+                icon={<FolderCog size={14} />}
+                label="Set library folder…"
+                detail="Choose the root the rescan walks"
+                active={false}
+                disabled={activeOp !== null}
+                onClick={setLibraryFolder}
+              />
+              <MaintMenuItem
                 icon={<SatelliteDish size={14} />}
                 label="Reconcile published state"
                 detail="Backfill publish markers from relays"
@@ -734,7 +880,9 @@ export function ReleaseList({
                 ? "extracting embedded artwork"
                 : activeOp === "rescan"
                   ? "scanning for local cover files"
-                  : "scanning library for changes"}{" "}
+                  : activeOp === "reconcileDisk"
+                    ? "reconciling library folder"
+                    : "scanning library for changes"}{" "}
               <span className="font-mono text-fg">
                 {opProgress.current.toLocaleString()}/
                 {(opProgress.total || 0).toLocaleString()}
@@ -836,6 +984,28 @@ export function ReleaseList({
                 )}
               </>
             )}
+            {opSummary.kind === "reconcileDisk" && (
+              <>
+                <span className="text-ok">
+                  new{" "}
+                  <span className="font-mono">{opSummary.data.imported}</span>
+                </span>
+                <span className="text-ok">
+                  refreshed{" "}
+                  <span className="font-mono">{opSummary.data.refreshed}</span>
+                </span>
+                <span className="text-muted">
+                  unchanged{" "}
+                  <span className="font-mono">{opSummary.data.noChanges}</span>
+                </span>
+                {opSummary.data.orphaned > 0 && (
+                  <span className="text-warn">
+                    orphaned{" "}
+                    <span className="font-mono">{opSummary.data.orphaned}</span>
+                  </span>
+                )}
+              </>
+            )}
             {opSummary.kind === "reconcile" && (
               <>
                 <span className="text-ok">
@@ -884,7 +1054,9 @@ export function ReleaseList({
         </div>
       )}
 
-      {!activeOp && opSummary?.kind === "scan" && opSummary.data.orphans.length > 0 && (
+      {!activeOp &&
+        (opSummary?.kind === "scan" || opSummary?.kind === "reconcileDisk") &&
+        opSummary.data.orphans.length > 0 && (
         <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
           <summary className="text-warn cursor-pointer text-xs">
             {opSummary.data.orphans.length} orphan

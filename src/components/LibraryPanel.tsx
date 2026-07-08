@@ -17,6 +17,7 @@ import { Section } from "./Section";
 import { ToolbarIconButton } from "./ToolbarIconButton";
 import {
   exportMarkdown,
+  getLibrarySummary,
   getStats,
   importDirectory,
   importDiscogsCsv,
@@ -24,6 +25,7 @@ import {
   scanDiscogsCsv,
   type ImportProgress,
   type ImportSummary,
+  type LibrarySummary,
   type ScanDiscogsReport,
   type ScanReport,
   type Stats,
@@ -42,6 +44,7 @@ type ScanResult =
 // appears while `active` is true.
 export interface LibraryController {
   stats: Stats | null;
+  summary: LibrarySummary | null;
   phase: Phase;
   active: boolean;
   pickedPath: string | null;
@@ -66,10 +69,17 @@ export function useLibrary(
 ): LibraryController {
   // --- Stats ----------------------------------------------------------------
   const [stats, setStats] = useState<Stats | null>(null);
+  const [summary, setSummary] = useState<LibrarySummary | null>(null);
   useEffect(() => {
     getStats()
       .then(setStats)
       .catch(() => setStats(null));
+    // Richer readout (tracks/incomplete/videos/orphaned + last-scanned) for
+    // the header. Refetched on every reloadKey bump, so a reconcile that ends
+    // with reload() immediately updates the "last scanned" line.
+    getLibrarySummary()
+      .then(setSummary)
+      .catch(() => setSummary(null));
   }, [reloadKey]);
 
   // --- Import ---------------------------------------------------------------
@@ -239,6 +249,7 @@ export function useLibrary(
 
   return {
     stats,
+    summary,
     phase,
     active,
     pickedPath,
@@ -262,7 +273,26 @@ export function useLibrary(
 
 // The four headline counts, shown as chips in the header. Values keep the
 // accent colour.
-export function LibraryStats({ stats }: { stats: Stats | null }) {
+// Compact "N ago" for the last-scanned marker. Anything under a minute reads
+// "just now"; days cap the resolution (a stale library is stale enough).
+function fmtAgo(unixSeconds: number): string {
+  const secs = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+export function LibraryStats({
+  stats,
+  summary,
+}: {
+  stats: Stats | null;
+  summary?: LibrarySummary | null;
+}) {
   if (!stats) return null;
   return (
     <div className="flex items-center gap-1.5">
@@ -270,6 +300,37 @@ export function LibraryStats({ stats }: { stats: Stats | null }) {
       <StatChip label="Physical" value={stats.physical} />
       <StatChip label="Digital" value={stats.digital} />
       <StatChip label="Artists" value={stats.uniqueArtists} />
+      {summary && (
+        <span className="inline-flex items-baseline gap-2 pl-1 text-[11px] whitespace-nowrap">
+          <span className="text-muted">
+            <span className="text-fg font-mono">
+              {summary.tracks.toLocaleString()}
+            </span>{" "}
+            tracks
+          </span>
+          {summary.videos > 0 && (
+            <span className="text-muted">
+              <span className="text-fg font-mono">{summary.videos}</span> video
+            </span>
+          )}
+          {summary.incomplete > 0 && (
+            <span className="text-muted">
+              <span className="text-fg font-mono">{summary.incomplete}</span>{" "}
+              incomplete
+            </span>
+          )}
+          {summary.orphaned > 0 && (
+            <span className="text-warn">
+              <span className="font-mono">{summary.orphaned}</span> orphaned
+            </span>
+          )}
+          {summary.lastScannedAt != null && (
+            <span className="text-muted/70">
+              scanned {fmtAgo(summary.lastScannedAt)}
+            </span>
+          )}
+        </span>
+      )}
     </div>
   );
 }

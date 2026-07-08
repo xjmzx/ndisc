@@ -213,11 +213,102 @@ fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     default_db_path(app)
 }
 
-fn save_db_path(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
+/// Read the persisted config JSON as an object (empty map if absent/invalid).
+fn read_config(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    if let Ok(cfg) = config_file_path(app) {
+        if let Ok(s) = std::fs::read_to_string(&cfg) {
+            if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(&s) {
+                return m;
+            }
+        }
+    }
+    serde_json::Map::new()
+}
+
+/// Merge `patch` into the persisted config, preserving all other keys. The old
+/// `save_db_path` rewrote the file with only `dbPath`, silently dropping any
+/// other settings; every writer now goes through here so keys like
+/// `libraryRoot` / `lastScannedAt` survive a `dbPath` change and vice versa.
+fn write_config_patch(
+    app: &tauri::AppHandle,
+    patch: &[(&str, serde_json::Value)],
+) -> Result<(), String> {
     let cfg = config_file_path(app)?;
-    let json = serde_json::json!({ "dbPath": path.to_string_lossy() });
-    std::fs::write(&cfg, json.to_string()).map_err(|e| e.to_string())?;
+    let mut m = read_config(app);
+    for (k, v) in patch {
+        m.insert((*k).to_string(), v.clone());
+    }
+    std::fs::write(&cfg, serde_json::Value::Object(m).to_string())
+        .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn save_db_path(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
+    write_config_patch(
+        app,
+        &[(
+            "dbPath",
+            serde_json::Value::String(path.to_string_lossy().into_owned()),
+        )],
+    )
+}
+
+/// Longest common *directory* prefix (component-wise, so we never split
+/// mid-segment) across every non-empty `file_path`, or None when there are
+/// none. A library entirely under `/data/music` derives `/data/music`.
+fn derive_common_root(conn: &Connection) -> Result<Option<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT file_path FROM releases WHERE file_path IS NOT NULL AND file_path <> ''")
+        .map_err(|e| e.to_string())?;
+    let paths: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let split = |p: &str| -> Vec<String> {
+        Path::new(p)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect()
+    };
+    let mut common = split(&paths[0]);
+    for p in &paths[1..] {
+        let comps = split(p);
+        let mut i = 0;
+        while i < common.len() && i < comps.len() && common[i] == comps[i] {
+            i += 1;
+        }
+        common.truncate(i);
+        if common.is_empty() {
+            break;
+        }
+    }
+    if common.is_empty() {
+        return Ok(None);
+    }
+    let mut pb = PathBuf::new();
+    for c in &common {
+        pb.push(c);
+    }
+    Ok(Some(pb.to_string_lossy().into_owned()))
+}
+
+/// The library root to reconcile against: the persisted `libraryRoot` when set,
+/// else the derived common path prefix of all local releases. Errors when
+/// neither is available (no configured root and no local paths to derive from).
+fn library_root(app: &tauri::AppHandle) -> Result<String, String> {
+    let m = read_config(app);
+    if let Some(r) = m.get("libraryRoot").and_then(|v| v.as_str()) {
+        if !r.trim().is_empty() {
+            return Ok(r.to_string());
+        }
+    }
+    let conn = open(app)?;
+    derive_common_root(&conn)?
+        .ok_or_else(|| "no library root set and no local file paths to derive one from".into())
 }
 
 fn ensure_column(
@@ -2154,6 +2245,159 @@ fn scan_library_changes(
     }
 
     Ok(summary)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryReconcileSummary {
+    /// The root that was reconciled against (resolved from config or derived).
+    pub root: String,
+    // Discovery phase (import_directory) — new album folders found on disk.
+    pub imported: usize,
+    pub skipped: usize,
+    // Refresh phase (scan_library_changes) — existing releases re-read.
+    pub refreshed: usize,
+    pub no_changes: usize,
+    pub orphaned: usize,
+    pub no_audio: usize,
+    pub orphans: Vec<OrphanInfo>,
+    pub errors: Vec<String>,
+    /// Unix seconds this reconcile completed (also persisted to config).
+    pub scanned_at: i64,
+}
+
+/// One-click library reconcile: discover new album folders under `root`
+/// (idempotent — `import_directory` skips paths already in the DB) then refresh
+/// every release with a path against disk (`scan_library_changes` — recount
+/// tracks/videos, backfill empty label/notes/source, flag orphans). Persists
+/// the resolved root + completion time + orphan count so the library summary
+/// can show a "last scanned" readout without re-walking the disk. `root`
+/// defaults to the derived common prefix of all local releases.
+#[tauri::command]
+fn reconcile_library(
+    app: tauri::AppHandle,
+    root: Option<String>,
+) -> Result<LibraryReconcileSummary, String> {
+    let root = match root {
+        Some(r) if !r.trim().is_empty() => r.trim().to_owned(),
+        _ => library_root(&app)?,
+    };
+
+    let _ = app.emit("reconcile:phase", "discover");
+    let import = import_directory(app.clone(), root.clone())?;
+    let _ = app.emit("reconcile:phase", "refresh");
+    let scan = scan_library_changes(app.clone())?;
+
+    let scanned_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let mut errors = import.errors;
+    errors.extend(scan.errors);
+
+    write_config_patch(
+        &app,
+        &[
+            ("libraryRoot", serde_json::Value::String(root.clone())),
+            ("lastScannedAt", serde_json::json!(scanned_at)),
+            ("lastOrphaned", serde_json::json!(scan.orphaned)),
+        ],
+    )?;
+
+    Ok(LibraryReconcileSummary {
+        root,
+        imported: import.imported,
+        skipped: import.skipped,
+        refreshed: scan.refreshed,
+        no_changes: scan.no_changes,
+        orphaned: scan.orphaned,
+        no_audio: scan.no_audio,
+        orphans: scan.orphans,
+        errors,
+        scanned_at,
+    })
+}
+
+/// The effective reconcile root (configured or derived), or None if neither
+/// exists yet. Lets the frontend show the current root and prefill the picker.
+#[tauri::command]
+fn get_library_root(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(library_root(&app).ok())
+}
+
+/// Persist an explicit library root (the "Set library folder…" action).
+#[tauri::command]
+fn set_library_root(app: tauri::AppHandle, root: String) -> Result<(), String> {
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        return Err("empty library root".into());
+    }
+    write_config_patch(
+        &app,
+        &[(
+            "libraryRoot",
+            serde_json::Value::String(trimmed.to_owned()),
+        )],
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySummary {
+    pub releases: i64,
+    /// Sum of present track counts (local audio files across the library).
+    pub tracks: i64,
+    /// Releases missing tracks locally (present < expected TRACKTOTAL).
+    pub incomplete: i64,
+    /// Releases with at least one recognised video file.
+    pub videos: i64,
+    /// Orphan count from the last reconcile (path went missing on disk).
+    pub orphaned: i64,
+    pub last_scanned_at: Option<i64>,
+    pub library_root: Option<String>,
+}
+
+/// Passive library readout for the header: cheap live SQL for
+/// releases/tracks/incomplete/videos, plus orphan count + last-scanned time
+/// carried from the last reconcile (so we never re-walk the disk just to
+/// render the summary line).
+#[tauri::command]
+fn get_library_summary(app: tauri::AppHandle) -> Result<LibrarySummary, String> {
+    let conn = open(&app)?;
+    let scalar = |sql: &str| -> Result<i64, String> {
+        conn.query_row(sql, [], |r| r.get::<_, i64>(0))
+            .map_err(|e| e.to_string())
+    };
+    let releases = scalar("SELECT COUNT(*) FROM releases")?;
+    let tracks = scalar("SELECT COALESCE(SUM(track_count), 0) FROM releases")?;
+    let incomplete = scalar(
+        "SELECT COUNT(*) FROM releases \
+         WHERE track_count IS NOT NULL AND track_total IS NOT NULL \
+           AND track_count < track_total",
+    )?;
+    let videos = scalar(
+        "SELECT COUNT(*) FROM releases WHERE video_count IS NOT NULL AND video_count > 0",
+    )?;
+
+    let m = read_config(&app);
+    let orphaned = m.get("lastOrphaned").and_then(|v| v.as_i64()).unwrap_or(0);
+    let last_scanned_at = m.get("lastScannedAt").and_then(|v| v.as_i64());
+    let library_root = m
+        .get("libraryRoot")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| library_root(&app).ok());
+
+    Ok(LibrarySummary {
+        releases,
+        tracks,
+        incomplete,
+        videos,
+        orphaned,
+        last_scanned_at,
+        library_root,
+    })
 }
 
 #[tauri::command]
@@ -5689,6 +5933,10 @@ pub fn run() {
             rescan_local_covers,
             refresh_release,
             scan_library_changes,
+            reconcile_library,
+            get_library_root,
+            set_library_root,
+            get_library_summary,
             sync_cover_to_disk,
             update_release_path,
             clear_release_path,
@@ -6906,3 +7154,69 @@ mod stats {
     }
 }
 
+
+#[cfg(test)]
+mod reconcile_root {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn seed(paths: &[Option<&str>]) -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE releases (file_path TEXT);")
+            .unwrap();
+        for p in paths {
+            conn.execute("INSERT INTO releases (file_path) VALUES (?1)", params![p])
+                .unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn common_prefix_of_a_shared_tree() {
+        let conn = seed(&[
+            Some("/data/music/Aphex Twin/SAW"),
+            Some("/data/music/Autechre/Amber"),
+            Some("/data/music/2562/Aerial"),
+        ]);
+        assert_eq!(
+            derive_common_root(&conn).unwrap().as_deref(),
+            Some("/data/music")
+        );
+    }
+
+    #[test]
+    fn ignores_null_and_empty_paths() {
+        let conn = seed(&[
+            None,
+            Some(""),
+            Some("/data/music/A/x"),
+            Some("/data/music/B/y"),
+        ]);
+        assert_eq!(
+            derive_common_root(&conn).unwrap().as_deref(),
+            Some("/data/music")
+        );
+    }
+
+    #[test]
+    fn no_paths_yields_none() {
+        let conn = seed(&[None, Some("")]);
+        assert_eq!(derive_common_root(&conn).unwrap(), None);
+    }
+
+    #[test]
+    fn single_path_returns_itself() {
+        let conn = seed(&[Some("/data/music/Only/One")]);
+        assert_eq!(
+            derive_common_root(&conn).unwrap().as_deref(),
+            Some("/data/music/Only/One")
+        );
+    }
+
+    #[test]
+    fn divergent_roots_collapse_to_filesystem_root() {
+        // Two different absolute trees share only "/".
+        let conn = seed(&[Some("/data/music/A/x"), Some("/mnt/media/B/y")]);
+        assert_eq!(derive_common_root(&conn).unwrap().as_deref(), Some("/"));
+    }
+}
