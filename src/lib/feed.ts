@@ -101,12 +101,21 @@ export function resolveFeed(
       .filter((a): a is string => Boolean(a)),
   );
 
-  // kind:5 deletions referencing a feed-note address (NIP-09 `a` tags).
-  const deleted = new Set<string>();
+  // kind:5 deletions referencing a feed-note address (NIP-09 `a` tags). Keyed
+  // by address -> newest deletion timestamp, NOT a bare set: the address is
+  // reused whenever a note is republished, so a deletion may only kill events
+  // created at or before it. Treating it as a permanent tombstone means a
+  // note that is ever deleted can never be published again.
+  const deletedAt = new Map<string, number>();
   for (const e of events) {
     if (e.kind !== 5) continue;
     for (const t of e.tags) {
-      if (t[0] === "a" && t[1]?.startsWith(`${FEED_KIND}:`)) deleted.add(t[1]);
+      if (t[0] === "a" && t[1]?.startsWith(`${FEED_KIND}:`)) {
+        const prev = deletedAt.get(t[1]);
+        if (prev === undefined || e.created_at > prev) {
+          deletedAt.set(t[1], e.created_at);
+        }
+      }
     }
   }
 
@@ -114,7 +123,8 @@ export function resolveFeed(
   for (const ev of events) {
     if (ev.kind !== FEED_KIND) continue;
     const address = `${FEED_KIND}:${ev.pubkey}:${tag(ev, "d") ?? ""}`;
-    if (deleted.has(address)) continue;
+    const killedAt = deletedAt.get(address);
+    if (killedAt !== undefined && ev.created_at <= killedAt) continue;
     const isOwner = ev.pubkey === ownerPubkey;
 
     let provenance: FeedProvenance;
