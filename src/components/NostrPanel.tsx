@@ -5,27 +5,23 @@ import {
   KeyRound,
   Radio,
   ShieldCheck,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
+import { cn } from "../lib/cn";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import {
   generateKeypair,
   importKeypair,
-  publishLibrary,
+  publishByIds,
+  unpublishByIds,
   type PublishLibrarySummary,
   type PublishProgress,
 } from "../lib/tauri";
-
-interface FilterContext {
-  query: string;
-  medium: "physical" | "digital" | null;
-  needsCoverOnly: boolean;
-  publishedFilter: "published" | "unpublished" | null;
-  labelFilter: "with_label" | "without_label" | null;
-  count: number;
-}
+import { publishStateMeta } from "../lib/publishState";
+import type { FilterContext } from "./ReleaseList";
 
 interface NostrPanelProps {
   relays: string[];
@@ -37,6 +33,7 @@ interface NostrPanelProps {
 
 type Phase = "loggedOut" | "reveal" | "loggedIn";
 type PublishPhase = "idle" | "confirm" | "running" | "done";
+type LibraryAction = "publish" | "unpublish";
 
 export interface ProfileMeta {
   name?: string;
@@ -45,24 +42,37 @@ export interface ProfileMeta {
   picture?: string;
 }
 
+// Every filter the release list applies must be reflected here — the bulk ops
+// act on the exact visible id set, and this description is what the confirm
+// dialog shows, so an omission would misrepresent the affected set.
 function isFilterActive(f: FilterContext): boolean {
   return (
     f.query.trim() !== "" ||
     f.medium !== null ||
     f.needsCoverOnly ||
-    f.publishedFilter !== null ||
-    f.labelFilter !== null
+    f.publishStateFilter !== null ||
+    f.labelFilter !== null ||
+    f.genreFilter !== null ||
+    f.videoFilter !== null ||
+    f.coverLinkFilter !== null
   );
 }
 
 function describeFilter(f: FilterContext): string {
   const parts: string[] = [];
   if (f.medium) parts.push(f.medium);
-  if (f.publishedFilter) parts.push(f.publishedFilter);
+  if (f.publishStateFilter)
+    parts.push(publishStateMeta(f.publishStateFilter).label.toLowerCase());
   if (f.labelFilter === "with_label") parts.push("has label");
   if (f.labelFilter === "without_label") parts.push("no label");
-  if (f.query.trim()) parts.push(`search "${f.query.trim()}"`);
+  if (f.genreFilter === "with_genre") parts.push("has genre");
+  if (f.genreFilter === "without_genre") parts.push("no genre");
+  if (f.videoFilter === "with_video") parts.push("has video");
+  if (f.videoFilter === "without_video") parts.push("audio-only");
+  if (f.coverLinkFilter === "with_link") parts.push("has web image");
+  if (f.coverLinkFilter === "without_link") parts.push("no web image");
   if (f.needsCoverOnly) parts.push("no cover");
+  if (f.query.trim()) parts.push(`search "${f.query.trim()}"`);
   return parts.join(", ");
 }
 
@@ -81,6 +91,10 @@ export function NostrPanel({
   const [busy, setBusy] = useState(false);
 
   const [publishPhase, setPublishPhase] = useState<PublishPhase>("idle");
+  // Which bulk op the confirm/running/done cycle refers to. Only one library
+  // op runs at a time, so a single phase + action pair covers both.
+  const [libraryAction, setLibraryAction] =
+    useState<LibraryAction>("publish");
   const [publishProgress, setPublishProgress] =
     useState<PublishProgress | null>(null);
   const [publishSummary, setPublishSummary] =
@@ -140,9 +154,13 @@ export function NostrPanel({
     setError(null);
   }, [npub]);
 
-  async function runPublishLibrary() {
+  async function runLibraryOp() {
     if (relays.length === 0) {
-      setPublishError("Add at least one relay before publishing.");
+      setPublishError(
+        libraryAction === "publish"
+          ? "Add at least one relay before publishing."
+          : "Add at least one relay before unpublishing.",
+      );
       return;
     }
     setPublishError(null);
@@ -177,18 +195,13 @@ export function NostrPanel({
         }),
       );
 
-      const summary = await publishLibrary(
-        relays,
-        isFilterActive(filterContext)
-          ? {
-              query: filterContext.query.trim() || undefined,
-              medium: filterContext.medium ?? undefined,
-              needsCover: filterContext.needsCoverOnly || undefined,
-              publishedFilter: filterContext.publishedFilter ?? undefined,
-              labelFilter: filterContext.labelFilter ?? undefined,
-            }
-          : undefined,
-      );
+      // Act on exactly the ids the release list is showing — count, filter
+      // description, and operation are all the same set, by construction.
+      const ids = filterContext.visibleIds;
+      const summary =
+        libraryAction === "publish"
+          ? await publishByIds(ids, relays)
+          : await unpublishByIds(ids, relays);
       setPublishSummary(summary);
       setPublishPhase("done");
     } catch (e) {
@@ -335,17 +348,19 @@ export function NostrPanel({
           <div className="max-w-md">
             <PublishLibraryBlock
               phase={publishPhase}
+              action={libraryAction}
               progress={publishProgress}
               summary={publishSummary}
               relayCount={relays.length}
               error={publishError}
               filterContext={filterContext}
-              onAskConfirm={() => {
+              onAskConfirm={(action) => {
+                setLibraryAction(action);
                 setPublishError(null);
                 setPublishPhase("confirm");
               }}
               onCancel={() => setPublishPhase("idle")}
-              onConfirm={runPublishLibrary}
+              onConfirm={runLibraryOp}
               onAcknowledgeDone={() => {
                 setPublishPhase("idle");
                 setPublishProgress(null);
@@ -363,12 +378,13 @@ export function NostrPanel({
 
 interface PublishLibraryBlockProps {
   phase: PublishPhase;
+  action: LibraryAction;
   progress: PublishProgress | null;
   summary: PublishLibrarySummary | null;
   relayCount: number;
   error: string | null;
   filterContext: FilterContext;
-  onAskConfirm: () => void;
+  onAskConfirm: (action: LibraryAction) => void;
   onCancel: () => void;
   onConfirm: () => void;
   onAcknowledgeDone: () => void;
@@ -376,6 +392,7 @@ interface PublishLibraryBlockProps {
 
 function PublishLibraryBlock({
   phase,
+  action,
   progress,
   summary,
   relayCount,
@@ -387,21 +404,35 @@ function PublishLibraryBlock({
   onAcknowledgeDone,
 }: PublishLibraryBlockProps) {
   const filterActive = isFilterActive(filterContext);
-  const buttonLabel = filterActive
-    ? `Publish ${filterContext.count.toLocaleString()} filtered ` +
-      `release${filterContext.count === 1 ? "" : "s"}`
-    : "Publish library";
+  const countLabel = `${filterContext.count.toLocaleString()} filtered release${
+    filterContext.count === 1 ? "" : "s"
+  }`;
   const filterDescription = filterActive ? describeFilter(filterContext) : "";
+  const disabled = relayCount === 0 || filterContext.count === 0;
   if (phase === "idle") {
     return (
       <>
         <button
-          onClick={onAskConfirm}
-          disabled={relayCount === 0 || (filterActive && filterContext.count === 0)}
+          onClick={() => onAskConfirm("publish")}
+          disabled={disabled}
           className={`${DB_BUTTON_CLS} mt-3 w-full justify-center
                       disabled:opacity-50 disabled:cursor-not-allowed`}
         >
-          <Upload size={14} /> {buttonLabel}
+          <Upload size={14} />{" "}
+          {filterActive ? `Publish ${countLabel}` : "Publish library"}
+        </button>
+        <button
+          onClick={() => onAskConfirm("unpublish")}
+          disabled={disabled}
+          title="Broadcast kind:5 deletions to retract these releases from relays"
+          className="mt-2 w-full flex items-center justify-center gap-1.5
+                     px-3 py-1.5 rounded-md text-xs text-alert
+                     border border-alert/40 hover:bg-alert/10
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     transition-colors"
+        >
+          <Trash2 size={14} />{" "}
+          {filterActive ? `Unpublish ${countLabel}` : "Unpublish library"}
         </button>
         {filterActive && (
           <div className="mt-1 text-[10px] text-muted text-center">
@@ -415,28 +446,41 @@ function PublishLibraryBlock({
 
   if (phase === "confirm") {
     const count = filterActive ? filterContext.count : null;
+    const scope = filterActive ? (
+      <>
+        <span className="font-mono text-accent">{count?.toLocaleString()}</span>{" "}
+        release{count === 1 ? "" : "s"} matching the current filter (
+        <span className="font-mono">{filterDescription}</span>)
+      </>
+    ) : (
+      "Each release in your library"
+    );
     return (
       <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 p-3">
         <div className="flex items-center gap-2 text-warn font-semibold text-xs">
-          <AlertTriangle size={14} /> Publishing is public and permanent
+          <AlertTriangle size={14} />{" "}
+          {action === "publish"
+            ? "Publishing is public and permanent"
+            : "Unpublishing broadcasts deletions"}
         </div>
         <p className="mt-1 text-xs text-fg/90">
-          {filterActive ? (
+          {action === "publish" ? (
             <>
-              <span className="font-mono text-accent">
-                {count?.toLocaleString()}
-              </span>{" "}
-              release{count === 1 ? "" : "s"} matching the current filter
-              (<span className="font-mono">{filterDescription}</span>) will
-              be signed and broadcast to{" "}
+              {scope} will be signed and broadcast to{" "}
+              <span className="font-mono text-accent">{relayCount}</span>{" "}
+              {relayCount === 1 ? "relay" : "relays"} as a kind:31237 event.
+              Relays cache and indexers archive — once out there, the data is
+              effectively forever.
             </>
           ) : (
-            "Each release in your library will be signed and broadcast to "
+            <>
+              A kind:5 deletion referencing {scope} will be signed and sent to{" "}
+              <span className="font-mono text-accent">{relayCount}</span>{" "}
+              {relayCount === 1 ? "relay" : "relays"}, and the local publish
+              markers cleared. Deletions are advisory — relays that don't honour
+              kind:5 (and any cache or indexer) may keep the original events.
+            </>
           )}
-          <span className="font-mono text-accent">{relayCount}</span>{" "}
-          {relayCount === 1 ? "relay" : "relays"} as a kind:31237 event.
-          Relays cache and indexers archive — once out there, the data is
-          effectively forever.
         </p>
         <div className="mt-2 flex justify-end gap-2 text-xs">
           <button
@@ -446,14 +490,25 @@ function PublishLibraryBlock({
           >
             cancel
           </button>
-          <button
-            onClick={onConfirm}
-            className="px-3 py-1.5 rounded-md bg-accent text-bg font-semibold
-                       hover:opacity-90 flex items-center gap-1.5"
-          >
-            <Upload size={12} />{" "}
-            {filterActive ? "Yes, publish filtered" : "Yes, publish all"}
-          </button>
+          {action === "publish" ? (
+            <button
+              onClick={onConfirm}
+              className="px-3 py-1.5 rounded-md bg-accent text-bg font-semibold
+                         hover:opacity-90 flex items-center gap-1.5"
+            >
+              <Upload size={12} />{" "}
+              {filterActive ? "Yes, publish filtered" : "Yes, publish all"}
+            </button>
+          ) : (
+            <button
+              onClick={onConfirm}
+              className="px-3 py-1.5 rounded-md bg-alert text-bg font-semibold
+                         hover:opacity-90 flex items-center gap-1.5"
+            >
+              <Trash2 size={12} />{" "}
+              {filterActive ? "Yes, unpublish filtered" : "Yes, unpublish all"}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -465,12 +520,14 @@ function PublishLibraryBlock({
     return (
       <div className="mt-3">
         <div className="text-xs text-muted">
-          publishing {progress.current.toLocaleString()} /{" "}
-          {total.toLocaleString()}
+          {action === "publish" ? "publishing" : "unpublishing"}{" "}
+          {progress.current.toLocaleString()} / {total.toLocaleString()}
         </div>
         <div className="mt-1 h-2 rounded-full bg-surface overflow-hidden">
           <div
-            className="h-full bg-accent transition-[width] duration-150"
+            className={`h-full transition-[width] duration-150 ${
+              action === "publish" ? "bg-accent" : "bg-alert"
+            }`}
             style={{ width: `${ratio * 100}%` }}
           />
         </div>
@@ -492,9 +549,21 @@ function PublishLibraryBlock({
   if (phase === "done" && summary) {
     return (
       <div className="mt-3">
-        <div className="grid grid-cols-3 gap-2 text-xs">
+        <div
+          className={cn(
+            "grid gap-2 text-xs",
+            summary.skipped > 0 ? "grid-cols-4" : "grid-cols-3",
+          )}
+        >
           <Tile label="total" value={summary.total} />
-          <Tile label="published" value={summary.published} tone="ok" />
+          <Tile
+            label={action === "publish" ? "published" : "unpublished"}
+            value={summary.published}
+            tone="ok"
+          />
+          {summary.skipped > 0 && (
+            <Tile label="skipped" value={summary.skipped} />
+          )}
           <Tile label="failed" value={summary.failed} tone="alert" />
         </div>
         <div className="mt-2 flex justify-end">

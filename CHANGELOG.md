@@ -15,6 +15,65 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.1.4-beta.5 — unreleased
+
+Publish state grows from a single timestamp into a real lifecycle, and gains the
+tooling to see — and repair — what the relays are *actually* serving. No contract
+change: `release.v2` is untouched, and every new column is local-only.
+
+### Publish lifecycle (four states)
+- **`publish_state`: `never` | `published` | `stale` | `retracted`.** A new
+  column, maintained at every transition, replacing the overloaded
+  "`last_published_at IS NULL`" test — which could not tell never-published from
+  retracted from edited-since-publishing. Filter control in the toolbar (state
+  dropdown) and a four-colour dot per row. Rows predating the column backfill to
+  `published` when they carry a publish marker; retraction history cannot be
+  reconstructed retroactively.
+- **Bulk unpublish**, mirroring bulk publish. State-aware: `never` and already
+  `retracted` rows have nothing live to retract, so they are skipped and
+  reported rather than spraying pointless kind:5 events.
+- **Bulk ops are driven by an explicit id set, not a filter.** `publish_library`
+  / `unpublish_library` are gone; `publish_ids` / `unpublish_ids` take exactly
+  the ids the release list is showing. The count, the confirm-dialog
+  description, and the operation are now the same set by construction. The old
+  design re-derived the filter server-side from an object that knew about five
+  of the seven active filters, so a view narrowed by an unknown filter looked
+  "unfiltered" to the backend and the op silently addressed the whole library.
+- **Web-image-link filter** — has / hasn't a published `cover_art_url`, distinct
+  from having a local `cover.jpg`.
+
+### Relay reconciliation
+- **`e`-tag deletions.** A release retraction now carries both the `a`
+  coordinate and an `e` tag naming the live event id (new
+  `last_published_event_id` column, populated on publish and backfilled by
+  "Reconcile published state"). `a`-only deletions are a **no-op on
+  nostr-rs-relay** (which relay.fizx.uk runs) — it honours NIP-09 by event id
+  only. Every unpublish ever sent to fizx was stored and never applied; it had
+  accumulated 2,528 inert kind:5 events while still serving 770 retracted
+  releases.
+- **"Reconcile relays"** (Library maintenance). Read-only audit: asks each relay
+  what it serves under our key and diffs it against the DB, per relay — `ok`,
+  **ghosts** (served but not published locally), **orphans** (served, no local
+  release — a DB rebuild shifted the ids, so nothing local can ever drive their
+  deletion), `absent`, `stale`. Then purges the strays, recovering each event id
+  from the relay itself. Anything still `published` or `stale` is re-checked
+  against the DB and skipped, whatever the UI passes in.
+
+### Fixed
+- **`reconcile_published` treated any-ever-deleted as permanently deleted.** It
+  collected kind:5 `a` tags into a bare id set, ignoring timestamps — but the
+  coordinate is reused on every republish. After one bulk unpublish/republish
+  cycle every id carried a deletion, so the whole library looked dead and the
+  reconcile would have skipped all of it. A deletion now only kills events
+  created at or before it (strict NIP-09).
+- **Relay pagination dropped events sharing a `created_at`.** Stepping back
+  through history with `until = oldest - 1` skips every event in that second
+  that didn't fit on the page — and a bulk publish stamps hundreds of events per
+  second. It hid 2 ghosts and made 3 published releases look unserved by any
+  relay. Now steps to `oldest` inclusive and dedupes by id.
+- `cargo check --tests` had not been run since `publish_state` landed; two test
+  fixtures no longer compiled.
+
 ## 0.1.4-beta.1 — unreleased
 
 ### Contract (feed.v1 — frozen, coordinated with ndisc.view + glmps×2)

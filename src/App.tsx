@@ -245,10 +245,13 @@ export default function App() {
     query: "",
     medium: null,
     needsCoverOnly: false,
-    publishedFilter: null,
+    publishStateFilter: null,
     labelFilter: null,
     genreFilter: null,
+    videoFilter: null,
+    coverLinkFilter: null,
     count: 0,
+    visibleIds: [],
   });
 
   // Top-level view switch. Stats replaces the 3-panel library grid; the top

@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS feed_notes (
     published_at         INTEGER,        -- the published_at tag value (seconds)
     last_published_at    INTEGER,        -- publish-state; NULL = draft / stale
     last_published_event TEXT,           -- event id of the last publish
+    publish_state        TEXT DEFAULT 'never',  -- never|published|stale|retracted
     created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -122,6 +123,14 @@ pub struct Release {
     pub last_published_at: Option<i64>,
     #[serde(default)]
     pub last_published_naddr: Option<String>,
+    // Four-state publish lifecycle: never | published | stale | retracted.
+    // NULL is treated as "never" (older rows predate the column).
+    #[serde(default)]
+    pub publish_state: Option<String>,
+    // Event id of the live kind:31237, so a deletion can name it with an `e`
+    // tag (see the migration note — some relays honour nothing else).
+    #[serde(default)]
+    pub last_published_event_id: Option<String>,
     #[serde(default)]
     pub added_at: Option<i64>,
     #[serde(default)]
@@ -362,6 +371,24 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "video_count", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_at", "INTEGER")?;
     ensure_column(&conn, "releases", "last_published_naddr", "TEXT")?;
+    ensure_column(&conn, "releases", "publish_state", "TEXT")?;
+    // Event id of the last kind:31237 we published for this release. Needed so
+    // an unpublish can carry an `e` tag alongside the `a` coordinate: relays
+    // running nostr-rs-relay (relay.fizx.uk) only honour NIP-09 deletion by
+    // event id and silently ignore `a`-tag deletion of addressable events.
+    // NULL for rows published before this column existed — "Reconcile relays"
+    // recovers those ids from the relays themselves.
+    ensure_column(&conn, "releases", "last_published_event_id", "TEXT")?;
+    // Backfill the four-state column for rows that predate it: anything with a
+    // live publish marker is 'published'; the rest stay NULL (read as 'never').
+    // Idempotent — only touches rows still NULL. We can't recover 'stale' or
+    // 'retracted' history retroactively, so those begin from the next action.
+    conn.execute(
+        "UPDATE releases SET publish_state = 'published'
+          WHERE publish_state IS NULL AND last_published_at IS NOT NULL",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     backfill_type_category(&conn)?;
     backfill_source(&conn)?;
     backfill_genre_v2(&conn)?;
@@ -460,7 +487,9 @@ fn backfill_genre_renames_2026_06b(conn: &Connection) -> Result<(), String> {
     // they no longer match the old slug).
     conn.execute(
         "UPDATE releases
-            SET last_published_at = NULL, last_published_naddr = NULL
+            SET last_published_at = NULL, last_published_naddr = NULL,
+                publish_state = CASE WHEN publish_state = 'published'
+                                     THEN 'stale' ELSE publish_state END
           WHERE last_published_at IS NOT NULL
             AND ( genre_primary   IN ('poetry','spiritual')
                OR genre_secondary IN ('poetry','spiritual')
@@ -602,7 +631,9 @@ fn backfill_genre_restructure_2026_06(conn: &Connection) -> Result<(), String> {
                  genre_secondary = ?2,
                  genre_tertiary = ?3,
                  last_published_at = NULL,
-                 last_published_naddr = NULL
+                 last_published_naddr = NULL,
+                 publish_state = CASE WHEN publish_state = 'published'
+                                      THEN 'stale' ELSE publish_state END
              WHERE id = ?4",
             params![new_p, new_s, new_t, id],
         )
@@ -859,9 +890,13 @@ fn set_cover_art_url(
 /// already NULL). Setters touching ONLY local-only data (file_path,
 /// cover_art_path, track_count) deliberately do NOT call this.
 fn mark_unpublished(conn: &Connection, release_id: i64) -> Result<(), String> {
+    // Editing content that's on-relay makes the live event stale. Only a
+    // 'published' row transitions to 'stale'; never/retracted are unaffected.
     conn.execute(
         "UPDATE releases
-         SET last_published_at = NULL, last_published_naddr = NULL
+         SET last_published_at = NULL, last_published_naddr = NULL,
+             publish_state = CASE WHEN publish_state = 'published'
+                                  THEN 'stale' ELSE publish_state END
          WHERE id = ?1",
         params![release_id],
     )
@@ -1221,7 +1256,7 @@ fn export_markdown(
     query: Option<String>,
     medium: Option<String>,
     needs_cover: Option<bool>,
-    published_filter: Option<String>,
+    publish_state_filter: Option<String>,
     label_filter: Option<String>,
 ) -> Result<usize, String> {
     let releases = list_releases(
@@ -1229,10 +1264,11 @@ fn export_markdown(
         query,
         medium,
         needs_cover,
-        published_filter,
+        publish_state_filter,
         label_filter,
         None, // genre_filter — export is not genre-scoped
         None, // video_filter — export is not video-scoped
+        None, // cover_link_filter — export is not cover-link-scoped
     )?;
     let md = build_markdown(&releases);
     std::fs::write(&dest_path, md).map_err(|e| e.to_string())?;
@@ -1403,6 +1439,8 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         track_total: row.get(27)?,
         disc_total: row.get(28)?,
         video_count: row.get(29)?,
+        publish_state: row.get(30)?,
+        last_published_event_id: row.get(31)?,
     })
 }
 
@@ -1412,7 +1450,7 @@ const RELEASE_SELECT_COLS: &str =
      discogs_id, bandcamp_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
-     disc_total, video_count";
+     disc_total, video_count, publish_state, last_published_event_id";
 
 #[tauri::command]
 fn list_releases(
@@ -1420,10 +1458,11 @@ fn list_releases(
     query: Option<String>,
     medium: Option<String>,
     needs_cover: Option<bool>,
-    published_filter: Option<String>,
+    publish_state_filter: Option<String>,
     label_filter: Option<String>,
     genre_filter: Option<String>,
     video_filter: Option<String>,
+    cover_link_filter: Option<String>,
 ) -> Result<Vec<Release>, String> {
     let conn = open(&app)?;
     let q = query.unwrap_or_default();
@@ -1439,9 +1478,12 @@ fn list_releases(
         None => String::new(),
     };
 
-    let published_clause = match published_filter.as_deref() {
-        Some("published") => "AND last_published_at IS NOT NULL",
-        Some("unpublished") => "AND last_published_at IS NULL",
+    // Four-state publish lifecycle. NULL is read as 'never' (pre-column rows).
+    let state_clause = match publish_state_filter.as_deref() {
+        Some("never") => "AND (publish_state IS NULL OR publish_state = 'never')",
+        Some("published") => "AND publish_state = 'published'",
+        Some("stale") => "AND publish_state = 'stale'",
+        Some("retracted") => "AND publish_state = 'retracted'",
         _ => "",
     };
 
@@ -1467,6 +1509,14 @@ fn list_releases(
         _ => "",
     };
 
+    // Published web image link presence — cover_art_url only (a local
+    // cover.jpg lives in cover_art_path and does NOT count as a web link).
+    let cover_link_clause = match cover_link_filter.as_deref() {
+        Some("with_link") => "AND cover_art_url IS NOT NULL AND cover_art_url <> ''",
+        Some("without_link") => "AND (cover_art_url IS NULL OR cover_art_url = '')",
+        _ => "",
+    };
+
     let select_sql = format!(
         "SELECT {cols}
          FROM releases
@@ -1474,17 +1524,19 @@ fn list_releases(
                           OR label  LIKE ?2 OR catalog_number LIKE ?2)
            AND (?3 IS NULL OR medium = ?3)
            {cover}
-           {published}
+           {state}
            {label}
            {genre}
            {video}
+           {cover_link}
          ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
         cols = RELEASE_SELECT_COLS,
         cover = cover_filter,
-        published = published_clause,
+        state = state_clause,
         label = label_clause,
         genre = genre_clause,
         video = video_clause,
+        cover_link = cover_link_clause,
     );
     let mut stmt = conn
         .prepare(&select_sql)
@@ -2851,6 +2903,9 @@ struct PublishProgress {
 pub struct PublishLibrarySummary {
     pub total: usize,
     pub published: usize,
+    // Rows left untouched because there was nothing to do (e.g. unpublishing a
+    // never-published or already-retracted release — no live event to retract).
+    pub skipped: usize,
     pub failed: usize,
 }
 
@@ -2974,6 +3029,45 @@ fn split_send_output(output: &Output<EventId>) -> (Vec<String>, Vec<RelayError>)
     (accepted, rejected)
 }
 
+/// The release coordinate a kind:31237 lives at: "31237:<pubkey>:disco-vault:<id>".
+fn release_address(keys: &Keys, release_id: i64) -> String {
+    format!(
+        "{}:{}:{}",
+        u16::from(Kind::Custom(KIND_RELEASE)),
+        keys.public_key(),
+        release_d_tag(release_id)
+    )
+}
+
+/// Build the kind:5 that retracts a release.
+///
+/// Carries BOTH the `a` coordinate and an `e` tag per known event id. The `a`
+/// tag alone is not enough: nostr-rs-relay (which relay.fizx.uk runs) only
+/// implements NIP-09 deletion by event id, so an `a`-only deletion is stored
+/// and never applied — the release stays live forever. strfry (nos.lol) honours
+/// `a`. Sending both satisfies each without a second event.
+///
+/// `event_ids` may be empty (nothing known); the deletion is then `a`-only and
+/// will only take on relays that support addressable deletion.
+fn release_delete_event(
+    keys: &Keys,
+    release_id: i64,
+    event_ids: &[String],
+) -> Result<Event, String> {
+    let mut tags = vec![
+        Tag::parse(["a", &release_address(keys, release_id)])
+            .map_err(|e| e.to_string())?,
+        Tag::parse(["k", &KIND_RELEASE.to_string()]).map_err(|e| e.to_string())?,
+    ];
+    for id in event_ids {
+        tags.push(Tag::parse(["e", id]).map_err(|e| e.to_string())?);
+    }
+    EventBuilder::new(Kind::EventDeletion, "")
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn unpublish_release(
     app: tauri::AppHandle,
@@ -2986,22 +3080,22 @@ async fn unpublish_release(
     let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
     let keys = keys_from_nsec(&nsec)?;
 
-    let d = release_d_tag(release_id);
-    let address = format!(
-        "{}:{}:{}",
-        u16::from(Kind::Custom(KIND_RELEASE)),
-        keys.public_key(),
-        d
-    );
+    // Name the live event explicitly when we know its id (see the doc comment
+    // on release_delete_event). Rows published before that column existed have
+    // none — "Reconcile relays" is the path that cleans those up.
+    let known: Vec<String> = open(&app)?
+        .query_row(
+            "SELECT last_published_event_id FROM releases WHERE id = ?1",
+            params![release_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .into_iter()
+        .collect();
 
-    let tag_a = Tag::parse(["a", &address]).map_err(|e| e.to_string())?;
-    let tag_k =
-        Tag::parse(["k", &KIND_RELEASE.to_string()]).map_err(|e| e.to_string())?;
-
-    let event = EventBuilder::new(Kind::EventDeletion, "")
-        .tags([tag_a, tag_k])
-        .sign_with_keys(&keys)
-        .map_err(|e| e.to_string())?;
+    let event = release_delete_event(&keys, release_id, &known)?;
     let event_id = event.id.to_string();
 
     let client = build_client(keys, &relays).await;
@@ -3018,7 +3112,10 @@ async fn unpublish_release(
         let conn = open(&app)?;
         conn.execute(
             "UPDATE releases
-             SET last_published_at = NULL, last_published_naddr = NULL
+             SET last_published_at = NULL, last_published_naddr = NULL,
+                 last_published_event_id = NULL,
+                 publish_state = CASE WHEN publish_state IN ('published','stale')
+                                      THEN 'retracted' ELSE publish_state END
              WHERE id = ?1",
             params![release_id],
         )
@@ -3634,9 +3731,11 @@ async fn publish_release(
         conn.execute(
             "UPDATE releases
              SET last_published_at = strftime('%s','now'),
-                 last_published_naddr = ?1
-             WHERE id = ?2",
-            params![naddr, release_id],
+                 last_published_naddr = ?1,
+                 last_published_event_id = ?2,
+                 publish_state = 'published'
+             WHERE id = ?3",
+            params![naddr, event_id, release_id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -3650,14 +3749,10 @@ async fn publish_release(
 }
 
 #[tauri::command]
-async fn publish_library(
+async fn publish_ids(
     app: tauri::AppHandle,
+    ids: Vec<i64>,
     relays: Vec<String>,
-    query: Option<String>,
-    medium: Option<String>,
-    needs_cover: Option<bool>,
-    published_filter: Option<String>,
-    label_filter: Option<String>,
 ) -> Result<PublishLibrarySummary, String> {
     if relays.is_empty() {
         return Err("no relays configured".into());
@@ -3665,57 +3760,20 @@ async fn publish_library(
     let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
     let keys = keys_from_nsec(&nsec)?;
 
-    let releases: Vec<Release> = {
-        let conn = open(&app)?;
-        let q = query.unwrap_or_default();
-        let q_like = format!("%{}%", q);
-        let no_cover_clause = "(cover_art_url IS NULL OR cover_art_url = '')
-                           AND (cover_art_path IS NULL OR cover_art_path = '')";
-        let cover_filter = match needs_cover {
-            Some(true) => format!("AND {}", no_cover_clause),
-            Some(false) => format!("AND NOT ({})", no_cover_clause),
-            None => String::new(),
-        };
-        let published_clause = match published_filter.as_deref() {
-            Some("published") => "AND last_published_at IS NOT NULL",
-            Some("unpublished") => "AND last_published_at IS NULL",
-            _ => "",
-        };
-        let label_clause = match label_filter.as_deref() {
-            Some("with_label") => "AND label IS NOT NULL AND label <> ''",
-            Some("without_label") => "AND (label IS NULL OR label = '')",
-            _ => "",
-        };
-        let sql = format!(
-            "SELECT {cols}
-             FROM releases
-             WHERE (?1 = '' OR artist LIKE ?2 OR title LIKE ?2
-                              OR label  LIKE ?2 OR catalog_number LIKE ?2)
-               AND (?3 IS NULL OR medium = ?3)
-               {cover}
-               {published}
-               {label}
-             ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
-            cols = RELEASE_SELECT_COLS,
-            cover = cover_filter,
-            published = published_clause,
-            label = label_clause,
-        );
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![q, q_like, medium], row_to_release)
-            .map_err(|e| e.to_string())?;
-        rows.filter_map(|r| r.ok()).collect()
-    };
+    // Resolve the explicit id set to rows in the given order. This is the ONLY
+    // bulk publish path — the caller passes exactly the ids on screen, so the
+    // operation can never drift from what the user sees (no filter re-derived
+    // on the backend). Ids that vanished between resolve and send are skipped.
+    let releases = resolve_release_ids(&app, &ids)?;
 
     let total = releases.len();
     let _ = app.emit("publish:started", total);
-
     let client = build_client(keys.clone(), &relays).await;
 
     let mut summary = PublishLibrarySummary {
         total,
         published: 0,
+        skipped: 0,
         failed: 0,
     };
 
@@ -3724,24 +3782,10 @@ async fn publish_library(
             Ok(e) => e,
             Err(_) => {
                 summary.failed += 1;
-                let _ = app.emit(
-                    "publish:progress",
-                    PublishProgress {
-                        current: i + 1,
-                        total,
-                        title: r.title.clone(),
-                        artist: r.artist.clone(),
-                        accepted_by: vec![],
-                        rejected: vec![RelayError {
-                            relay: "*".into(),
-                            error: "could not build event".into(),
-                        }],
-                    },
-                );
+                emit_publish_progress(&app, i + 1, total, r, vec![], one_error("could not build event"));
                 continue;
             }
         };
-
         match client.send_event(&event).await {
             Ok(output) => {
                 let (accepted_by, rejected) = split_send_output(&output);
@@ -3754,51 +3798,159 @@ async fn publish_library(
                         let _ = conn.execute(
                             "UPDATE releases
                              SET last_published_at = strftime('%s','now'),
-                                 last_published_naddr = ?1
-                             WHERE id = ?2",
-                            params![naddr, id],
+                                 last_published_naddr = ?1,
+                                 last_published_event_id = ?2,
+                                 publish_state = 'published'
+                             WHERE id = ?3",
+                            params![naddr, event.id.to_string(), id],
                         );
                     }
                 } else {
                     summary.failed += 1;
                 }
-                let _ = app.emit(
-                    "publish:progress",
-                    PublishProgress {
-                        current: i + 1,
-                        total,
-                        title: r.title.clone(),
-                        artist: r.artist.clone(),
-                        accepted_by,
-                        rejected,
-                    },
-                );
+                emit_publish_progress(&app, i + 1, total, r, accepted_by, rejected);
             }
             Err(e) => {
                 summary.failed += 1;
-                let _ = app.emit(
-                    "publish:progress",
-                    PublishProgress {
-                        current: i + 1,
-                        total,
-                        title: r.title.clone(),
-                        artist: r.artist.clone(),
-                        accepted_by: vec![],
-                        rejected: vec![RelayError {
-                            relay: "*".into(),
-                            error: e.to_string(),
-                        }],
-                    },
-                );
+                emit_publish_progress(&app, i + 1, total, r, vec![], one_error(&e.to_string()));
             }
         }
-
         // Be polite to relays — don't hammer.
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     let _ = client.shutdown().await;
     Ok(summary)
+}
+
+#[tauri::command]
+async fn unpublish_ids(
+    app: tauri::AppHandle,
+    ids: Vec<i64>,
+    relays: Vec<String>,
+) -> Result<PublishLibrarySummary, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let releases = resolve_release_ids(&app, &ids)?;
+
+    let total = releases.len();
+    let _ = app.emit("publish:started", total);
+    let client = build_client(keys.clone(), &relays).await;
+
+    let mut summary = PublishLibrarySummary {
+        total,
+        published: 0,
+        skipped: 0,
+        failed: 0,
+    };
+
+    for (i, r) in releases.iter().enumerate() {
+        // Only a live event can be retracted. never / retracted rows have
+        // nothing on relays, so a kind:5 would be noise — skip them and don't
+        // mislabel their state.
+        let state = r.publish_state.as_deref().unwrap_or("never");
+        if state != "published" && state != "stale" {
+            summary.skipped += 1;
+            emit_publish_progress(&app, i + 1, total, r, vec![], vec![]);
+            continue;
+        }
+
+        let build = || -> Result<Event, String> {
+            let id = r.id.ok_or_else(|| "release has no id".to_string())?;
+            let known: Vec<String> =
+                r.last_published_event_id.clone().into_iter().collect();
+            release_delete_event(&keys, id, &known)
+        };
+        let event = match build() {
+            Ok(e) => e,
+            Err(err) => {
+                summary.failed += 1;
+                emit_publish_progress(&app, i + 1, total, r, vec![], one_error(&err));
+                continue;
+            }
+        };
+
+        match client.send_event(&event).await {
+            Ok(output) => {
+                let (accepted_by, rejected) = split_send_output(&output);
+                if !accepted_by.is_empty() {
+                    summary.published += 1;
+                    if let Some(id) = r.id {
+                        let conn = open(&app)?;
+                        let _ = conn.execute(
+                            "UPDATE releases
+                             SET last_published_at = NULL, last_published_naddr = NULL,
+                                 last_published_event_id = NULL,
+                                 publish_state = 'retracted'
+                             WHERE id = ?1",
+                            params![id],
+                        );
+                    }
+                } else {
+                    summary.failed += 1;
+                }
+                emit_publish_progress(&app, i + 1, total, r, accepted_by, rejected);
+            }
+            Err(e) => {
+                summary.failed += 1;
+                emit_publish_progress(&app, i + 1, total, r, vec![], one_error(&e.to_string()));
+            }
+        }
+        // Be polite to relays — don't hammer.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let _ = client.shutdown().await;
+    Ok(summary)
+}
+
+/// Fetch the given release ids in order, skipping any that no longer exist.
+/// Shared by the by-id bulk publish/unpublish paths.
+fn resolve_release_ids(app: &tauri::AppHandle, ids: &[i64]) -> Result<Vec<Release>, String> {
+    let conn = open(app)?;
+    let sql = format!("SELECT {} FROM releases WHERE id = ?1", RELEASE_SELECT_COLS);
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Ok(r) = stmt.query_row(params![id], row_to_release) {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
+/// One-line RelayError helper for the "*"-relay (whole-op) failure case.
+fn one_error(msg: &str) -> Vec<RelayError> {
+    vec![RelayError {
+        relay: "*".into(),
+        error: msg.to_string(),
+    }]
+}
+
+/// Emit a `publish:progress` tick. Shared by publish_ids / unpublish_ids so the
+/// frontend progress UI is identical for both.
+fn emit_publish_progress(
+    app: &tauri::AppHandle,
+    current: usize,
+    total: usize,
+    r: &Release,
+    accepted_by: Vec<String>,
+    rejected: Vec<RelayError>,
+) {
+    let _ = app.emit(
+        "publish:progress",
+        PublishProgress {
+            current,
+            total,
+            title: r.title.clone(),
+            artist: r.artist.clone(),
+            accepted_by,
+            rejected,
+        },
+    );
 }
 
 // Backfill local publish state from what relays already hold. Read-only on the
@@ -3861,9 +4013,9 @@ async fn reconcile_published(
     let _ = client.shutdown().await;
     let events = fetch.map_err(|e| e.to_string())?;
 
-    // Release ids the user has deleted, parsed from kind:5 `a` tags of the
-    // form "<kind>:<pubkey>:disco-vault:<id>".
-    let mut deleted: HashSet<i64> = HashSet::new();
+    // Release id -> timestamp of the newest kind:5 targeting it, parsed from
+    // `a` tags of the form "<kind>:<pubkey>:disco-vault:<id>".
+    let mut deleted: HashMap<i64, u64> = HashMap::new();
     for event in events.iter() {
         if event.kind != Kind::EventDeletion {
             continue;
@@ -3874,7 +4026,19 @@ async fn reconcile_published(
                 if let Some(d) = s[1].splitn(3, ':').nth(2) {
                     if let Some(id_str) = d.strip_prefix("disco-vault:") {
                         if let Ok(id) = id_str.parse::<i64>() {
-                            deleted.insert(id);
+                            // Keep the NEWEST deletion per id. A deletion only
+                            // kills events created at or before it — a release
+                            // retracted and then published again is live, not
+                            // deleted. Recording a bare id here (ignoring when
+                            // it was deleted) made every id that had ever been
+                            // unpublished look permanently dead, which after a
+                            // bulk unpublish/republish cycle is the whole
+                            // library.
+                            let at = event.created_at.as_u64();
+                            deleted
+                                .entry(id)
+                                .and_modify(|t| *t = (*t).max(at))
+                                .or_insert(at);
                         }
                     }
                 }
@@ -3899,7 +4063,10 @@ async fn reconcile_published(
         let Ok(id) = id_str.parse::<i64>() else {
             continue;
         };
-        if deleted.contains(&id) {
+        if deleted
+            .get(&id)
+            .is_some_and(|&at| event.created_at.as_u64() <= at)
+        {
             continue;
         }
         latest
@@ -3943,6 +4110,19 @@ async fn reconcile_published(
             Some(Some(_)) => {
                 summary.matched += 1;
                 summary.already_marked += 1;
+                // Already marked published — but still adopt the event id the
+                // relay is serving. Rows published before that column existed
+                // have none, and without it their deletion can only carry an
+                // `a` tag, which relays like nostr-rs-relay ignore outright.
+                // This is the backfill path that makes those rows retractable.
+                conn.execute(
+                    "UPDATE releases SET last_published_event_id = ?1
+                      WHERE id = ?2
+                        AND (last_published_event_id IS NULL
+                             OR last_published_event_id <> ?1)",
+                    params![event.id.to_string(), id],
+                )
+                .map_err(|e| e.to_string())?;
             }
             Some(None) => {
                 summary.matched += 1;
@@ -3950,9 +4130,16 @@ async fn reconcile_published(
                     .unwrap_or_default();
                 conn.execute(
                     "UPDATE releases
-                     SET last_published_at = ?1, last_published_naddr = ?2
-                     WHERE id = ?3",
-                    params![event.created_at.as_u64() as i64, naddr, id],
+                     SET last_published_at = ?1, last_published_naddr = ?2,
+                         last_published_event_id = ?3,
+                         publish_state = 'published'
+                     WHERE id = ?4",
+                    params![
+                        event.created_at.as_u64() as i64,
+                        naddr,
+                        event.id.to_string(),
+                        id
+                    ],
                 )
                 .map_err(|e| e.to_string())?;
                 summary.updated += 1;
@@ -3961,6 +4148,481 @@ async fn reconcile_published(
     }
 
     summary.orphans.sort_by_key(|o| o.id);
+    Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// Relay reconciliation — what each relay actually serves, vs what we think
+// ---------------------------------------------------------------------------
+//
+// reconcile_published (above) is the INBOUND direction: relays are the truth,
+// local publish markers get backfilled from them. This is the OUTBOUND audit:
+// the DB is the truth, and we ask each relay what it is still serving in our
+// name. They diverge for two reasons that no amount of local bookkeeping can
+// see:
+//
+//   * ghosts  — a release we retracted (or never published) that a relay still
+//     serves, because it ignored our kind:5. relay.fizx.uk runs nostr-rs-relay,
+//     which only honours deletion by `e` tag; every `a`-only deletion we ever
+//     sent it was stored and never applied.
+//   * orphans — an event whose d-tag points at a release id that no longer
+//     exists locally (the DB was rebuilt and ids shifted). Nothing in the DB
+//     can ever drive a deletion for these, so they are immortal until swept.
+//
+// Both are only discoverable by asking the relay, and both are fixable only by
+// naming the live event id — which is why the audit collects them.
+
+/// One relay's answer, and how it lines up with the DB.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayAuditRow {
+    pub relay: String,
+    /// Distinct release coordinates this relay is serving for us.
+    pub live: usize,
+    /// Live, and the DB agrees it should be (publish_state = 'published').
+    pub ok: usize,
+    /// Live and expected, but the relay's copy predates our last publish.
+    pub stale: usize,
+    /// Live, but the DB says this release is not published. Should not exist.
+    pub ghosts: Vec<i64>,
+    /// Live, but there is no local release with this id at all.
+    pub orphans: Vec<i64>,
+    /// The DB says published, but this relay is not serving it.
+    pub missing: Vec<i64>,
+    /// kind:5 deletions this relay is holding for us (stored ≠ applied).
+    pub deletions: usize,
+    /// Set when the relay could not be reached; the counts are then meaningless.
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayAudit {
+    pub rows: Vec<RelayAuditRow>,
+    /// Union across relays of everything that should not be live anywhere —
+    /// the exact id set the purge acts on.
+    pub purgeable: Vec<i64>,
+    /// Union across relays of releases the DB calls published but that some
+    /// relay is not serving. Re-publishing fixes them.
+    pub missing: Vec<i64>,
+    pub db_total: usize,
+    pub db_published: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgeSummary {
+    pub total: usize,
+    pub purged: usize,
+    pub failed: usize,
+    /// Ids that turned out to be legitimately published and were left alone.
+    pub skipped: usize,
+    pub errors: Vec<RelayError>,
+}
+
+/// Every event of the given kinds that a single relay holds for `pubkey`.
+///
+/// Pages backwards through `until` rather than issuing one unbounded REQ:
+/// relays cap a single response (nostr-rs-relay at 500), so a naive fetch of a
+/// 2,600-event library silently returns a fifth of it and every diff computed
+/// from it is wrong. Stops when a page adds nothing new.
+async fn fetch_all_from_relay(
+    relay: &str,
+    keys: &Keys,
+    kinds: Vec<Kind>,
+) -> Result<Vec<Event>, String> {
+    let relays = vec![relay.to_string()];
+    let client = build_client(keys.clone(), &relays).await;
+    let pubkey = keys.public_key();
+
+    let mut all: HashMap<EventId, Event> = HashMap::new();
+    let mut until: Option<Timestamp> = None;
+
+    // 40 pages x 500 = 20k events, far above any realistic library; the loop
+    // is bounded so a misbehaving relay can't spin us forever.
+    for _ in 0..40 {
+        let mut filter = Filter::new()
+            .author(pubkey)
+            .kinds(kinds.clone())
+            .limit(500);
+        if let Some(u) = until {
+            filter = filter.until(u);
+        }
+        let page = client
+            .fetch_events(filter, Duration::from_secs(30))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let before = all.len();
+        let mut oldest: Option<u64> = None;
+        for event in page.into_iter() {
+            let at = event.created_at.as_u64();
+            oldest = Some(oldest.map_or(at, |o: u64| o.min(at)));
+            all.insert(event.id, event);
+        }
+        // No new events on this page — either the relay is dry, or it keeps
+        // returning the same boundary batch. Either way, done.
+        if all.len() == before {
+            break;
+        }
+        let Some(o) = oldest else { break };
+        // Step to `oldest` INCLUSIVE, not oldest - 1. A bulk publish stamps
+        // hundreds of events with the same created_at, so a page boundary can
+        // fall in the middle of one second; excluding that second drops every
+        // event in it that didn't fit on the page. Overlap is free — events are
+        // deduped by id — whereas a gap is silent and corrupts the diff.
+        until = Some(Timestamp::from(o));
+    }
+
+    let _ = client.shutdown().await;
+    Ok(all.into_values().collect())
+}
+
+/// Release id from a "disco-vault:<id>" d-tag.
+fn release_id_from_d(d: &str) -> Option<i64> {
+    d.strip_prefix("disco-vault:")?.parse::<i64>().ok()
+}
+
+/// Ask every configured relay what it is serving for us, and diff it against
+/// the DB. Read-only: signs and sends nothing.
+#[tauri::command]
+async fn audit_relays(
+    app: tauri::AppHandle,
+    relays: Vec<String>,
+) -> Result<RelayAudit, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    // Local truth: id -> (publish_state, last_published_at).
+    let (db_state, db_total, db_published) = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare("SELECT id, publish_state, last_published_at FROM releases")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut map: HashMap<i64, (String, Option<i64>)> = HashMap::new();
+        for row in rows {
+            let (id, state, at) = row.map_err(|e| e.to_string())?;
+            map.insert(id, (state.unwrap_or_else(|| "never".into()), at));
+        }
+        let published = map.values().filter(|(s, _)| s == "published").count();
+        let total = map.len();
+        (map, total, published)
+    };
+
+    let mut rows: Vec<RelayAuditRow> = Vec::new();
+    let mut purgeable: HashSet<i64> = HashSet::new();
+    // Served by at least one relay, and thus visible to a reader that unions
+    // its relay set (which is what the glmps sites do). A release present on
+    // some relays but not others is redundancy, not breakage — only one served
+    // by NOTHING is actually missing from the world.
+    let mut live_anywhere: HashSet<i64> = HashSet::new();
+    // Served, but a relay's copy predates our last publish — visible yet wrong.
+    let mut stale_any: HashSet<i64> = HashSet::new();
+
+    for relay in &relays {
+        let events = match fetch_all_from_relay(
+            relay,
+            &keys,
+            vec![Kind::Custom(KIND_RELEASE), Kind::EventDeletion],
+        )
+        .await
+        {
+            Ok(e) => e,
+            Err(err) => {
+                rows.push(RelayAuditRow {
+                    relay: relay.clone(),
+                    live: 0,
+                    ok: 0,
+                    stale: 0,
+                    ghosts: Vec::new(),
+                    orphans: Vec::new(),
+                    missing: Vec::new(),
+                    deletions: 0,
+                    error: Some(err),
+                });
+                continue;
+            }
+        };
+
+        let deletions = events
+            .iter()
+            .filter(|e| e.kind == Kind::EventDeletion)
+            .count();
+
+        // Newest release event per id — what this relay would actually serve.
+        let mut latest: HashMap<i64, &Event> = HashMap::new();
+        for event in events.iter() {
+            if event.kind != Kind::Custom(KIND_RELEASE) {
+                continue;
+            }
+            let Some(id) = event.tags.identifier().and_then(release_id_from_d) else {
+                continue;
+            };
+            latest
+                .entry(id)
+                .and_modify(|e| {
+                    if event.created_at > e.created_at {
+                        *e = event;
+                    }
+                })
+                .or_insert(event);
+        }
+
+        let mut row = RelayAuditRow {
+            relay: relay.clone(),
+            live: latest.len(),
+            ok: 0,
+            stale: 0,
+            ghosts: Vec::new(),
+            orphans: Vec::new(),
+            missing: Vec::new(),
+            deletions,
+            error: None,
+        };
+
+        for (id, event) in latest.iter() {
+            match db_state.get(id) {
+                None => {
+                    row.orphans.push(*id);
+                    purgeable.insert(*id);
+                }
+                Some((state, at)) if state == "published" => {
+                    live_anywhere.insert(*id);
+                    // A relay copy older than our last publish means the relay
+                    // never took the newest version — treat as needing a
+                    // re-publish, not a purge.
+                    if at.is_some_and(|t| (event.created_at.as_u64() as i64) < t - 5) {
+                        row.stale += 1;
+                        stale_any.insert(*id);
+                    } else {
+                        row.ok += 1;
+                    }
+                }
+                Some((state, _)) if state == "stale" => {
+                    // Edited since publishing. The event on the relay is real
+                    // and intentional, just out of date — the fix is to send
+                    // the new version, NOT to retract it. Never purgeable.
+                    live_anywhere.insert(*id);
+                    row.stale += 1;
+                    stale_any.insert(*id);
+                }
+                Some(_) => {
+                    // never / retracted locally, yet still being served: the
+                    // relay is publishing something we did not ask it to.
+                    row.ghosts.push(*id);
+                    purgeable.insert(*id);
+                }
+            }
+        }
+
+        // Per-relay gaps, reported honestly in this relay's row — a relay that
+        // holds only a slice of the library shows it here. This does NOT feed
+        // the re-publish set (see live_anywhere).
+        for (id, (state, _)) in db_state.iter() {
+            if (state == "published" || state == "stale") && !latest.contains_key(id) {
+                row.missing.push(*id);
+            }
+        }
+
+        row.ghosts.sort_unstable();
+        row.orphans.sort_unstable();
+        row.missing.sort_unstable();
+        rows.push(row);
+    }
+
+    let mut purgeable: Vec<i64> = purgeable.into_iter().collect();
+    purgeable.sort_unstable();
+
+    // The re-publish set: releases we call published that NO relay is serving
+    // (invisible to any reader), plus those served only in an out-of-date form.
+    // Deliberately not "missing from some relay" — with an under-populated
+    // relay in the list that would offer to bulk-publish the whole library to
+    // it, which is a redundancy choice, not a repair.
+    let mut missing: Vec<i64> = db_state
+        .iter()
+        .filter(|(id, (state, _))| {
+            (state == "published" || state == "stale") && !live_anywhere.contains(id)
+        })
+        .map(|(id, _)| *id)
+        .chain(stale_any.iter().copied())
+        .collect::<HashSet<i64>>()
+        .into_iter()
+        .collect();
+    missing.sort_unstable();
+
+    Ok(RelayAudit {
+        rows,
+        purgeable,
+        missing,
+        db_total,
+        db_published,
+    })
+}
+
+/// Retract stray events (ghosts + orphans) from the relays.
+///
+/// Re-fetches the live events itself rather than trusting ids passed in from an
+/// older audit, because the deletion must name the event id it is killing and
+/// that id can only come from the relay. Every id is re-checked against the DB
+/// first: anything that is legitimately published is skipped, so a stale UI can
+/// never talk this into deleting live releases.
+#[tauri::command]
+async fn purge_relay_events(
+    app: tauri::AppHandle,
+    ids: Vec<i64>,
+    relays: Vec<String>,
+) -> Result<PurgeSummary, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    if ids.is_empty() {
+        return Err("nothing to purge".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let wanted: HashSet<i64> = ids.iter().copied().collect();
+
+    // Collect every event id each coordinate is currently served under, across
+    // all relays. A coordinate can carry different event ids on different
+    // relays (a re-publish one relay took and another missed), and NIP-09
+    // deletion by `e` names one specific event — so tag them all.
+    let mut event_ids: HashMap<i64, HashSet<String>> = HashMap::new();
+    for relay in &relays {
+        let events =
+            fetch_all_from_relay(relay, &keys, vec![Kind::Custom(KIND_RELEASE)]).await;
+        let Ok(events) = events else { continue };
+        for event in events {
+            let Some(id) = event.tags.identifier().and_then(release_id_from_d) else {
+                continue;
+            };
+            if wanted.contains(&id) {
+                event_ids
+                    .entry(id)
+                    .or_default()
+                    .insert(event.id.to_string());
+            }
+        }
+    }
+
+    // Belt and braces: never retract something the DB still calls live. 'stale'
+    // counts as live — it means published-then-edited, so the event on the
+    // relay is intentional and merely out of date; retracting it would silently
+    // pull a release the user still wants public.
+    let published: HashSet<i64> = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM releases
+                  WHERE publish_state IN ('published','stale')",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?;
+        let mut set = HashSet::new();
+        for row in rows {
+            set.insert(row.map_err(|e| e.to_string())?);
+        }
+        set
+    };
+
+    let total = ids.len();
+    let _ = app.emit("purge:started", total);
+    let client = build_client(keys.clone(), &relays).await;
+
+    let mut summary = PurgeSummary {
+        total,
+        purged: 0,
+        failed: 0,
+        skipped: 0,
+        errors: Vec::new(),
+    };
+
+    for (i, id) in ids.iter().enumerate() {
+        let _ = app.emit(
+            "purge:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: format!("disco-vault:{id}"),
+            },
+        );
+
+        if published.contains(id) {
+            summary.skipped += 1;
+            continue;
+        }
+
+        let known: Vec<String> = event_ids
+            .get(id)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let event = match release_delete_event(&keys, *id, &known) {
+            Ok(e) => e,
+            Err(err) => {
+                summary.failed += 1;
+                summary.errors.push(RelayError {
+                    relay: format!("disco-vault:{id}"),
+                    error: err,
+                });
+                continue;
+            }
+        };
+
+        match client.send_event(&event).await {
+            Ok(output) => {
+                let (accepted_by, rejected) = split_send_output(&output);
+                if accepted_by.is_empty() {
+                    summary.failed += 1;
+                    summary.errors.extend(rejected);
+                } else {
+                    summary.purged += 1;
+                    // Ghosts with a local row: their state is already never or
+                    // retracted (that is what made them ghosts), so there is
+                    // nothing to update. Orphans have no row at all. Just make
+                    // sure no stale publish marker survives.
+                    let conn = open(&app)?;
+                    let _ = conn.execute(
+                        "UPDATE releases
+                         SET last_published_at = NULL, last_published_naddr = NULL,
+                             last_published_event_id = NULL,
+                             publish_state = CASE
+                                 WHEN publish_state IN ('published','stale')
+                                 THEN 'retracted' ELSE publish_state END
+                         WHERE id = ?1",
+                        params![id],
+                    );
+                }
+            }
+            Err(err) => {
+                summary.failed += 1;
+                summary.errors.push(RelayError {
+                    relay: format!("disco-vault:{id}"),
+                    error: err.to_string(),
+                });
+            }
+        }
+
+        // Same courtesy pacing as the bulk publish — a few hundred deletions
+        // in a tight loop trips relay rate limits and gets us dropped.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let _ = client.shutdown().await;
     Ok(summary)
 }
 
@@ -5945,9 +6607,12 @@ pub fn run() {
             get_npub,
             clear_keypair,
             publish_release,
-            publish_library,
+            publish_ids,
+            unpublish_ids,
             unpublish_release,
             reconcile_published,
+            audit_relays,
+            purge_relay_events,
             list_feed_drafts,
             save_feed_draft,
             delete_feed_draft,
@@ -6035,6 +6700,8 @@ mod schema_v1 {
             genre_tertiary: None,
             last_published_at: None,
             last_published_naddr: None,
+            publish_state: None,
+            last_published_event_id: None,
             added_at: None,
             updated_at: None,
             track_count: None,
@@ -6210,6 +6877,8 @@ mod schema_v2 {
             genre_tertiary: None,
             last_published_at: None,
             last_published_naddr: None,
+            publish_state: None,
+            last_published_event_id: None,
             added_at: None,
             updated_at: None,
             track_count: None,

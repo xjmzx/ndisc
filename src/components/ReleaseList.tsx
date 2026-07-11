@@ -9,8 +9,10 @@ import {
   FolderSearch,
   FolderSync,
   ImageOff,
+  Link2,
   Music,
   MoreVertical,
+  Radar,
   Radio,
   RefreshCw,
   SatelliteDish,
@@ -25,10 +27,13 @@ import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import {
+  auditRelays,
   deleteRelease,
   extractEmbeddedCovers,
   getLibraryRoot,
   listReleases,
+  publishByIds,
+  purgeRelayEvents,
   reconcileLibrary,
   reconcilePublished,
   rescanLocalCovers,
@@ -39,30 +44,47 @@ import {
   updateReleasePath,
   type ExtractSummary,
   type ImportProgress,
+  type CoverLinkFilter,
   type GenreFilter,
   type LabelFilter,
   type LibraryReconcileSummary,
   type LibraryScanSummary,
   type OrphanEvent,
   type OrphanInfo,
-  type PublishedFilter,
+  type PublishState,
+  type PurgeSummary,
   type ReconcileSummary,
+  type RelayAudit,
   type Release,
   type RescanSummary,
   type VideoFilter,
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
 import { sourcePlatform } from "../lib/source";
+import {
+  PUBLISH_STATES,
+  publishStateMeta,
+  publishStateOf,
+} from "../lib/publishState";
 import { cn } from "../lib/cn";
 
+// Single source of truth for the release filter set — consumed by the list
+// query, the filter description, AND the bulk publish/unpublish ops. Every
+// filter that narrows the visible list lives here so the ops can never operate
+// on a broader set than the user sees. `visibleIds` is the exact id set on
+// screen; the bulk ops act on it directly (belt), while the filter fields drive
+// the human-readable description (braces).
 export interface FilterContext {
   query: string;
   medium: "physical" | "digital" | null;
   needsCoverOnly: boolean;
-  publishedFilter: PublishedFilter | null;
+  publishStateFilter: PublishState | null;
   labelFilter: LabelFilter | null;
   genreFilter: GenreFilter | null;
+  videoFilter: VideoFilter | null;
+  coverLinkFilter: CoverLinkFilter | null;
   count: number;
+  visibleIds: number[];
 }
 
 interface Props {
@@ -102,11 +124,14 @@ export function ReleaseList({
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
   const [needsCoverOnly, setNeedsCoverOnly] = useState(false);
-  const [publishedFilter, setPublishedFilter] =
-    useState<"" | PublishedFilter>("");
+  const [publishStateFilter, setPublishStateFilter] =
+    useState<"" | PublishState>("");
   const [labelFilter, setLabelFilter] = useState<"" | LabelFilter>("");
   const [genreFilter, setGenreFilter] = useState<"" | GenreFilter>("");
   const [videoFilter, setVideoFilter] = useState<"" | VideoFilter>("");
+  const [coverLinkFilter, setCoverLinkFilter] = useState<"" | CoverLinkFilter>(
+    "",
+  );
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,12 +183,19 @@ export function ReleaseList({
   // "reconcile" = relay publish-state backfill; "reconcileDisk" = the two-phase
   // disk sync (discover new folders + refresh existing) behind "Rescan library
   // folder". Distinct axes, distinct summaries.
+  // "audit" = the outbound relay reconcile: ask each relay what it still
+  // serves for us and diff against the DB. "purge" = the follow-up action that
+  // retracts what shouldn't be there. Both are relay-side; "reconcile" is the
+  // inbound direction (relays → local markers).
   type OpKind =
     | "extract"
     | "rescan"
     | "scan"
     | "reconcile"
-    | "reconcileDisk";
+    | "reconcileDisk"
+    | "audit"
+    | "purge"
+    | "republish";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   const [opSummary, setOpSummary] = useState<
@@ -172,6 +204,8 @@ export function ReleaseList({
     | { kind: "scan"; data: LibraryScanSummary }
     | { kind: "reconcile"; data: ReconcileSummary }
     | { kind: "reconcileDisk"; data: LibraryReconcileSummary }
+    | { kind: "audit"; data: RelayAudit }
+    | { kind: "purge"; data: PurgeSummary }
     | null
   >(null);
 
@@ -208,8 +242,119 @@ export function ReleaseList({
     });
   }
 
+  // Retract the stray events the audit turned up. Destructive on the relay
+  // side, so it is a separate opt-in step rather than something the audit does
+  // on its own. The backend re-checks every id against the DB and refuses to
+  // touch anything still published, so a stale audit can't cause a repeat of
+  // the whole-library unpublish.
+  async function runPurge(audit: RelayAudit) {
+    if (activeOp !== null || audit.purgeable.length === 0) return;
+    const n = audit.purgeable.length;
+    const yes = await ask(
+      `Retract ${n.toLocaleString()} stray event${n === 1 ? "" : "s"} from the relays?\n\n` +
+        "These are releases the relays are still serving that your library " +
+        "says should not be public — either retracted/never-published " +
+        "releases a relay ignored the deletion for, or leftovers whose local " +
+        "release no longer exists.\n\n" +
+        "A kind:5 deletion naming each event id is signed and sent. Nothing " +
+        "in your library is deleted, and anything still marked published is " +
+        "skipped.",
+      { title: "Purge stray relay events", kind: "warning" },
+    );
+    if (!yes) return;
+
+    setActiveOp("purge");
+    setOpSummary(null);
+    setOpProgress({ current: 0, total: n, currentDir: "" });
+    setError(null);
+
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<number>("purge:started", (e) => {
+          setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+        }),
+      );
+      unlisteners.push(
+        await listen<ImportProgress>("purge:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const data = await purgeRelayEvents(audit.purgeable, relays);
+      setOpSummary({ kind: "purge", data });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
+
+  // Re-send releases the DB calls published that some relay isn't serving —
+  // either it never took the event, or its copy predates our last edit.
+  async function runRepublishMissing(audit: RelayAudit) {
+    if (activeOp !== null || audit.missing.length === 0) return;
+    const n = audit.missing.length;
+    const yes = await ask(
+      `Re-publish ${n.toLocaleString()} release${n === 1 ? "" : "s"} to the relays?\n\n` +
+        "Your library marks these published, but no relay is serving them — " +
+        "so no reader can see them — or the only copies out there are out of " +
+        "date.\n\n" +
+        "Releases that merely one relay lacks are not included: readers " +
+        "union their relay set, so another relay already covers those.",
+      { title: "Re-publish unserved releases", kind: "info" },
+    );
+    if (!yes) return;
+
+    setActiveOp("republish");
+    setOpSummary(null);
+    setOpProgress(null);
+    setError(null);
+    try {
+      await publishByIds(audit.missing, relays);
+      await reload();
+      // Re-audit so the panel reflects the relays' new answer rather than a
+      // count the user has to take on trust.
+      setOpSummary({ kind: "audit", data: await auditRelays(relays) });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setActiveOp(null);
+    }
+  }
+
   async function runBackgroundOp(kind: OpKind) {
     if (activeOp !== null) return;
+
+    // The outbound relay audit — read-only, and the only way to see events a
+    // relay is serving that the DB has no idea about (ghosts and orphans).
+    if (kind === "audit") {
+      const yes = await ask(
+        "Ask each configured relay what it is currently serving for your " +
+          "key, and compare it with your library?\n\n" +
+          "Read-only — nothing is signed or sent. Reports, per relay: how " +
+          "many releases are live and correct, how many are still being " +
+          "served that shouldn't be (relays that ignored a deletion), " +
+          "leftovers with no local release, and any published release the " +
+          "relay is missing.",
+        { title: "Reconcile relays", kind: "info" },
+      );
+      if (!yes) return;
+      setActiveOp("audit");
+      setOpSummary(null);
+      setOpProgress(null);
+      setError(null);
+      try {
+        setOpSummary({ kind: "audit", data: await auditRelays(relays) });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
 
     // Reconcile is a network op, not a filesystem walk — no progress events,
     // a different summary shape, so it takes its own short path.
@@ -583,10 +728,11 @@ export function ReleaseList({
         query,
         medium || undefined,
         needsCoverOnly ? true : undefined,
-        publishedFilter || undefined,
+        publishStateFilter || undefined,
         labelFilter || undefined,
         genreFilter || undefined,
         videoFilter || undefined,
+        coverLinkFilter || undefined,
       );
       setItems(list);
     } catch (e) {
@@ -599,29 +745,41 @@ export function ReleaseList({
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, medium, needsCoverOnly, publishedFilter, labelFilter, genreFilter, videoFilter]);
+  }, [reloadKey, medium, needsCoverOnly, publishStateFilter, labelFilter, genreFilter, videoFilter, coverLinkFilter]);
 
-  // Bubble filter state + visible-items count up so other panels (like the
-  // Nostr publish-library button) can render contextual UI.
+  // Bubble the FULL filter set + the exact visible id list up so the Nostr
+  // panel's bulk ops act on precisely what's on screen (and describe it in
+  // full). Every filter must be represented here — a missing one silently
+  // broadens the op vs the view.
+  const visibleIds = items
+    .map((r) => r.id)
+    .filter((id): id is number => id !== undefined);
+  const visibleIdsKey = visibleIds.join(",");
   useEffect(() => {
     if (!onFilterChange) return;
     onFilterChange({
       query,
       medium: medium === "" ? null : medium,
       needsCoverOnly,
-      publishedFilter: publishedFilter === "" ? null : publishedFilter,
+      publishStateFilter: publishStateFilter === "" ? null : publishStateFilter,
       labelFilter: labelFilter === "" ? null : labelFilter,
       genreFilter: genreFilter === "" ? null : genreFilter,
+      videoFilter: videoFilter === "" ? null : videoFilter,
+      coverLinkFilter: coverLinkFilter === "" ? null : coverLinkFilter,
       count: items.length,
+      visibleIds,
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     query,
     medium,
     needsCoverOnly,
-    publishedFilter,
+    publishStateFilter,
     labelFilter,
     genreFilter,
-    items.length,
+    videoFilter,
+    coverLinkFilter,
+    visibleIdsKey,
     onFilterChange,
   ]);
 
@@ -714,15 +872,9 @@ export function ReleaseList({
           tooltipFilled="Medium: physical (click for digital)"
           tooltipOutlined="Medium: digital (click to clear)"
         />
-        <FilterToggle
-          Icon={Radio}
-          value={publishedFilter}
-          onChange={(v) => setPublishedFilter(v as "" | PublishedFilter)}
-          filledValue="published"
-          outlinedValue="unpublished"
-          tooltipDefault="Filter by Nostr publish state — click cycles published / unpublished / any"
-          tooltipFilled="Status: published (click for unpublished)"
-          tooltipOutlined="Status: unpublished (click to clear)"
+        <PublishStateFilter
+          value={publishStateFilter}
+          onChange={setPublishStateFilter}
         />
         <FilterToggle
           Icon={Tag}
@@ -753,6 +905,16 @@ export function ReleaseList({
           tooltipDefault="Filter by audio-visual content — click cycles has video / audio-only / any"
           tooltipFilled="Video: has video (click for audio-only)"
           tooltipOutlined="Video: audio-only (click to clear)"
+        />
+        <FilterToggle
+          Icon={Link2}
+          value={coverLinkFilter}
+          onChange={(v) => setCoverLinkFilter(v as "" | CoverLinkFilter)}
+          filledValue="with_link"
+          outlinedValue="without_link"
+          tooltipDefault="Filter by web image link — click cycles has link / no link / any"
+          tooltipFilled="Web image: has link (click for no link)"
+          tooltipOutlined="Web image: no link (click to clear)"
         />
         <button
           onClick={() => setNeedsCoverOnly((v) => !v)}
@@ -854,6 +1016,17 @@ export function ReleaseList({
                   runBackgroundOp("reconcile");
                 }}
               />
+              <MaintMenuItem
+                icon={<Radar size={14} />}
+                label="Reconcile relays"
+                detail="What each relay serves vs the library"
+                active={activeOp === "audit"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("audit");
+                }}
+              />
             </div>
           )}
         </div>
@@ -882,7 +1055,9 @@ export function ReleaseList({
                   ? "scanning for local cover files"
                   : activeOp === "reconcileDisk"
                     ? "reconciling library folder"
-                    : "scanning library for changes"}{" "}
+                    : activeOp === "purge"
+                      ? "retracting stray events from relays"
+                      : "scanning library for changes"}{" "}
               <span className="font-mono text-fg">
                 {opProgress.current.toLocaleString()}/
                 {(opProgress.total || 0).toLocaleString()}
@@ -918,7 +1093,32 @@ export function ReleaseList({
         </div>
       )}
 
-      {!activeOp && opSummary && (
+      {activeOp === "audit" && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs
+                        text-muted flex items-center gap-2">
+          <Radar size={12} className="animate-pulse text-accent" />
+          querying relays — this walks the full event set, give it a moment…
+        </div>
+      )}
+
+      {activeOp === "republish" && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs
+                        text-muted flex items-center gap-2">
+          <SatelliteDish size={12} className="animate-pulse text-accent" />
+          re-publishing missing releases…
+        </div>
+      )}
+
+      {!activeOp && opSummary?.kind === "audit" && (
+        <RelayAuditPanel
+          audit={opSummary.data}
+          onPurge={() => runPurge(opSummary.data)}
+          onRepublish={() => runRepublishMissing(opSummary.data)}
+          onDismiss={() => setOpSummary(null)}
+        />
+      )}
+
+      {!activeOp && opSummary && opSummary.kind !== "audit" && (
         <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs
                         flex items-center justify-between gap-2">
           <div className="flex flex-wrap gap-x-3 gap-y-0.5">
@@ -1030,6 +1230,26 @@ export function ReleaseList({
                     <span className="font-mono">
                       {opSummary.data.unmatched}
                     </span>
+                  </span>
+                )}
+              </>
+            )}
+            {opSummary.kind === "purge" && (
+              <>
+                <span className="text-ok">
+                  retracted{" "}
+                  <span className="font-mono">{opSummary.data.purged}</span>
+                </span>
+                {opSummary.data.skipped > 0 && (
+                  <span className="text-muted">
+                    left alone (still published){" "}
+                    <span className="font-mono">{opSummary.data.skipped}</span>
+                  </span>
+                )}
+                {opSummary.data.failed > 0 && (
+                  <span className="text-warn">
+                    failed{" "}
+                    <span className="font-mono">{opSummary.data.failed}</span>
                   </span>
                 )}
               </>
@@ -1310,31 +1530,31 @@ export function ReleaseList({
                       <Film size={12} />
                     </span>
                   )}
-                  {/* State cluster: publish dot + medium share one mauve
-                      rounded-rectangle bg (non-interactive — state only). */}
+                  {/* State cluster: 4-state publish dot + medium share one
+                      neutral rounded-rectangle bg (non-interactive — state
+                      only). Dot colour = the shared publish-state vocabulary
+                      (never grey · published mauve · stale amber · retracted
+                      red), matching the toolbar state filter. */}
                   <div
                     className="shrink-0 inline-flex items-center justify-center
-                               gap-1 px-1.5 h-5 min-w-[38px] rounded bg-mauve/20"
+                               gap-1 px-1.5 h-5 min-w-[38px] rounded bg-surface/60"
                   >
-                    {/* Filled dot both states: published = nostr purple
-                        (theme-fixed), unpublished = the app's darkest palette
-                        colour (--c-bg), reading as a hole in the chip. */}
-                    <span
-                      title={
-                        r.lastPublishedAt != null
-                          ? "published to Nostr"
-                          : "not published to Nostr"
-                      }
-                      aria-label={
-                        r.lastPublishedAt != null
-                          ? "published to Nostr"
-                          : "not published to Nostr"
-                      }
-                      className={cn(
-                        "w-2.5 h-2.5 rounded-full",
-                        r.lastPublishedAt != null ? "bg-[#a78bfa]" : "bg-bg",
-                      )}
-                    />
+                    {(() => {
+                      const m = publishStateMeta(publishStateOf(r));
+                      return (
+                        <span
+                          title={`Publish state: ${m.label} — ${m.desc}`}
+                          aria-label={`publish state: ${m.label}`}
+                          className="inline-flex"
+                        >
+                          <Circle
+                            size={10}
+                            fill="currentColor"
+                            className={cn("shrink-0", m.dot)}
+                          />
+                        </span>
+                      );
+                    })()}
                     {/* Medium — sharpened contrast: physical is a solid filled
                         disc, digital a hollow ring (intangible — no platter).
                         Tinted by source platform (Bandcamp cyan, SoundCloud
@@ -1505,6 +1725,107 @@ function FilterToggle({
   );
 }
 
+// Four-state publish-state filter. A toggle can't hold four values + "any", so
+// this is a small dropdown; the button carries a coloured state dot when a
+// state is selected, matching the per-row indicators.
+function PublishStateFilter({
+  value,
+  onChange,
+}: {
+  value: "" | PublishState;
+  onChange: (v: "" | PublishState) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const meta = value !== "" ? publishStateMeta(value) : null;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={
+          meta
+            ? `Publish state: ${meta.label} — ${meta.desc}`
+            : "Filter by Nostr publish state"
+        }
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-pressed={value !== ""}
+        className={cn(
+          "relative p-2 rounded-md transition-colors",
+          value !== ""
+            ? "bg-accent text-bg"
+            : "bg-surface text-muted hover:text-fg hover:bg-surfaceHover",
+        )}
+      >
+        <Radio size={14} />
+        {meta && (
+          <Circle
+            size={7}
+            className={cn("absolute -top-0.5 -right-0.5", meta.dot)}
+            fill="currentColor"
+          />
+        )}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1 z-20 w-52 rounded-md
+                     bg-panel border border-surface/60 shadow-lg overflow-hidden
+                     text-xs py-1"
+        >
+          <button
+            role="menuitemradio"
+            aria-checked={value === ""}
+            onClick={() => {
+              onChange("");
+              setOpen(false);
+            }}
+            className={cn(
+              "w-full flex items-center gap-2 px-3 py-1.5 text-left",
+              "hover:bg-surface/60 transition-colors",
+              value === "" ? "text-accent" : "text-fg/80",
+            )}
+          >
+            <Circle size={8} className="text-muted/40" />
+            Any state
+          </button>
+          {PUBLISH_STATES.map((s) => (
+            <button
+              key={s.value}
+              role="menuitemradio"
+              aria-checked={value === s.value}
+              title={s.desc}
+              onClick={() => {
+                onChange(s.value);
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full flex items-center gap-2 px-3 py-1.5 text-left",
+                "hover:bg-surface/60 transition-colors",
+                value === s.value ? "bg-surface/50 text-fg" : "text-fg/80",
+              )}
+            >
+              <Circle size={8} className={s.dot} fill="currentColor" />
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Release-row thumbnail. Falls back to a dashed placeholder when there is
 // no cover, or when a set cover URL/path fails to load.
 function CoverThumb({ src }: { src: string | null }) {
@@ -1547,6 +1868,142 @@ interface MaintMenuItemProps {
   active: boolean;
   disabled: boolean;
   onClick: () => void;
+}
+
+// The outbound relay audit, one row per relay. The point of the layout is that
+// a relay in disagreement with the library is visible at a glance: `ok` is the
+// only count that should be non-zero, so ghosts/orphans/missing are tinted and
+// everything else stays quiet.
+function RelayAuditPanel({
+  audit,
+  onPurge,
+  onRepublish,
+  onDismiss,
+}: {
+  audit: RelayAudit;
+  onPurge: () => void;
+  onRepublish: () => void;
+  onDismiss: () => void;
+}) {
+  const clean =
+    audit.purgeable.length === 0 &&
+    audit.missing.length === 0 &&
+    audit.rows.every((r) => !r.error);
+
+  return (
+    <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-muted">
+          library{" "}
+          <span className="font-mono text-fg">
+            {audit.dbPublished.toLocaleString()}
+          </span>{" "}
+          published of{" "}
+          <span className="font-mono text-fg">
+            {audit.dbTotal.toLocaleString()}
+          </span>
+        </span>
+        <button
+          onClick={onDismiss}
+          className="text-muted hover:text-fg text-[10px] px-1"
+          title="Dismiss"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="mt-1.5 space-y-1">
+        {audit.rows.map((r) => (
+          <div key={r.relay} className="flex flex-wrap items-baseline gap-x-3">
+            <span className="font-mono text-fg/80 truncate">{r.relay}</span>
+            {r.error ? (
+              <span className="text-alert">unreachable — {r.error}</span>
+            ) : (
+              <>
+                <span className="text-muted">
+                  serving <span className="font-mono">{r.live}</span>
+                </span>
+                <span className="text-mauve">
+                  ok <span className="font-mono">{r.ok}</span>
+                </span>
+                {r.ghosts.length > 0 && (
+                  <span
+                    className="text-alert"
+                    title="Still served, but your library says they should not be public — this relay ignored the deletion"
+                  >
+                    ghosts <span className="font-mono">{r.ghosts.length}</span>
+                  </span>
+                )}
+                {r.orphans.length > 0 && (
+                  <span
+                    className="text-alert"
+                    title="Still served, but no local release has this id any more"
+                  >
+                    orphans{" "}
+                    <span className="font-mono">{r.orphans.length}</span>
+                  </span>
+                )}
+                {r.missing.length > 0 && (
+                  <span
+                    className="text-muted"
+                    title="Your library says published, but this relay isn't serving it. Harmless on its own — readers union their relay set, so another relay can cover it."
+                  >
+                    absent{" "}
+                    <span className="font-mono">{r.missing.length}</span>
+                  </span>
+                )}
+                {r.stale > 0 && (
+                  <span
+                    className="text-warn"
+                    title="This relay's copy predates your last publish"
+                  >
+                    stale <span className="font-mono">{r.stale}</span>
+                  </span>
+                )}
+                {r.deletions > 0 && (
+                  <span
+                    className="text-muted/70"
+                    title="kind:5 deletions this relay holds. A relay can store them and still ignore them — nostr-rs-relay only honours deletion by event id."
+                  >
+                    kind:5 <span className="font-mono">{r.deletions}</span>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {clean ? (
+        <p className="mt-2 text-ok">
+          Relays agree with the library — nothing to fix.
+        </p>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {audit.purgeable.length > 0 && (
+            <button
+              onClick={onPurge}
+              className="px-2 py-1 rounded-md border border-alert/60 text-alert
+                         hover:bg-alert/10"
+              title="Sign a kind:5 naming each stray event id and send it to every relay"
+            >
+              Purge {audit.purgeable.length.toLocaleString()} stray
+            </button>
+          )}
+          {audit.missing.length > 0 && (
+            <button
+              onClick={onRepublish}
+              className="px-2 py-1 rounded-md border border-accent/60 text-accent
+                         hover:bg-accent/10"
+              title="Releases no relay is serving (invisible to readers), or served only in an out-of-date form. A relay merely lacking its own copy is listed as 'absent' and is not counted here — readers union their relays."
+            >
+              Re-publish {audit.missing.length.toLocaleString()} unserved
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MaintMenuItem({

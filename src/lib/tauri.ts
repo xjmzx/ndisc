@@ -29,6 +29,10 @@ export interface Release {
   genreTertiary?: string | null;
   lastPublishedAt?: number | null;
   lastPublishedNaddr?: string | null;
+  publishState?: PublishState | null;
+  // Event id of the live kind:31237. Lets an unpublish name the exact event it
+  // is killing — relays running nostr-rs-relay honour nothing else.
+  lastPublishedEventId?: string | null;
   addedAt?: number | null;
   updatedAt?: number | null;
   // Leaf count — audio files in the release folder (0–99). Local-only,
@@ -49,10 +53,14 @@ export interface Release {
   videoCount?: number | null;
 }
 
-export type PublishedFilter = "published" | "unpublished";
+// Four-state publish lifecycle for a release. NULL/absent reads as "never".
+export type PublishState = "never" | "published" | "stale" | "retracted";
 export type LabelFilter = "with_label" | "without_label";
 export type GenreFilter = "with_genre" | "without_genre";
 export type VideoFilter = "with_video" | "without_video";
+// Presence of a published web image link (cover_art_url), distinct from a
+// local cover.jpg (cover_art_path) — "with_link" only counts the web URL.
+export type CoverLinkFilter = "with_link" | "without_link";
 
 export interface Stats {
   total: number;
@@ -148,19 +156,21 @@ export async function listReleases(
   query?: string,
   medium?: "physical" | "digital",
   needsCover?: boolean,
-  publishedFilter?: PublishedFilter,
+  publishStateFilter?: PublishState,
   labelFilter?: LabelFilter,
   genreFilter?: GenreFilter,
   videoFilter?: VideoFilter,
+  coverLinkFilter?: CoverLinkFilter,
 ): Promise<Release[]> {
   return invoke<Release[]>("list_releases", {
     query,
     medium,
     needsCover,
-    publishedFilter,
+    publishStateFilter,
     labelFilter,
     genreFilter,
     videoFilter,
+    coverLinkFilter,
   });
 }
 
@@ -289,7 +299,7 @@ export async function exportMarkdown(
     query?: string;
     medium?: "physical" | "digital";
     needsCover?: boolean;
-    publishedFilter?: PublishedFilter;
+    publishStateFilter?: PublishState;
     labelFilter?: LabelFilter;
   },
 ): Promise<number> {
@@ -298,7 +308,7 @@ export async function exportMarkdown(
     query: filter?.query,
     medium: filter?.medium,
     needsCover: filter?.needsCover,
-    publishedFilter: filter?.publishedFilter,
+    publishStateFilter: filter?.publishStateFilter,
     labelFilter: filter?.labelFilter,
   });
 }
@@ -534,6 +544,58 @@ export async function reconcilePublished(
   return invoke<ReconcileSummary>("reconcile_published", { relays });
 }
 
+/** What one relay is actually serving in our name, diffed against the DB. */
+export interface RelayAuditRow {
+  relay: string;
+  /** Distinct release coordinates this relay serves for us. */
+  live: number;
+  /** Live, and the DB agrees it should be. */
+  ok: number;
+  /** Live and expected, but the relay's copy predates our last publish. */
+  stale: number;
+  /** Live, but the DB says this release is not published. */
+  ghosts: number[];
+  /** Live, but no local release has this id (DB rebuilt, ids shifted). */
+  orphans: number[];
+  /** DB says published, but this relay isn't serving it. */
+  missing: number[];
+  /** kind:5 deletions the relay is holding for us — stored is not applied. */
+  deletions: number;
+  error: string | null;
+}
+
+export interface RelayAudit {
+  rows: RelayAuditRow[];
+  /** Union of everything that should not be live anywhere — the purge set. */
+  purgeable: number[];
+  /** Union of published releases some relay isn't serving — the re-publish set. */
+  missing: number[];
+  dbTotal: number;
+  dbPublished: number;
+}
+
+export interface PurgeSummary {
+  total: number;
+  purged: number;
+  failed: number;
+  skipped: number;
+  errors: RelayError[];
+}
+
+/** Read-only: ask each relay what it serves for us. Signs and sends nothing. */
+export async function auditRelays(relays: string[]): Promise<RelayAudit> {
+  return invoke<RelayAudit>("audit_relays", { relays });
+}
+
+/** Retract stray events (ghosts + orphans) by naming their event ids. Anything
+ *  the DB still calls published is skipped, whatever ids are passed. */
+export async function purgeRelayEvents(
+  ids: number[],
+  relays: string[],
+): Promise<PurgeSummary> {
+  return invoke<PurgeSummary>("purge_relay_events", { ids, relays });
+}
+
 export interface CoverSyncResult {
   status: string;
   written: string | null;
@@ -595,6 +657,8 @@ export interface PublishProgress {
 export interface PublishLibrarySummary {
   total: number;
   published: number;
+  /** Rows left untouched — e.g. unpublishing a never/already-retracted row. */
+  skipped: number;
   failed: number;
 }
 
@@ -635,24 +699,25 @@ export async function publishLabels(
   return invoke<PublishResult>("publish_labels", { labels, relays });
 }
 
-export async function publishLibrary(
+/** Publish an explicit set of releases by id (kind:31237). This is the ONLY
+ *  bulk publish path — the caller passes exactly the ids on screen, so the op
+ *  can't drift from the visible list. Reuses the publish:started /
+ *  publish:progress event channel. */
+export async function publishByIds(
+  ids: number[],
   relays: string[],
-  filter?: {
-    query?: string;
-    medium?: "physical" | "digital";
-    needsCover?: boolean;
-    publishedFilter?: PublishedFilter;
-    labelFilter?: LabelFilter;
-  },
 ): Promise<PublishLibrarySummary> {
-  return invoke<PublishLibrarySummary>("publish_library", {
-    relays,
-    query: filter?.query,
-    medium: filter?.medium,
-    needsCover: filter?.needsCover,
-    publishedFilter: filter?.publishedFilter,
-    labelFilter: filter?.labelFilter,
-  });
+  return invoke<PublishLibrarySummary>("publish_ids", { ids, relays });
+}
+
+/** Bulk retract by id — the mirror of publishByIds. Broadcasts a kind:5
+ *  deletion for each id, skipping rows with nothing live to retract (never /
+ *  already-retracted), and clears local publish markers the relays accept. */
+export async function unpublishByIds(
+  ids: number[],
+  relays: string[],
+): Promise<PublishLibrarySummary> {
+  return invoke<PublishLibrarySummary>("unpublish_ids", { ids, relays });
 }
 
 // Feed-note drafts — the `current` view authoring side. The published wire
