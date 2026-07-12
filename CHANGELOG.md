@@ -15,6 +15,39 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.1.4-beta.7 — unreleased
+
+Three fixes to "Reconcile relays", all found by the audit disagreeing with
+reality on a live library. No contract change.
+
+### Fixed
+- **A healthy relay could be reported as serving nothing.** The per-relay fetch
+  used `client.connect()`, which returns immediately and brings the socket up in
+  the background — so the first REQ could fire before the relay was reachable and
+  come back empty. An empty page is indistinguishable from "this relay is empty":
+  nos.lol, holding 1,732 events, was reported as `serving 0` with every release
+  `absent`. Now uses `try_connect_relay` with a timeout, so **an unreachable relay
+  is an error, never an empty result** — which for an audit is the whole point.
+- **Phantom staleness from clock comparison.** "Current" was decided by comparing
+  the relay event's `created_at` against `last_published_at` with a 5s tolerance.
+  But the event is signed, `send_event` then waits on the relays, and only
+  afterwards is the DB stamped — so a slow relay opens a multi-second gap and the
+  release reads as stale. Any fixed tolerance is a guess about relay latency.
+  Now matched on **identity**: if the relay serves the exact
+  `last_published_event_id` we last published, it is current. Timestamps are only
+  a fallback (300s window) for rows predating that column.
+- **One lagging relay flagged the whole library.** A release was counted as
+  needing re-publish if *any* relay held an outdated copy. But readers union their
+  relays and keep the newest event per coordinate (NIP-01 replaceable), so a stale
+  copy on one relay is harmless while another serves the current one. With an
+  intentionally sparse relay in the set (primal holds 34 of 1,732) this offered to
+  re-publish almost everything — a redundancy choice, not a repair. The re-publish
+  set now means **no relay holds the current event**. Per-relay `stale` / `absent`
+  remain as honest per-relay reporting.
+
+Net effect on a real library: a reported 25 releases "unserved" resolved to 1
+genuinely stale release. Relays and DB now agree exactly (1,732 each).
+
 ## 0.1.4-beta.6 — unreleased
 
 Legibility pass over the publish indicators and the header/footer, plus two

@@ -1,6 +1,6 @@
 [package]
 name = "ndisc"
-version = "0.1.4-beta.6"
+version = "0.1.4-beta.7"
 description = "Music discography library — physical & digital releases, with Nostr sharing"
 authors = ["xjmzx"]
 edition = "2021"

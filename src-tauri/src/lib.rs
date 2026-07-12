@@ -4352,8 +4352,23 @@ async fn fetch_all_from_relay(
     keys: &Keys,
     kinds: Vec<Kind>,
 ) -> Result<Vec<Event>, String> {
-    let relays = vec![relay.to_string()];
-    let client = build_client(keys.clone(), &relays).await;
+    let client = Client::builder().signer(keys.clone()).build();
+    client
+        .add_relay(relay)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // try_connect_relay, NOT connect(): connect() returns immediately and the
+    // socket comes up in the background, so the first REQ could fire before the
+    // relay was reachable and come back empty. That empty page then looked like
+    // "this relay serves nothing" — a healthy relay holding 1,732 events was
+    // reported as `serving 0`, and every release on it as `absent`. A relay we
+    // cannot reach must be an error, never an empty result.
+    client
+        .try_connect_relay(relay, Duration::from_secs(15))
+        .await
+        .map_err(|e| e.to_string())?;
+
     let pubkey = keys.public_key();
 
     let mut all: HashMap<EventId, Event> = HashMap::new();
@@ -4417,11 +4432,14 @@ async fn audit_relays(
     let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
     let keys = keys_from_nsec(&nsec)?;
 
-    // Local truth: id -> (publish_state, last_published_at).
+    // Local truth: id -> (publish_state, last_published_at, last_published_event_id).
     let (db_state, db_total, db_published) = {
         let conn = open(&app)?;
         let mut stmt = conn
-            .prepare("SELECT id, publish_state, last_published_at FROM releases")
+            .prepare(
+                "SELECT id, publish_state, last_published_at, last_published_event_id
+                   FROM releases",
+            )
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| {
@@ -4429,28 +4447,32 @@ async fn audit_relays(
                     row.get::<_, i64>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
-        let mut map: HashMap<i64, (String, Option<i64>)> = HashMap::new();
+        let mut map: HashMap<i64, (String, Option<i64>, Option<String>)> = HashMap::new();
         for row in rows {
-            let (id, state, at) = row.map_err(|e| e.to_string())?;
-            map.insert(id, (state.unwrap_or_else(|| "never".into()), at));
+            let (id, state, at, event_id) = row.map_err(|e| e.to_string())?;
+            map.insert(id, (state.unwrap_or_else(|| "never".into()), at, event_id));
         }
-        let published = map.values().filter(|(s, _)| s == "published").count();
+        let published = map.values().filter(|(s, _, _)| s == "published").count();
         let total = map.len();
         (map, total, published)
     };
 
     let mut rows: Vec<RelayAuditRow> = Vec::new();
     let mut purgeable: HashSet<i64> = HashSet::new();
-    // Served by at least one relay, and thus visible to a reader that unions
-    // its relay set (which is what the glmps sites do). A release present on
-    // some relays but not others is redundancy, not breakage — only one served
-    // by NOTHING is actually missing from the world.
-    let mut live_anywhere: HashSet<i64> = HashSet::new();
-    // Served, but a relay's copy predates our last publish — visible yet wrong.
-    let mut stale_any: HashSet<i64> = HashSet::new();
+    // Ids for which at least one relay serves an event that is NOT older than
+    // our last publish — i.e. somebody out there has the current version.
+    //
+    // This is the only thing that decides whether a release needs re-publishing.
+    // A reader unions its relays and keeps the newest event per coordinate
+    // (NIP-01 replaceable), so one relay holding a stale copy is harmless as
+    // long as another holds the current one — the newer event wins. Counting a
+    // release as "needs work" because SOME relay lags would flag the whole
+    // library the moment one under-populated relay (primal) is in the list.
+    let mut current_anywhere: HashSet<i64> = HashSet::new();
 
     for relay in &relays {
         let events = match fetch_all_from_relay(
@@ -4519,25 +4541,42 @@ async fn audit_relays(
                     row.orphans.push(*id);
                     purgeable.insert(*id);
                 }
-                Some((state, at)) if state == "published" => {
-                    live_anywhere.insert(*id);
-                    // A relay copy older than our last publish means the relay
-                    // never took the newest version — treat as needing a
-                    // re-publish, not a purge.
-                    if at.is_some_and(|t| (event.created_at.as_u64() as i64) < t - 5) {
-                        row.stale += 1;
-                        stale_any.insert(*id);
-                    } else {
+                Some((state, at, event_id)) if state == "published" => {
+                    // Identity, not timestamps: if the relay is serving the very
+                    // event id we last published, it is current — no clock
+                    // comparison can be more authoritative than that.
+                    //
+                    // Comparing created_at against last_published_at is what a
+                    // previous version did, and it produced phantom staleness:
+                    // the event is signed, send_event then waits on the relays,
+                    // and only afterwards is the DB stamped — so a slow relay
+                    // opens a gap of seconds between the two. Any fixed
+                    // tolerance is a guess about relay latency.
+                    let current = match (event_id, at) {
+                        (Some(known), _) => event.id.to_string() == *known,
+                        // Rows published before last_published_event_id existed
+                        // have no id to match on. Fall back to timestamps, with
+                        // a tolerance generous enough to survive a slow publish.
+                        (None, Some(t)) => {
+                            (event.created_at.as_u64() as i64) >= t - 300
+                        }
+                        (None, None) => false,
+                    };
+                    if current {
                         row.ok += 1;
+                        current_anywhere.insert(*id);
+                    } else {
+                        row.stale += 1;
                     }
                 }
-                Some((state, _)) if state == "stale" => {
-                    // Edited since publishing. The event on the relay is real
-                    // and intentional, just out of date — the fix is to send
-                    // the new version, NOT to retract it. Never purgeable.
-                    live_anywhere.insert(*id);
+                Some((state, _, _)) if state == "stale" => {
+                    // Edited since publishing, so by definition NO relay can
+                    // hold the current version — we never sent it. (The stored
+                    // event id still matches what is live, which is exactly why
+                    // this cannot be decided by id-matching alone.) Always needs
+                    // a re-publish; never a purge — the live event is real and
+                    // intentional, just out of date.
                     row.stale += 1;
-                    stale_any.insert(*id);
                 }
                 Some(_) => {
                     // never / retracted locally, yet still being served: the
@@ -4551,7 +4590,7 @@ async fn audit_relays(
         // Per-relay gaps, reported honestly in this relay's row — a relay that
         // holds only a slice of the library shows it here. This does NOT feed
         // the re-publish set (see live_anywhere).
-        for (id, (state, _)) in db_state.iter() {
+        for (id, (state, _, _)) in db_state.iter() {
             if (state == "published" || state == "stale") && !latest.contains_key(id) {
                 row.missing.push(*id);
             }
@@ -4566,20 +4605,21 @@ async fn audit_relays(
     let mut purgeable: Vec<i64> = purgeable.into_iter().collect();
     purgeable.sort_unstable();
 
-    // The re-publish set: releases we call published that NO relay is serving
-    // (invisible to any reader), plus those served only in an out-of-date form.
-    // Deliberately not "missing from some relay" — with an under-populated
-    // relay in the list that would offer to bulk-publish the whole library to
-    // it, which is a redundancy choice, not a repair.
+    // The re-publish set: releases we call published or stale for which NO relay
+    // holds the current event — either nothing serves them at all, or every copy
+    // out there is out of date. Those, and only those, are actually broken.
+    //
+    // Deliberately NOT "missing from some relay" or "stale on some relay": with
+    // an under-populated relay in the list (primal holds 34 of 1,731) either of
+    // those would offer to re-publish almost the whole library, which is a
+    // redundancy choice, not a repair. Readers union their relays and take the
+    // newest event, so one lagging relay changes nothing they see.
     let mut missing: Vec<i64> = db_state
         .iter()
-        .filter(|(id, (state, _))| {
-            (state == "published" || state == "stale") && !live_anywhere.contains(id)
+        .filter(|(id, (state, _, _))| {
+            (state == "published" || state == "stale") && !current_anywhere.contains(id)
         })
         .map(|(id, _)| *id)
-        .chain(stale_any.iter().copied())
-        .collect::<HashSet<i64>>()
-        .into_iter()
         .collect();
     missing.sort_unstable();
 
