@@ -582,6 +582,36 @@ export interface PurgeSummary {
   errors: RelayError[];
 }
 
+/** Read-only summary of one record label — the LABEL panel's at-a-glance strip.
+ *  Derived entirely from existing release rows; adds no publishing surface and
+ *  cannot touch the labels.v1 image manifest. */
+export interface LabelOverview {
+  name: string;
+  releases: number;
+  firstYear: number | null;
+  lastYear: number | null;
+  published: number;
+  tracks: number;
+}
+
+export async function getLabelOverview(name: string): Promise<LabelOverview> {
+  return invoke<LabelOverview>("get_label_overview", { name });
+}
+
+/** Liveness of one configured relay. */
+export interface RelayHealth {
+  relay: string;
+  ok: boolean;
+  /** Round trip to a real answer (a REQ), not just an open socket. */
+  rttMs: number | null;
+  error: string | null;
+}
+
+/** Probe every relay concurrently. Read-only — signs and sends nothing. */
+export async function checkRelays(relays: string[]): Promise<RelayHealth[]> {
+  return invoke<RelayHealth[]>("check_relays", { relays });
+}
+
 /** Read-only: ask each relay what it serves for us. Signs and sends nothing. */
 export async function auditRelays(relays: string[]): Promise<RelayAudit> {
   return invoke<RelayAudit>("audit_relays", { relays });

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
+  Circle,
   Copy,
   KeyRound,
+  Library,
   Radio,
   ShieldCheck,
   Trash2,
@@ -13,12 +15,14 @@ import { Section } from "./Section";
 import { cn } from "../lib/cn";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import {
+  checkRelays,
   generateKeypair,
   importKeypair,
   publishByIds,
   unpublishByIds,
   type PublishLibrarySummary,
   type PublishProgress,
+  type RelayHealth,
 } from "../lib/tauri";
 import { publishStateMeta } from "../lib/publishState";
 import type { FilterContext } from "./ReleaseList";
@@ -29,6 +33,12 @@ interface NostrPanelProps {
   filterContext: FilterContext;
   npub: string | null;
   onIdentityChanged: (next: string | null) => void;
+  // True when the detail card is collapsed and this column has spare height.
+  // The panel then spends that height on richer relay rows (a liveness dot +
+  // round-trip readout) instead of stretching whitespace. Deliberately additive
+  // ONLY in this mode: with the detail card expanded the rows stay exactly as
+  // they were, so nothing below is pushed down. Mirrors LabelviewPanel's `fill`.
+  roomy?: boolean;
 }
 
 type Phase = "loggedOut" | "reveal" | "loggedIn";
@@ -82,8 +92,46 @@ export function NostrPanel({
   filterContext,
   npub,
   onIdentityChanged,
+  roomy = false,
 }: NostrPanelProps) {
   const [newRelay, setNewRelay] = useState("");
+
+  // Relay liveness, keyed by url. Only probed while `roomy` — the dots are the
+  // only consumer, so there is no point paying for the network round trip when
+  // they aren't on screen.
+  const [health, setHealth] = useState<Map<string, RelayHealth>>(new Map());
+  const [checking, setChecking] = useState(false);
+  const relayKey = relays.join(",");
+  // Count against the CURRENT relay list, not the health map — a relay removed
+  // between probes would otherwise still be counted as connected.
+  const connectedCount = relays.filter((r) => health.get(r)?.ok).length;
+
+  useEffect(() => {
+    if (!roomy || !npub || relays.length === 0) return;
+    let cancelled = false;
+
+    async function probe() {
+      setChecking(true);
+      try {
+        const rows = await checkRelays(relays);
+        if (cancelled) return;
+        setHealth(new Map(rows.map((r) => [r.relay, r])));
+      } catch {
+        if (!cancelled) setHealth(new Map());
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }
+
+    probe();
+    // Re-probe periodically so a relay that drops (or comes back) is visible
+    // without a relaunch. 60s is slow enough to be free, fast enough to notice.
+    const timer = setInterval(probe, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [roomy, npub, relayKey]);
 
   const [revealedNsec, setRevealedNsec] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
@@ -303,24 +351,106 @@ export function NostrPanel({
       {phase === "loggedIn" && npub && (
         <>
           <div className="max-w-md">
-            <div className="text-xs text-muted mb-1">Relays</div>
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <span className="text-xs text-muted">Relays</span>
+              {/* Roomy-only rollup of the dots below — one glance answers "is
+                  my relay set healthy?" without reading each row. */}
+              {roomy && relays.length > 0 && (
+                <span className="text-[10px] font-mono text-muted">
+                  {checking && health.size === 0 ? (
+                    "checking…"
+                  ) : (
+                    <>
+                      <span
+                        className={
+                          connectedCount === relays.length
+                            ? "text-nostr"
+                            : connectedCount === 0
+                              ? "text-alert"
+                              : "text-warn"
+                        }
+                      >
+                        {connectedCount}
+                      </span>
+                      /{relays.length} connected
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
             <ul className="space-y-1 mb-2">
-              {relays.map((r) => (
-                <li
-                  key={r}
-                  className="px-2 py-1 rounded bg-bg/50 font-mono text-xs flex
-                             items-center justify-between gap-2"
-                >
-                  <span className="truncate">{r}</span>
-                  <button
-                    onClick={() => setRelays(relays.filter((x) => x !== r))}
-                    className="text-muted hover:text-alert text-xs"
-                    aria-label={`Remove ${r}`}
+              {relays.map((r) => {
+                const h = health.get(r);
+                return (
+                  <li
+                    key={r}
+                    className={cn(
+                      `px-2 rounded bg-bg/50 font-mono text-xs flex
+                       items-center justify-between gap-2`,
+                      roomy ? "py-2" : "py-1",
+                    )}
                   >
-                    ✕
-                  </button>
-                </li>
-              ))}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{r}</span>
+                      {roomy && (
+                        <span className="block mt-0.5 text-[10px] text-muted">
+                          {h?.ok
+                            ? `connected · ${h.rttMs}ms`
+                            : h
+                              ? "unreachable"
+                              : checking
+                                ? "checking…"
+                                : "—"}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={cn(
+                        "flex shrink-0 items-center gap-1.5",
+                        // Dot ABOVE the remove button — stacking is what buys
+                        // the row its extra height, so the reclaimed space is
+                        // paid for with information rather than padding.
+                        roomy ? "flex-col" : "flex-row",
+                      )}
+                    >
+                      {roomy && (
+                        <Circle
+                          size={7}
+                          fill="currentColor"
+                          className={cn(
+                            "shrink-0",
+                            h?.ok
+                              ? "text-nostr"
+                              : h
+                                ? "text-alert"
+                                : "text-muted animate-pulse",
+                          )}
+                          aria-label={
+                            h?.ok
+                              ? `${r} connected`
+                              : h
+                                ? `${r} unreachable`
+                                : `${r} status unknown`
+                          }
+                        >
+                          <title>
+                            {h?.ok
+                              ? `Connected — answered a REQ in ${h.rttMs}ms`
+                              : (h?.error ?? "Checking relay…")}
+                          </title>
+                        </Circle>
+                      )}
+                      <button
+                        onClick={() => setRelays(relays.filter((x) => x !== r))}
+                        className="text-muted hover:text-alert text-xs"
+                        aria-label={`Remove ${r}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
             <div className="flex gap-2">
               <input
@@ -345,7 +475,30 @@ export function NostrPanel({
             </div>
           </div>
 
-          <div className="max-w-md">
+          {/* Publishing is a different KIND of act from relay configuration:
+              the rows above edit local settings, this broadcasts to the
+              network and is not fully reversible. Rules top and bottom close
+              the region off so that boundary is stated rather than implied by
+              whitespace — and so the buttons never read as the tail of the
+              relay list. */}
+          <div
+            className={cn(
+              "max-w-md border-y border-surface",
+              roomy ? "mt-5 pt-3 pb-4" : "mt-4 pt-2.5 pb-3",
+            )}
+          >
+            {/* Icon, not the word "Library" — the heading only needs to say
+                "this region is about the library as a whole", and at this size
+                the shelf-of-books reads faster than 7 characters of type. */}
+            {/* text-accent to match the Section header icons (Section sets
+                text-accent on its header) — this is a region heading, so it
+                should read as one. */}
+            <div
+              className="text-accent"
+              title="Library — publish or retract releases as a set"
+            >
+              <Library size={16} aria-label="Library" />
+            </div>
             <PublishLibraryBlock
               phase={publishPhase}
               action={libraryAction}
@@ -415,7 +568,7 @@ function PublishLibraryBlock({
         <button
           onClick={() => onAskConfirm("publish")}
           disabled={disabled}
-          className={`${DB_BUTTON_CLS} mt-3 w-full justify-center
+          className={`${DB_BUTTON_CLS} mt-3 w-full justify-center font-semibold
                       disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           <Upload size={14} />{" "}
@@ -425,9 +578,15 @@ function PublishLibraryBlock({
           onClick={() => onAskConfirm("unpublish")}
           disabled={disabled}
           title="Broadcast kind:5 deletions to retract these releases from relays"
+          /* Sits in the same mauve family as Publish (bg-mauve/15) but at a
+             heavier fill, so the two read as a pair while staying tellable
+             apart at a glance. The fill is DELIBERATELY static on hover —
+             Publish inverts its fill, so holding this one still and shifting
+             only the icon + label (black → mauve) keeps the destructive action
+             from flashing a big solid block under the cursor. */
           className="mt-2 w-full flex items-center justify-center gap-1.5
-                     px-3 py-1.5 rounded-md text-xs text-alert
-                     border border-alert/40 hover:bg-alert/10
+                     px-3 py-1.5 rounded-md text-xs bg-mauve/35 text-bg
+                     font-semibold hover:text-mauve
                      disabled:opacity-50 disabled:cursor-not-allowed
                      transition-colors"
         >

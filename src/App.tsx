@@ -33,6 +33,7 @@ import {
   LibraryStats,
   LibraryToolbar,
   LibraryFlowPanel,
+  fmtAgo,
 } from "./components/LibraryPanel";
 import { ToolbarIconButton } from "./components/ToolbarIconButton";
 import {
@@ -418,15 +419,10 @@ export default function App() {
           >
             n<span className="text-fg">disc</span>
           </button>
-          {appVersion && (
-            <span
-              className="hidden md:inline-flex items-center px-2.5 py-2
-                         rounded-md bg-surface text-mauve font-mono text-xs
-                         shrink-0"
-            >
-              v{appVersion}
-            </span>
-          )}
+          {/* Version lives in the footer, not here. In the header it competed
+              with the library stats for the same squeezed row and clipped
+              mid-string ("v0.1.4-beta.…"); it is reference information, not
+              something you act on. */}
         </div>
 
         {/* Library stats — centred between the title and the toolbar. */}
@@ -613,6 +609,7 @@ export default function App() {
                 filterContext={filterContext}
                 npub={npub}
                 onIdentityChanged={onIdentityChanged}
+                roomy={detailCollapsed}
               />
               <LabelviewPanel
                 labels={labels}
@@ -635,6 +632,7 @@ export default function App() {
                 setFormUrl={setLabelFormUrl}
                 formSite={labelFormSite}
                 setFormSite={setLabelFormSite}
+                roomy={detailCollapsed}
               />
             </div>
           </div>
@@ -653,15 +651,29 @@ export default function App() {
         </div>
       )}
 
-      {/* Three columns: stack info left, identity centred, db path right —
-          justify-between buffers each from the next. */}
+      {/* Three columns: version + stack left, identity centred, db path right —
+          justify-between buffers each from the next.
+
+          ONE colour rule across the whole footer, so it reads as a single
+          quiet band rather than four competing tones: prose and labels are
+          `muted` (inherited from the footer), and every machine value —
+          version, npub, db path — is `font-mono text-mauve`. Nothing here uses
+          text-fg or a slashed opacity; if it is a value it is mono-mauve, and
+          if it is not, it is muted. */}
       <footer className="mt-4 shrink-0 flex flex-wrap items-center justify-between
                           gap-x-8 gap-y-1 text-xs text-muted">
-        <span>scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite</span>
+        <span className="inline-flex items-center gap-2 min-w-0">
+          {appVersion && (
+            <span className="font-mono text-mauve shrink-0">v{appVersion}</span>
+          )}
+          <span className="truncate">
+            scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite
+          </span>
+        </span>
         {npub && (
           <span className="inline-flex items-center gap-2 min-w-0">
             {(profile?.display_name || profile?.name) && (
-              <span className="text-fg/70 truncate">
+              <span className="truncate">
                 {profile?.display_name || profile?.name}
               </span>
             )}
@@ -677,15 +689,30 @@ export default function App() {
             </span>
           </span>
         )}
-        {dbPath && (
+        {(dbPath || lib.summary?.lastScannedAt != null) && (
           <span className="inline-flex items-center gap-1.5 min-w-0">
-            <span className="shrink-0">db</span>
-            <span
-              className="font-mono text-mauve truncate max-w-[40rem]"
-              title={dbPath}
-            >
-              {dbPath}
-            </span>
+            {dbPath && (
+              <>
+                <span className="shrink-0">db</span>
+                <span
+                  className="font-mono text-mauve truncate max-w-[40rem]"
+                  title={dbPath}
+                >
+                  {dbPath}
+                </span>
+              </>
+            )}
+            {lib.summary?.lastScannedAt != null && (
+              <span
+                className="shrink-0"
+                title="last time the library folder was scanned for changes"
+              >
+                · scanned{" "}
+                <span className="font-mono text-mauve">
+                  {fmtAgo(lib.summary.lastScannedAt)}
+                </span>
+              </span>
+            )}
           </span>
         )}
       </footer>

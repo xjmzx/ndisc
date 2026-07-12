@@ -30,6 +30,9 @@ export default {
         // the mauve publish dot so a physical + published row doesn't read as
         // two same-colour dots. Identical on both themes.
         medium: c("--c-medium"),
+        // "Published to Nostr" — purple on both themes. Separate from mauve,
+        // which upleb repaints orange (colliding with warn/stale).
+        nostr: c("--c-nostr"),
         // Genre palette — shared with glmps. Use as bg-g-electronic,
         // text-g-jazz, etc. The mains/subs split is a palette grouping only;
         // all slugs are pure peers (see schema/release.v2.json genreInvariants).

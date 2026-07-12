@@ -1533,8 +1533,8 @@ export function ReleaseList({
                   {/* State cluster: 4-state publish dot + medium share one
                       neutral rounded-rectangle bg (non-interactive — state
                       only). Dot colour = the shared publish-state vocabulary
-                      (never grey · published mauve · stale amber · retracted
-                      red), matching the toolbar state filter. */}
+                      (never grey · published nostr-purple · stale amber ·
+                      retracted red), matching the toolbar state filter. */}
                   <div
                     className="shrink-0 inline-flex items-center justify-center
                                gap-1 px-1.5 h-5 min-w-[38px] rounded bg-surface/60"
@@ -1923,7 +1923,7 @@ function RelayAuditPanel({
                 <span className="text-muted">
                   serving <span className="font-mono">{r.live}</span>
                 </span>
-                <span className="text-mauve">
+                <span className="text-nostr">
                   ok <span className="font-mono">{r.ok}</span>
                 </span>
                 {r.ghosts.length > 0 && (

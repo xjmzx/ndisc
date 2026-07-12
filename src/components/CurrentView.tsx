@@ -437,7 +437,7 @@ function DraftRow({
         <span
           className={
             "ml-auto text-[10px] uppercase tracking-wide font-mono shrink-0 " +
-            (published ? "text-mauve" : "text-muted")
+            (published ? "text-nostr" : "text-muted")
           }
         >
           {published ? "published" : "draft"}

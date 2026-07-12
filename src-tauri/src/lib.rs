@@ -1329,6 +1329,61 @@ pub struct LabelCount {
     pub dominant_genre_3: Option<String>,
 }
 
+/// Read-only summary of one record label, for the LABEL panel's at-a-glance
+/// strip. Purely derived from rows we already have — it adds no publishing
+/// surface and cannot mutate the labels.v1 image manifest.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelOverview {
+    pub name: String,
+    pub releases: i64,
+    /// Year span across the label's releases. None when no release has a year.
+    pub first_year: Option<i64>,
+    pub last_year: Option<i64>,
+    /// How many of those releases are live on relays (publish_state).
+    pub published: i64,
+    /// Audio files across the label's releases (the "leaves").
+    pub tracks: i64,
+}
+
+#[tauri::command]
+fn get_label_overview(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<LabelOverview, String> {
+    let conn = open(&app)?;
+    let (releases, first_year, last_year, published, tracks) = conn
+        .query_row(
+            "SELECT COUNT(*),
+                    MIN(year),
+                    MAX(year),
+                    SUM(CASE WHEN publish_state = 'published' THEN 1 ELSE 0 END),
+                    COALESCE(SUM(COALESCE(track_count, 0)), 0)
+               FROM releases
+              WHERE label = ?1",
+            params![name],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(LabelOverview {
+        name,
+        releases,
+        first_year,
+        last_year,
+        published,
+        tracks,
+    })
+}
+
 // All distinct labels, ordered by release count desc (then alphabetical),
 // capped at 500 rows as a defensive ceiling. The UI applies its own display
 // cap and search filter on top of this — including single-release labels so
@@ -3014,6 +3069,72 @@ async fn build_client(keys: Keys, relays: &[String]) -> Client {
     }
     client.connect().await;
     client
+}
+
+/// Liveness of one configured relay.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayHealth {
+    pub relay: String,
+    pub ok: bool,
+    /// Round trip to a real answer, not just a socket — see check_one_relay.
+    pub rtt_ms: Option<u64>,
+    pub error: Option<String>,
+}
+
+async fn check_one_relay(url: String) -> RelayHealth {
+    let started = std::time::Instant::now();
+    let fail = |e: String| RelayHealth {
+        relay: url.clone(),
+        ok: false,
+        rtt_ms: None,
+        error: Some(e),
+    };
+
+    // No signer: this is a read-only liveness probe, nothing is signed or sent.
+    let client = Client::builder().build();
+    if let Err(e) = client.add_relay(url.as_str()).await {
+        return fail(e.to_string());
+    }
+    client.connect().await;
+
+    // Issue a trivial REQ rather than trusting the socket. A relay can accept
+    // the websocket and then never answer (or reject the subscription); "the
+    // TCP connection opened" is not the same claim as "this relay will serve
+    // us", and the dot is asserting the latter.
+    let filter = Filter::new().kind(Kind::Custom(KIND_RELEASE)).limit(1);
+    let result = client.fetch_events(filter, Duration::from_secs(6)).await;
+    let _ = client.shutdown().await;
+
+    match result {
+        Ok(_) => RelayHealth {
+            relay: url,
+            ok: true,
+            rtt_ms: Some(started.elapsed().as_millis() as u64),
+            error: None,
+        },
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+/// Probe every configured relay concurrently. Read-only.
+#[tauri::command]
+async fn check_relays(relays: Vec<String>) -> Result<Vec<RelayHealth>, String> {
+    // Concurrent, not sequential: three relays each allowed a 6s timeout would
+    // otherwise take 18s to report a single dead one.
+    let handles: Vec<_> = relays
+        .into_iter()
+        .map(|url| tokio::spawn(check_one_relay(url)))
+        .collect();
+
+    let mut out = Vec::new();
+    for h in handles {
+        match h.await {
+            Ok(health) => out.push(health),
+            Err(e) => return Err(format!("relay check panicked: {e}")),
+        }
+    }
+    Ok(out)
 }
 
 fn split_send_output(output: &Output<EventId>) -> (Vec<String>, Vec<RelayError>) {
@@ -6570,6 +6691,7 @@ pub fn run() {
             set_release_disc_total,
             set_release_genres,
             list_distinct_labels,
+            get_label_overview,
             export_markdown,
             list_releases,
             get_release,
@@ -6613,6 +6735,7 @@ pub fn run() {
             reconcile_published,
             audit_relays,
             purge_relay_events,
+            check_relays,
             list_feed_drafts,
             save_feed_draft,
             delete_feed_draft,

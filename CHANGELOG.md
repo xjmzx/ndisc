@@ -15,6 +15,61 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.1.4-beta.6 — unreleased
+
+Legibility pass over the publish indicators and the header/footer, plus two
+read-only backend commands that let the panels say something useful when the
+detail card is collapsed. No contract change.
+
+### Fixed
+- **Published and Stale were the same colour on the upleb theme.** The publish
+  dot rode on `--c-mauve`, which is the theme's *brand* tint — and upleb repaints
+  it orange (`255 179 71`), landing on top of `--c-warn` amber (`251 191 36`). No
+  relabelling could separate them. Publish state now has its own **`--c-nostr`**
+  token (purple, deliberately identical across both themes, like `--c-medium`),
+  used by the state dot, the state filter, the batch-edit dot, the feed-note
+  published badge, and the relay-audit `ok` count. `mauve` goes back to being
+  only the brand tint. Four states now read cleanly on both themes: never grey ·
+  published nostr-purple · stale amber · retracted red.
+- **Header text clipped when maximised.** The version chip and the library stats
+  competed for one squeezed row against a toolbar that never yields, so
+  `v0.1.4-beta.…` clipped mid-string and `scanned N ago` truncated. Version and
+  scan age both move to the footer — neither is something you act on.
+
+### Changed
+- Header stats are one family: the tracks/video/incomplete counts move onto the
+  same `StatChip` as Total/Physical/Digital/Artists. `orphaned` keeps an amber
+  value (new `tone` prop) — it means something is wrong and shouldn't read as a
+  neutral count.
+- Footer follows one colour rule instead of four competing tones: prose and
+  labels `muted`, every machine value (version, npub, db path, scan age)
+  `font-mono text-mauve`.
+- Nostr panel: the publish controls are now a titled region closed off by rules
+  top and bottom. The rows above edit local config; these buttons broadcast to
+  the network and are not fully reversible — a boundary that load-bearing should
+  be stated, not implied by whitespace. Publish/Unpublish take the same
+  `font-semibold` weight as Add Release's Save. Unpublish drops its red outline
+  for a heavier mauve fill (`bg-mauve/35`) with black type that shifts to mauve
+  on hover — the fill is static, so the destructive action doesn't flash a solid
+  block under the cursor. Red is now reserved for where it means something:
+  retracted state, unreachable relays, and the purge.
+
+### Added — "roomy" mode
+When the detail card is collapsed the right-hand column has spare height. It is
+now spent on information rather than stretched whitespace. Strictly additive in
+that mode: with the detail card open, nothing shifts by a pixel.
+- **Relay liveness.** New `check_relays` probes every relay concurrently and each
+  row grows a dot (stacked above its ✕) plus a `connected · 142ms` readout, with
+  an `n/n connected` rollup beside the Relays heading. The probe issues a real
+  REQ, not a bare socket open — a relay can accept the websocket and never
+  answer, and the dot is asserting that it will serve us. Re-probes every 60s,
+  and only while the dots are on screen.
+- **Label at-a-glance.** New `get_label_overview` backs a read-only strip under
+  the label image: releases · published · tracks · year span, following whatever
+  is on screen (including the idle carousel). Derived entirely from existing
+  rows — it adds no publishing surface and cannot touch the labels.v1 manifest.
+  Hidden while the add/edit form is open.
+
 ## 0.1.4-beta.5 — unreleased
 
 Publish state grows from a single timestamp into a real lifecycle, and gains the

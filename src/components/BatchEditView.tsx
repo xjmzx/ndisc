@@ -274,7 +274,7 @@ export function BatchEditView({
               <span
                 className={cn(
                   "w-2 h-2 rounded-full justify-self-center shrink-0",
-                  published ? "bg-mauve" : "border border-mauve/50",
+                  published ? "bg-nostr" : "border border-nostr/50",
                 )}
                 title={
                   published

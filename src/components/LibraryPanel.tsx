@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { cn } from "../lib/cn";
 import {
   Disc,
   FileDown,
@@ -275,7 +276,7 @@ export function useLibrary(
 // accent colour.
 // Compact "N ago" for the last-scanned marker. Anything under a minute reads
 // "just now"; days cap the resolution (a stale library is stale enough).
-function fmtAgo(unixSeconds: number): string {
+export function fmtAgo(unixSeconds: number): string {
   const secs = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
   if (secs < 60) return "just now";
   const mins = Math.floor(secs / 60);
@@ -300,49 +301,58 @@ export function LibraryStats({
       <StatChip label="Physical" value={stats.physical} />
       <StatChip label="Digital" value={stats.digital} />
       <StatChip label="Artists" value={stats.uniqueArtists} />
+      {/* Library-summary counts share the StatChip shell with the four above —
+          they are the same kind of fact (a count of the library), so they read
+          as one row rather than chips-then-loose-text.
+          "scanned N ago" is NOT here: it moved to the footer, being passive
+          status rather than a count, and the first thing to truncate. */}
       {summary && (
-        <span className="inline-flex items-baseline gap-2 pl-1 text-[11px] whitespace-nowrap">
-          <span className="text-muted">
-            <span className="text-fg font-mono">
-              {summary.tracks.toLocaleString()}
-            </span>{" "}
-            tracks
-          </span>
+        <>
+          <StatChip label="Tracks" value={summary.tracks} />
           {summary.videos > 0 && (
-            <span className="text-muted">
-              <span className="text-fg font-mono">{summary.videos}</span> video
-            </span>
+            <StatChip label="Video" value={summary.videos} />
           )}
           {summary.incomplete > 0 && (
-            <span className="text-muted">
-              <span className="text-fg font-mono">{summary.incomplete}</span>{" "}
-              incomplete
-            </span>
+            <StatChip label="Incomplete" value={summary.incomplete} />
           )}
           {summary.orphaned > 0 && (
-            <span className="text-warn">
-              <span className="font-mono">{summary.orphaned}</span> orphaned
-            </span>
+            <StatChip
+              label="Orphaned"
+              value={summary.orphaned}
+              tone="warn"
+            />
           )}
-          {summary.lastScannedAt != null && (
-            <span className="text-muted/70">
-              scanned {fmtAgo(summary.lastScannedAt)}
-            </span>
-          )}
-        </span>
+        </>
       )}
     </div>
   );
 }
 
-function StatChip({ label, value }: { label: string; value: number }) {
+function StatChip({
+  label,
+  value,
+  tone = "accent",
+}: {
+  label: string;
+  value: number;
+  // `warn` is for counts that mean something is wrong (orphaned rows) — the
+  // chip shell stays identical so the row still reads as one family.
+  tone?: "accent" | "warn";
+}) {
   return (
     <span
       className="inline-flex items-baseline gap-1.5 px-2.5 py-2 rounded-md
                  bg-surface text-xs whitespace-nowrap"
     >
       <span className="text-muted">{label}</span>
-      <span className="text-accent font-mono">{value.toLocaleString()}</span>
+      <span
+        className={cn(
+          "font-mono",
+          tone === "warn" ? "text-warn" : "text-accent",
+        )}
+      >
+        {value.toLocaleString()}
+      </span>
     </span>
   );
 }

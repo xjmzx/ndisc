@@ -26,6 +26,12 @@
   /* release medium mark — leaf green (matches --c-ok), independent of the mauve
      publish dot; deliberately identical across both themes */
   --c-medium: 74 222 128;
+  /* Nostr purple — the "published to relays" colour, and ONLY that. Its own
+     token, not --c-mauve: mauve is the theme's brand tint (buttons, panel
+     groups) and upleb repaints it orange, which lands right on top of --c-warn
+     and made Published and Stale indistinguishable. Deliberately identical
+     across both themes, like --c-medium. */
+  --c-nostr: 167 139 250;
 
   /* Genre palette — shared with glmps + ndisc.view verbatim. Mid-saturation
      hues that sit alongside the system tokens above without competing with
@@ -107,6 +113,9 @@
   --c-auburn: 178 96 58;
   /* release medium mark — same leaf green as :root (kept identical on purpose) */
   --c-medium: 74 222 128;
+  /* Nostr purple — same as :root on purpose. Must NOT follow this theme's
+     orange mauve, or Published collides with Stale (--c-warn amber). */
+  --c-nostr: 167 139 250;
 
   /* Genre palette — identical to :root; theme-neutral. */
   /* acoustic (primary) */

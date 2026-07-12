@@ -20,11 +20,12 @@ export const PUBLISH_STATES: PublishStateMeta[] = [
     desc: "never published to relays",
   },
   {
-    // Mauve is the suite-wide "published to Nostr" colour (green is reserved
-    // for track/leaf completeness), so published reads mauve, not green.
+    // Nostr purple — its own token, NOT text-mauve. Mauve is the theme brand
+    // tint and the upleb theme paints it orange, which sits right on top of
+    // warn/amber and made Published and Stale read as the same dot.
     value: "published",
     label: "Published",
-    dot: "text-mauve",
+    dot: "text-nostr",
     desc: "a kind:31237 event is live on relays",
   },
   {
