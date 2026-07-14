@@ -15,6 +15,25 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.1.4-beta.8 — unreleased
+
+### Suite-shared published-release manifest
+- **New maintenance action: "Export published manifest".** Writes
+  `~/.local/share/ndisc-suite/published.json` — the releases ndisc has published
+  to Nostr (kind:31237), keyed by their folder on disk.
+- **Why an exported document rather than a shared database.** ntree needs to know
+  what has been released so it can scope a mass sample to the published
+  discography, but it has no business reading ndisc's SQLite — that would couple
+  a filesystem-only app to this schema and this file location. ndisc exports what
+  it knows; the consumer reads it. Derived and disposable: if it is absent or
+  stale, the consumer simply cannot offer the filter, and nothing else breaks.
+- Keyed by **release folder**, because that is what a filesystem-only consumer
+  can actually match against. The summary reports both how many releases were
+  exported and how many are published but have **no folder on disk** — those
+  cannot be scoped by path, so they are counted rather than silently dropped.
+- First consumer: ntree's `released` filter (1,609 releases here), which scoped
+  the 12,407-track sample of the published discography.
+
 ## 0.1.4-beta.7 — unreleased
 
 Three fixes to "Reconcile relays", all found by the audit disagreeing with
