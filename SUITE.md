@@ -1,3 +1,5 @@
+<img src="docs/n-suite-mark.svg" alt="n" width="72">
+
 # The n-suite
 
 A family of small, single-purpose apps for cataloguing, playing, sampling, and
@@ -100,6 +102,37 @@ Remote NIP-46 bunker → `nview`. No keys (read-only / connectivity only) →
 ---
 
 ## Shared design language
+
+### Brand marks (2026-07-14)
+
+Masters live in `~/ProtonDrive/Figma-Icons`. Three tiers, and they are not
+interchangeable:
+
+| asset | what it is | where it may be used |
+|---|---|---|
+| `n.circle` | the **suite mark** — bold `n` in a ring, monochrome | docs, READMEs, org avatar. No theme risk. |
+| `n.disc` · `n.play` · `n.smpl` · `n.tree` | per-app **horizontal lockups** (mark + wordmark, dot motif in each mark) | **docs only, for now.** Vendored per repo as `docs/<app>-lockup.svg`. |
+| `<app>.svg` / `<app>-sq.svg` | **launcher icons** — the app-icon masters | `icon.svg` in each repo → scalable launcher + Tauri raster set |
+
+**The lockups are not yet cleared for in-app use, and there is a specific reason.**
+They are hardcoded mauve (`#AA43FF`), and **the upleb theme repaints `--c-mauve`
+orange** — the exact collision that forced ndisc's publish state onto a dedicated
+theme-neutral `--c-nostr`. A mauve lockup in a header would clash the moment the
+theme is switched. Adopting them in-app means giving them a theme-neutral
+treatment first.
+
+**Design pointer (not built):** the lockups are the intended direction for each
+app's **header title**, which today is plain text. Resolve the theme question
+before acting on it.
+
+**Rejected: `n.stack`.** A strip of tech-stack logos intended for the footer
+(which currently reads `stack: Tauri 2 + React + TS + Tailwind + SQLite` as
+text). Sent back: it is a *fake* SVG — six base64 rasters, zero vector paths,
+1.75 MB — and a single baked strip would **misstate two apps**, since nsmpl and
+ntree have no SQLite and their footers correctly say so. If the strip is wanted,
+it should be a shared component built from real vector logos (~1 KB each), with
+each app declaring its own stack.
+
 
 - **Palette** — the *fizx* dark scheme, driven by CSS variables (`--c-*` in each
   app's `index.css`) and exposed as Tailwind tokens in `tailwind.config.ts`. Two
