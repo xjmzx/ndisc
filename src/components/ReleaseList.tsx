@@ -13,6 +13,7 @@ import {
   Music,
   MoreVertical,
   Radar,
+  Share2,
   Radio,
   RefreshCw,
   SatelliteDish,
@@ -29,6 +30,7 @@ import { CountBadge, LeafDots } from "./LeafIcon";
 import {
   auditRelays,
   deleteRelease,
+  exportPublishedManifest,
   extractEmbeddedCovers,
   getLibraryRoot,
   listReleases,
@@ -52,6 +54,7 @@ import {
   type OrphanEvent,
   type OrphanInfo,
   type PublishState,
+  type ManifestSummary,
   type PurgeSummary,
   type ReconcileSummary,
   type RelayAudit,
@@ -195,7 +198,8 @@ export function ReleaseList({
     | "reconcileDisk"
     | "audit"
     | "purge"
-    | "republish";
+    | "republish"
+    | "manifest";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   const [opSummary, setOpSummary] = useState<
@@ -206,6 +210,7 @@ export function ReleaseList({
     | { kind: "reconcileDisk"; data: LibraryReconcileSummary }
     | { kind: "audit"; data: RelayAudit }
     | { kind: "purge"; data: PurgeSummary }
+    | { kind: "manifest"; data: ManifestSummary }
     | null
   >(null);
 
@@ -327,6 +332,24 @@ export function ReleaseList({
 
   async function runBackgroundOp(kind: OpKind) {
     if (activeOp !== null) return;
+
+    // Export the published set for the other suite apps (ntree samples only
+    // released material). ndisc is the only app that knows what is published;
+    // a shared manifest is how the others find out, without coupling them to
+    // this schema or this DB's location.
+    if (kind === "manifest") {
+      setActiveOp("manifest");
+      setOpSummary(null);
+      setError(null);
+      try {
+        setOpSummary({ kind: "manifest", data: await exportPublishedManifest() });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
 
     // The outbound relay audit — read-only, and the only way to see events a
     // relay is serving that the DB has no idea about (ghosts and orphans).
@@ -1027,6 +1050,17 @@ export function ReleaseList({
                   runBackgroundOp("audit");
                 }}
               />
+              <MaintMenuItem
+                icon={<Share2 size={14} />}
+                label="Export published manifest"
+                detail="Share the released set with the other suite apps"
+                active={activeOp === "manifest"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("manifest");
+                }}
+              />
             </div>
           )}
         </div>
@@ -1234,6 +1268,29 @@ export function ReleaseList({
                 )}
               </>
             )}
+            {opSummary.kind === "manifest" && (
+              <>
+                <span className="text-ok">
+                  exported{" "}
+                  <span className="font-mono">{opSummary.data.releases}</span>{" "}
+                  released
+                </span>
+                {opSummary.data.withoutPath > 0 && (
+                  <span
+                    className="text-muted"
+                    title="Published, but with no folder on disk — nothing can sample them"
+                  >
+                    no folder{" "}
+                    <span className="font-mono">
+                      {opSummary.data.withoutPath}
+                    </span>
+                  </span>
+                )}
+                <span className="text-muted font-mono truncate max-w-[22rem]">
+                  {opSummary.data.path}
+                </span>
+              </>
+            )}
             {opSummary.kind === "purge" && (
               <>
                 <span className="text-ok">
@@ -1255,6 +1312,7 @@ export function ReleaseList({
               </>
             )}
             {opSummary.kind !== "reconcile" &&
+              opSummary.kind !== "manifest" &&
               opSummary.data.errors.length > 0 && (
                 <span className="text-alert">
                   errors{" "}

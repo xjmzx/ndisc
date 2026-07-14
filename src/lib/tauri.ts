@@ -829,3 +829,19 @@ export async function revokeApproval(
 ): Promise<PublishResult> {
   return invoke<PublishResult>("revoke_approval", { approvalEventId, relays });
 }
+
+/** Summary of the suite-shared published manifest ndisc exports for the other
+ *  apps (ntree samples only released material, for instance). */
+export interface ManifestSummary {
+  path: string;
+  releases: number;
+  /** Published, but with no folder on disk — a consumer can't act on these. */
+  withoutPath: number;
+}
+
+/** Write the list of Nostr-published releases to ~/.local/share/ndisc-suite/
+ *  published.json. ndisc is the only app that knows what is published; this is
+ *  how the others find out, without coupling to this schema. */
+export async function exportPublishedManifest(): Promise<ManifestSummary> {
+  return invoke<ManifestSummary>("export_published_manifest");
+}

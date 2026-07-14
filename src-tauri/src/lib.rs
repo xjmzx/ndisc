@@ -2465,6 +2465,118 @@ pub struct LibrarySummary {
     pub library_root: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Published manifest — the suite's cross-app bridge
+// ---------------------------------------------------------------------------
+//
+// ndisc is the only app that knows what has been published to Nostr. Other suite
+// apps sometimes need that fact — ntree, for instance, wants to sample only the
+// released library. Rather than have them read ndisc's SQLite (which would
+// couple them to this schema AND this file's location), ndisc EXPORTS a small
+// manifest to a suite-shared path and they read that.
+//
+// This is the "option B, shared manifest" direction already chosen for the
+// suite's terrain/roots model. The manifest is derived and disposable: safe to
+// regenerate at any time, and nothing breaks if it is absent.
+
+/// Where suite apps look for cross-app state. Deliberately NOT ndisc's own
+/// app-data dir — this is shared, not private.
+fn suite_shared_dir() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|e| format!("HOME: {e}"))?;
+    Ok(PathBuf::from(home).join(".local/share/ndisc-suite"))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestRelease {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    /// Absolute path of the release folder on disk.
+    pub dir: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedManifest {
+    pub version: u32,
+    pub generated_at: i64,
+    pub library_root: Option<String>,
+    pub releases: Vec<ManifestRelease>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestSummary {
+    pub path: String,
+    pub releases: usize,
+    /// Published, but with no folder on disk — a consumer cannot act on these,
+    /// so they are counted rather than silently dropped.
+    pub without_path: usize,
+}
+
+/// Write the Nostr-published releases that have a folder on disk to the
+/// suite-shared manifest. Read-only against the library.
+#[tauri::command]
+fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, String> {
+    let conn = open(&app)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, artist, title, file_path
+               FROM releases
+              WHERE publish_state = 'published'
+              ORDER BY artist, title",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut releases = Vec::new();
+    let mut without_path = 0usize;
+    for row in rows {
+        let (id, artist, title, dir) = row.map_err(|e| e.to_string())?;
+        match dir {
+            Some(d) if !d.trim().is_empty() => releases.push(ManifestRelease {
+                id,
+                artist,
+                title,
+                dir: d,
+            }),
+            _ => without_path += 1,
+        }
+    }
+
+    let manifest = PublishedManifest {
+        version: 1,
+        generated_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        library_root: get_library_root(app.clone()).ok().flatten(),
+        releases,
+    };
+
+    let dir = suite_shared_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let path = dir.join("published.json");
+    let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("write {}: {e}", path.display()))?;
+
+    Ok(ManifestSummary {
+        path: path.to_string_lossy().to_string(),
+        releases: manifest.releases.len(),
+        without_path,
+    })
+}
+
 /// Passive library readout for the header: cheap live SQL for
 /// releases/tracks/incomplete/videos, plus orphan count + last-scanned time
 /// carried from the last reconcile (so we never re-walk the disk just to
@@ -6761,6 +6873,7 @@ pub fn run() {
             get_library_root,
             set_library_root,
             get_library_summary,
+            export_published_manifest,
             sync_cover_to_disk,
             update_release_path,
             clear_release_path,
