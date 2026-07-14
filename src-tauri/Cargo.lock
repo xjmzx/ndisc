@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "ndisc"
-version = "0.1.4-beta.7"
+version = "0.1.4-beta.8"
 dependencies = [
  "csv",
  "keyring",
