@@ -125,6 +125,25 @@ treatment first.
 app's **header title**, which today is plain text. Resolve the theme question
 before acting on it.
 
+### Parked for the lab
+
+Three open design questions, all deliberately not guessed at:
+
+1. **Theme-neutral lockups.** The per-app lockups are hardcoded mauve
+   (`#AA43FF`); the upleb theme repaints `--c-mauve` orange. Needed before they
+   can head an app's header. *What do they look like in orange?*
+2. **The stack strip.** See below. If wanted, it must be a component built from
+   real vector logos, with each app declaring its own stack — not one baked
+   image.
+3. **nview's Android adaptive icon.** Its three `@capacitor/assets` sources are
+   the same flat artwork, so the *foreground* is full-bleed square art — and
+   Android masks the foreground to ~66%, clipping the wordmark at both ends and
+   cropping the dark base away entirely. Long-standing, not introduced by the
+   2026-07-14 refresh. The fix is to split the layers (background = the flat
+   base; foreground = the mark inside the safe zone), which is a decision about
+   *how the mark reads when it cannot span the full width* — a design call, not
+   a regeneration.
+
 **Rejected: `n.stack`.** A strip of tech-stack logos intended for the footer
 (which currently reads `stack: Tauri 2 + React + TS + Tailwind + SQLite` as
 text). Sent back: it is a *fake* SVG — six base64 rasters, zero vector paths,
