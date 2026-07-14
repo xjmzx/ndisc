@@ -15,6 +15,29 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.1 — unreleased
+
+### Monochrome theme — and it is now the default
+
+- **New `mono` theme**, and the title now cycles **fizx → upleb → mono**.
+- **Chrome goes greyscale; MEANING keeps its colour.** Each `.theme-mono` block
+  declares *only* the greyscale tokens — anything it does not redeclare keeps its
+  `:root` value, so `ok` / `warn` / `alert` / `nostr` / `medium` (and ndisc's
+  genre + year palettes) stay coloured with no work. **The block is a list of
+  what does not mean anything.** That is the whole design.
+- The brand tokens (`accent` / `mauve` / `digital` / `auburn`) were each doing two
+  jobs. Hue was never their only carrier — hierarchy also lives in indent, fill,
+  icons and labels — so it moves onto **luminance**: `mauve` (upper tier) sits
+  brighter than `digital` (lower tier), the order the hues implied.
+- **Monochrome is the DEFAULT.** No stored choice, an unrecognised one, or no
+  localStorage at all → `mono`. An existing choice is respected; only a fresh
+  install lands there.
+- **Fixes a theme flash on every launch.** The theme class was applied in a
+  `useEffect`, which runs *after* the first paint — so each launch showed the
+  old default before the real theme landed, and on a fresh install that flash
+  *was* the user's first impression. It is now set pre-render by an inline script
+  in `index.html`, with a `catch` that falls back to mono if storage throws.
+
 ## 0.1.4-beta.8 — unreleased
 
 ### Suite-shared published-release manifest

@@ -6,11 +6,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri + React + Typescript</title>
     <script>
-      // Apply the persisted theme before first paint to avoid a flash.
+      // Theme applied BEFORE React renders. Doing it in a useEffect lands it
+      // AFTER the first paint, so every launch flashed the default theme first
+      // — and on a fresh install that flash was the user's first impression of
+      // the app.
+      //
+      // Monochrome is the default: no stored choice, an unrecognised one, or no
+      // localStorage at all (private mode, storage disabled) => mono. The one
+      // source of truth for that rule is loadTheme() in App.tsx; keep them in
+      // step.
       try {
-        if (localStorage.getItem("ndisc.theme") === "upleb")
-          document.documentElement.classList.add("theme-upleb");
-      } catch (e) {}
+        var t = localStorage.getItem("ndisc.theme");
+        if (t !== "fizx" && t !== "upleb") t = "mono";
+        if (t === "upleb") document.documentElement.classList.add("theme-upleb");
+        if (t === "mono") document.documentElement.classList.add("theme-mono");
+      } catch (e) {
+        document.documentElement.classList.add("theme-mono");
+      }
     </script>
   </head>
 

@@ -81,13 +81,15 @@ const THEME_STORAGE_KEY = "ndisc.theme";
 // Nostr + Label panels grow up to fill the right column. Shared suite gesture
 // (cf. ndisc.smpl / ndisc.tree flank collapse). Persisted.
 const DETAIL_COLLAPSED_KEY = "ndisc.detailCollapsed";
-type Theme = "fizx" | "upleb";
+/** Monochrome is the default: chrome greyscale, meaning keeps its colour. */
+type Theme = "fizx" | "upleb" | "mono";
 
 function loadTheme(): Theme {
   try {
-    return localStorage.getItem(THEME_STORAGE_KEY) === "upleb"
-      ? "upleb"
-      : "fizx";
+    // Default = mono. An existing choice is respected; only a fresh install
+    // lands here.
+    const v = localStorage.getItem(THEME_STORAGE_KEY);
+    return v === "upleb" || v === "fizx" ? v : "mono";
   } catch {
     return "fizx";
   }
@@ -145,10 +147,9 @@ export default function App() {
 
   // Apply + persist the colour theme: fizx.uk (default) or upleb.uk.
   useEffect(() => {
-    document.documentElement.classList.toggle(
-      "theme-upleb",
-      theme === "upleb",
-    );
+    const root = document.documentElement.classList;
+    root.toggle("theme-upleb", theme === "upleb");
+    root.toggle("theme-mono", theme === "mono");
     try {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
     } catch {
@@ -406,7 +407,7 @@ export default function App() {
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
-            onClick={() => setTheme((t) => (t === "fizx" ? "upleb" : "fizx"))}
+            onClick={() => setTheme((t) => (t === "fizx" ? "upleb" : t === "upleb" ? "mono" : "fizx"))}
             title={
               theme === "fizx"
                 ? "Theme: fizx.uk — click to switch to upleb.uk"
