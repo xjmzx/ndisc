@@ -804,9 +804,11 @@ export function ReleaseDetail({
                 placeholder="genre"
                 width="w-32"
               />
-              {/* Progressive disclosure — slot 2 only when slot 1 is set,
-                  slot 3 only when slot 2 is set. Matches the density rule
-                  visually and reduces field-row width pressure. */}
+              {/* Progressive disclosure — slot 2 only when slot 1 is set. The
+                  detail editor shows at most TWO slots; the third genre still
+                  exists in the schema (0–3) and is editable in the bulk-edit
+                  view, but is not surfaced here. `slots` still carries all three
+                  so option-filtering excludes an existing tertiary. */}
               {slots[0] && (
                 <EditableEnum
                   value={slots[1]}
@@ -815,17 +817,6 @@ export function ReleaseDetail({
                   ariaLabel="secondary genre"
                   displayFn={genreDisplay}
                   placeholder="+ 2nd"
-                  width="w-28"
-                />
-              )}
-              {slots[1] && (
-                <EditableEnum
-                  value={slots[2]}
-                  options={genreOptionsForSlot(2, slots)}
-                  onChange={(v) => onChangeGenreSlot(2, v)}
-                  ariaLabel="tertiary genre"
-                  displayFn={genreDisplay}
-                  placeholder="+ 3rd"
                   width="w-28"
                 />
               )}

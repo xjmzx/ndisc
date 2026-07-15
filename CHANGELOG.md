@@ -15,6 +15,15 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.4 — unreleased
+
+- **Release detail genre editor caps at TWO slots.** The third genre slot is no
+  longer surfaced here. The schema is **unchanged (0–3 ordered)** and the third
+  genre stays in the data and editable in the bulk-edit view; `slots` still
+  carries all three so option-filtering excludes an existing tertiary, and the
+  cascade only clears a third genre when it becomes genuinely invalid — no silent
+  data loss.
+
 ## 0.2.0-beta.3 — 2026-07-15
 
 - **`condition` removed from the release detail card** — same treatment as
