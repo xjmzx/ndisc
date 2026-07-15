@@ -15,7 +15,13 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## 0.2.0-beta.4 — unreleased
+## 0.2.0-beta.4 — 2026-07-15
+
+Closes a small layout pass (with beta.2–beta.3): trimming rarely-used editable
+fields from the add-release form and the release-detail card so the sections
+beneath them — NOSTR / LABELS / LABEL, the publish toolbar — get a better view.
+None of it touches the schema; every trimmed field stays editable in the
+bulk-edit view.
 
 - **Release detail genre editor caps at TWO slots.** The third genre slot is no
   longer surfaced here. The schema is **unchanged (0–3 ordered)** and the third
