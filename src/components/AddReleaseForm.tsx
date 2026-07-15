@@ -156,21 +156,13 @@ export function AddReleaseForm({
           onChange={(v) => set("coverArtUrl", v)}
           placeholder="https://i.nostr.build/…"
         />
-        {/* Notes + Save share a single row — notes are rarely useful in
-            curation, the Save button taking the spare width on the right
-            keeps the form one row shorter (more space for NOSTR/LABELS/
-            LABEL below). */}
-        <label className={ROW}>
-          <span className="text-muted text-right">notes</span>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={release.notes ?? ""}
-              onChange={(e) => set("notes", e.target.value)}
-              placeholder="keep it short"
-              className={`${INPUT_CLS} flex-1`}
-              spellCheck={false}
-            />
+        {/* Save on its own row, right-aligned. Notes were dropped from the add
+            form — they live in the bulk-edit view now, and losing the row leaves
+            more space for NOSTR/LABELS/LABEL below. `notes` stays in the schema;
+            a new release just starts empty. */}
+        <div className={ROW}>
+          <span />
+          <div className="flex justify-end">
             <button
               type="submit"
               disabled={saving}
@@ -181,7 +173,7 @@ export function AddReleaseForm({
               <Save size={14} /> {saving ? "saving…" : "Save"}
             </button>
           </div>
-        </label>
+        </div>
 
         {error && <div className="text-alert text-xs pl-[6rem]">{error}</div>}
       </form>

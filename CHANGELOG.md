@@ -15,7 +15,18 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## 0.2.0-beta.1 — unreleased
+## 0.2.0-beta.2 — 2026-07-15
+
+- **`notes` removed from the release detail card and the add-release form.** It
+  was rarely useful there and cost a row on each; the sections below (publish
+  toolbar, NOSTR / LABELS / LABEL) move up into the freed space. `notes` is
+  **unchanged in the schema and still fully editable in the bulk-edit table**
+  (the "comment" column) — this is a UI trim, not a data change, so existing
+  notes are untouched and new releases just start empty.
+- **App icon refreshed** from the 2026-07-15 Figma export (the suite's mauve
+  vinyl-ring look).
+
+## 0.2.0-beta.1 — 2026-07-14
 
 ### Monochrome theme — and it is now the default
 
