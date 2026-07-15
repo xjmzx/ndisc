@@ -42,7 +42,6 @@ import {
   setReleaseDiscogsId,
   setReleaseDiscTotal,
   setReleaseCategory,
-  setReleaseCondition,
   setReleaseCountry,
   setReleaseGenres,
   setReleaseLabel,
@@ -92,24 +91,6 @@ function genreOptionsForSlot(
       sensitivity: "base",
     }),
   );
-}
-
-// Discogs's full condition grades. Stored verbatim so imported entries map
-// cleanly. The collapsed display abbreviates to just the parenthetical grade.
-const CONDITION_OPTIONS = [
-  "Mint (M)",
-  "Near Mint (NM or M-)",
-  "Very Good Plus (VG+)",
-  "Very Good (VG)",
-  "Good Plus (G+)",
-  "Good (G)",
-  "Fair (F)",
-  "Poor (P)",
-];
-
-function abbreviateCondition(s: string): string {
-  const m = s.match(/\(([^)]+)\)\s*$/);
-  return m ? m[1] : s;
 }
 
 // Compact display form for a NIP-19 naddr: first 12 + last 8 around an ellipsis.
@@ -482,12 +463,6 @@ export function ReleaseDetail({
     applyEdit({ country: v });
   }
 
-  async function onChangeCondition(v: string | null) {
-    if (!release.id) return;
-    await setReleaseCondition(release.id, v);
-    applyEdit({ condition: v });
-  }
-
   async function onChangeLabel(v: string | null) {
     if (!release.id) return;
     await setReleaseLabel(release.id, v);
@@ -857,15 +832,6 @@ export function ReleaseDetail({
             </>
           );
         })()}
-        <EditableEnum
-          value={release.condition ?? null}
-          options={CONDITION_OPTIONS}
-          onChange={onChangeCondition}
-          ariaLabel="condition"
-          displayFn={abbreviateCondition}
-          placeholder="condition"
-          width="w-32"
-        />
       </div>
 
       <div className="mt-4 pt-3 border-t border-surface/60">

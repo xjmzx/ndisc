@@ -15,6 +15,16 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.3 — 2026-07-15
+
+- **`condition` removed from the release detail card** — same treatment as
+  `notes` in beta.2: gone as an editable field there, **unchanged in the schema
+  and still editable in the bulk-edit view**. The genre/type/country row and the
+  sections below reflow up.
+- **Add-release form: Save tucked up beside `cover url`** as an icon-only disk
+  button (no label, slightly smaller). The form loses its dedicated Save row, so
+  NOSTR / LABELS / LABEL move up.
+
 ## 0.2.0-beta.2 — 2026-07-15
 
 - **`notes` removed from the release detail card and the add-release form.** It

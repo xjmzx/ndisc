@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { ChevronDown, ChevronUp, Disc, Plus, Save } from "lucide-react";
+import { ChevronDown, ChevronUp, Disc, Loader2, Plus, Save } from "lucide-react";
 import { Section } from "./Section";
 import { addRelease, type Release } from "../lib/tauri";
 
@@ -150,27 +150,34 @@ export function AddReleaseForm({
           onChange={(v) => set("source", v)}
           placeholder="https://www.discogs.com/master/… or https://user.bandcamp.com/album/…"
         />
-        <Field
-          label="cover url"
-          value={release.coverArtUrl ?? ""}
-          onChange={(v) => set("coverArtUrl", v)}
-          placeholder="https://i.nostr.build/…"
-        />
-        {/* Save on its own row, right-aligned. Notes were dropped from the add
-            form — they live in the bulk-edit view now, and losing the row leaves
-            more space for NOSTR/LABELS/LABEL below. `notes` stays in the schema;
-            a new release just starts empty. */}
+        {/* cover url + Save on ONE row: the Save button tucks up beside the last
+            field as an icon-only disk (no label, slightly smaller), so the form
+            loses its dedicated Save row and NOSTR/LABELS/LABEL move up. A div,
+            not a label, since the row now holds a button too. */}
         <div className={ROW}>
-          <span />
-          <div className="flex justify-end">
+          <span className="text-muted text-right">cover url</span>
+          <div className="flex gap-2 items-center">
+            <input
+              type="text"
+              value={release.coverArtUrl ?? ""}
+              onChange={(e) => set("coverArtUrl", e.target.value)}
+              placeholder="https://i.nostr.build/…"
+              className={`${INPUT_CLS} flex-1`}
+              spellCheck={false}
+            />
             <button
               type="submit"
               disabled={saving}
-              className="shrink-0 px-4 py-1.5 rounded-md bg-accent text-bg
-                         font-semibold hover:opacity-90 disabled:opacity-50
-                         flex items-center gap-1.5"
+              title={saving ? "saving…" : "Save release"}
+              aria-label="Save release"
+              className="shrink-0 p-1.5 rounded-md bg-accent text-bg
+                         hover:opacity-90 disabled:opacity-50 flex items-center"
             >
-              <Save size={14} /> {saving ? "saving…" : "Save"}
+              {saving ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Save size={15} />
+              )}
             </button>
           </div>
         </div>
