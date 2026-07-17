@@ -8,7 +8,7 @@ import {
   LineChart,
   Table2,
   Radio,
-  Library,
+  Home,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -506,51 +506,33 @@ export default function App() {
             title={
               view === "library"
                 ? "Discography (current view)"
-                : "Back to discography"
+                : "Home — back to discography"
             }
             onClick={() => setView("library")}
           >
-            <Library size={14} />
+            <Home size={14} />
           </ToolbarIconButton>
           <ToolbarIconButton
             tone="digital"
             pressed={view === "stats"}
-            title={
-              view === "stats"
-                ? "Return to library"
-                : "View library stats"
-            }
-            onClick={() =>
-              setView((v) => (v === "stats" ? "library" : "stats"))
-            }
+            title="Library stats"
+            onClick={() => setView("stats")}
           >
             <LineChart size={14} />
           </ToolbarIconButton>
           <ToolbarIconButton
             tone="digital"
             pressed={view === "table"}
-            title={
-              view === "table"
-                ? "Return to library"
-                : "Batch-edit metadata table"
-            }
-            onClick={() =>
-              setView((v) => (v === "table" ? "library" : "table"))
-            }
+            title="Batch-edit metadata table"
+            onClick={() => setView("table")}
           >
             <Table2 size={14} />
           </ToolbarIconButton>
           <ToolbarIconButton
             tone="digital"
             pressed={view === "current"}
-            title={
-              view === "current"
-                ? "Return to library"
-                : "Current — the feed-note channel"
-            }
-            onClick={() =>
-              setView((v) => (v === "current" ? "library" : "current"))
-            }
+            title="Current — the feed-note channel"
+            onClick={() => setView("current")}
           >
             <Radio size={14} />
           </ToolbarIconButton>
