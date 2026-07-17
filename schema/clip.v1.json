@@ -1,0 +1,86 @@
+{
+  "$comment": "Canonical Nostr wire contract for CLIP / SAMPLE file-metadata events — short audio excerpts published as NIP-94 kind:1063, each pointing back at the ndisc release (kind:31237) and the track it derives from. Publishers: ntree (clips) and nsmpl (samples). Consumers: ntree/nsmpl (truthful published dot + published filter), ndisc (release coverage), the glmps web readers (listen-to-a-clip). UNFROZEN — promoted to frozen + SHA-pinned (mirroring release.v2 / feed.v1) once ntree AND nsmpl emit this tag set and a `mod schema_clip_v1` contract test pins the output. Source of truth (to be): ntree src-tauri/src/lib.rs (publish_file_metadata) + nsmpl src/lib/nostr.ts (publishFileMetadata). Design rationale + reconcile/manifest spec: schema/clip-mapping-design-2026-07-17.md.",
+  "schemaVersion": "clip.v1",
+  "frozen": false,
+  "canonicalHome": "xjmzx/ndisc — schema/clip.v1.json (planned)",
+  "authority": {
+    "model": "per-publisher key — each app signs its clips with its own identity; there is no single owner or gate.",
+    "note": "Unlike feed.v1 (single owner root of trust), any pubkey may publish clips. An app reconciles its OWN clips by filtering on its author pubkey; cross-user discovery filters by the referenced release `a` coordinate (#a). A clip is trusted as authored by whoever signed it."
+  },
+  "kinds": {
+    "clip": {
+      "kind": 1063,
+      "spec": "NIP-94 file metadata",
+      "class": "regular event (non-addressable)",
+      "kindRationale": "NIP-94 is the standard file-metadata event and a clip/sample is one hosted audio file. Deliberately NOT an addressable kind — each publish is a distinct artefact; superseding one is a kind:5 delete plus a fresh 1063 (see deletion), never an in-place replace.",
+      "content": "The clip description — plain text; falls back to the title when empty.",
+      "writtenBy": "ntree (clips) and nsmpl (samples), each with its own key. One contract covers both; the `t` tag distinguishes them.",
+      "tags": {
+        "url": { "required": true, "type": "string", "note": "The hosted file URL (nostr.build via NIP-96 upload)." },
+        "m": { "required": true, "type": "string", "note": "MIME type, e.g. audio/flac. Consumers filter the feed to audio/* client-side (non-audio 1063s from other apps share the kind)." },
+        "x": { "required": true, "type": "string", "note": "SHA-256 of the CLIP file (container + tags + audio) as uploaded — the NIP-94 file hash. Identifies the hosted artefact, NOT the source track (for that see source-hash)." },
+        "size": { "required": false, "type": "string", "note": "Clip file size in bytes, integer rendered as a string." },
+        "title": { "required": false, "type": "string", "note": "Human title — the SOURCE TRACK title. Doubles as the first element of the semantic track locator (see track / disc). Present unless empty." },
+        "alt": { "required": false, "type": "string", "note": "NIP-31 human-readable fallback so generic clients show something; emitter sets it to the title." },
+        "t": { "required": true, "enum": ["full", "sample"], "note": "\"full\" = an ntree clip (fixed excerpt of the track) | \"sample\" = an nsmpl user-chosen excerpt. Relay-filterable (#t)." },
+        "a": {
+          "required": false,
+          "format": "31237:<ndisc pubkey hex>:disco-vault:<integer release id>",
+          "note": "ADDITIVE (clip.v1): the ndisc release this clip derives from — the same addressable-coordinate form feed.v1 uses for its release reference. Present ONLY when the source track is inside a released folder (resolved via ndisc's published.json manifest at publish time); OMITTED for clips of unreleased sources (orphan clips). Consumers hydrate release context from the referenced kind:31237 — the clip copies no release metadata. Relay-filterable (#a) for cross-user clip discovery on a release."
+        },
+        "track": { "required": false, "type": "string", "note": "ADDITIVE (clip.v1): source track number within its disc, integer rendered as a string. Part of the semantic track locator (title + track + disc). Emitted when known from ndisc's local track index at publish time." },
+        "disc": { "required": false, "type": "string", "note": "ADDITIVE (clip.v1): source disc number, integer rendered as a string. Omitted or \"1\" for single-disc releases. Part of the track locator." },
+        "source-hash": {
+          "required": false,
+          "repeatable": false,
+          "format": "[\"source-hash\", \"<hex digest>\", \"<algorithm>\"]",
+          "note": "ADDITIVE (clip.v1), OPTIONAL strengthener: a content hash of the SOURCE track (not the clip). 2nd element = lowercase hex digest; 3rd element = algorithm marker. Initial algorithm \"audio-md5\" = MD5 of the decoded audio stream (ffmpeg -i <src> -map 0:a -f md5 -): tag-independent (survives re-tagging), codec-agnostic (the library is mixed-format), no new dependency (ntree already shells ffmpeg). The marker makes the method swappable — a later survives-re-encode tier sets it to \"chromaprint\" with no other change. Disambiguates re-tagged / duplicate source tracks during reconciliation; a consumer that doesn't recognise the algorithm ignores it and falls back to the semantic locator."
+        }
+      },
+      "rule": "Consumers MUST require only the NIP-94 essentials (`url`, `m`, `x`) structurally and treat every provenance tag (`a`, `track`, `disc`, `source-hash`) as optional. A clip with no `a` is an orphan — its source isn't a published release, or it predates clip.v1 — still valid, matchable only by title/hash. The clip -> release -> track join, the relay-fetch reconcile flow, and the local manifest additions (published.json: ndiscPubkey + per-release naddr + tracks[]; roots.json validate-on-load) are specified in schema/clip-mapping-design-2026-07-17.md, not here — this file pins only the wire event."
+    },
+    "deletion": {
+      "kind": 5,
+      "spec": "NIP-09",
+      "content": "Empty string (or a short reason).",
+      "tags": {
+        "e": {
+          "required": true,
+          "type": "string",
+          "note": "Event id of the 1063 clip to retract. Used to UNPUBLISH a clip, and to RE-LINK a legacy/orphan clip: publish a fresh clip.v1 1063 carrying the full provenance tags, then kind:5 the old event id. 1063 is non-addressable, so there is no in-place replace."
+        }
+      },
+      "rule": "Consumers MUST apply deletions client-side. Some relays (e.g. Primal) do not enforce kind:5, so server-side filtering cannot be relied on. A kind:5 removes only the author's own clips."
+    }
+  },
+  "consumes": {
+    "release": {
+      "kind": 31237,
+      "spec": "release.v2",
+      "direction": "read-only",
+      "note": "A clip's `a` tag references a release.v2 event; consumers read that event (or ndisc's published.json manifest) to hydrate the release and to resolve the clip back to a local source track. clip.v1 never writes kind:31237."
+    },
+    "profile": {
+      "kind": 0,
+      "direction": "read-only",
+      "note": "Author display (name / nip05 / picture), as elsewhere in the suite. Never published by this contract."
+    }
+  },
+  "sharing": {
+    "nevent": {
+      "note": "A clip is shared as a NIP-19 `nevent` (event-id pointer + optional relay hints) — the non-addressable counterpart to a release's `naddr`. nsmpl already surfaces this; ntree should too under clip.v1."
+    }
+  },
+  "subscription": {
+    "ownClips": {
+      "filter": { "kinds": [1063, 5], "authors": ["<this app's pubkey>"] },
+      "note": "Reconcile: an app fetches its OWN clips to rebuild its published set — the relay is the source of truth, the local store is a cache. Filter to audio/* by the `m` tag client-side."
+    },
+    "releaseClips": {
+      "filter": { "kinds": [1063], "#a": ["31237:<ndisc pubkey>:disco-vault:<id>"] },
+      "note": "Cross-user discovery: every clip referencing a given release (e.g. glmps 'listen to a clip' on a release page)."
+    }
+  },
+  "changePolicy": "UNFROZEN. Promoted to frozen + SHA-pinned (a `mod schema_clip_v1` contract test in ntree/nsmpl, mirroring release.v2 / feed.v1) once ntree AND nsmpl emit this tag set; until then this file may change freely. After freezing: ADDITIVE optional tags consumers may ignore are permitted without a version bump; any BREAKING change (renaming/removing tags, changing semantics, making an optional tag required, changing the kind) is a coordinated clip.v2 bump — add clip.v2.json and migrate consumers, never edit this file. Adopting or amending this contract is a coordinated suite wave, not a local-only change.",
+  "rollout": "Coordinated wave (schema/clip-mapping-design-2026-07-17.md §5): ntree + nsmpl adopt the tag set and the relay-fetch reconcile; ndisc extends published.json (ndiscPubkey + per-release naddr + tracks[]; auto-export on publish/unpublish) and adds roots.json validate-on-load; glmps / nview optionally consume (listen-to-a-clip) and re-pin the SHA where they read it. Multi-platform: macOS builds nview + the glmps.* readers, Windows tests ndisc — re-vendor clip.v1 to those targets in the same wave."
+}

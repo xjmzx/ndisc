@@ -83,13 +83,17 @@ The shared data spine. `ndisc` publishes it; the others read and/or react.
 | **30000** | NIP-51 list | Contributor registry (`d=glmps:contributors`) | ndisc | all |
 | **4550** | NIP-72 | Per-note sign-off / approval | ndisc | — |
 | **7** | NIP-25 | Reactions / ratings (shared `lib/rating.ts`, uniform aggregation) | ndisc, ntree, nsmpl, nview | all |
-| **1063** | NIP-94 | File metadata for clips / samples, referencing a release | ntree (clips), nsmpl (samples) | — |
+| **1063** | `clip.v1` | NIP-94 file metadata for a clip/sample, with an `a`-ref to its release + a `track`/`disc` locator (schema/clip.v1.json) | ntree (clips), nsmpl (samples) | *(planned:* ntree/nsmpl, ndisc, glmps*)* |
 
 **Contract governance.** Two frozen, SHA-pinned contracts — `release.v2` and
 `feed.v1` — live in [`schema/`](schema/). A contract change is a **coordinated
 wave**: the publisher bumps the SHA and every consumer re-vendors it in the same
 release. Two version axes apply everywhere — each app's own semver *and* the
-shared `contract.vN` SHA (see `schema/README.md`).
+shared `contract.vN` SHA (see `schema/README.md`). `labels.v1` and `clip.v1` are
+**unfrozen** (no SHA pin yet) — each is promoted to frozen once its publisher
+emits it. `clip.v1` is the clip↔release provenance link; design +
+reconcile/manifest spec in
+[`schema/clip-mapping-design-2026-07-17.md`](schema/clip-mapping-design-2026-07-17.md).
 
 **Relay notes.** `ndisc`'s relay set must be a **superset** of the website's
 read set. Primal doesn't enforce `kind:5` deletions, so deletes are filtered
@@ -181,9 +185,12 @@ each app declaring its own stack.
 **Near-term — tighten suite integration**
 - Bring `ndisc`'s tree-dots + track/disc-count styling into `nplay`.
 - Surface **"published to Nostr" status** for a release across the apps
-  (starting from `ndisc`, which already tracks it).
+  (starting from `ndisc`, which already tracks it) — the clip side is the
+  truthful, relay-reconciled dot in `clip-mapping-design-2026-07-17.md`.
 - Have `ntree` / `nsmpl` clips & samples **reference the releases** they derive
-  from (provenance links).
+  from (provenance links) — specified as **`clip.v1`** (`schema/clip.v1.json`,
+  design `schema/clip-mapping-design-2026-07-17.md`): an `a`-ref + track locator,
+  reconciled off the relays.
 
 **Mid / long-term**
 - Media edits — destructive *and* non-destructive.
