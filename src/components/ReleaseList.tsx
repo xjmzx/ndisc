@@ -1594,8 +1594,24 @@ export function ReleaseList({
                       (never grey · published nostr-purple · stale amber ·
                       retracted red), matching the toolbar state filter. */}
                   <div
-                    className="shrink-0 inline-flex items-center justify-center
-                               gap-1 px-1.5 h-5 min-w-[38px] rounded bg-surface/60"
+                    className={cn(
+                      "shrink-0 inline-flex items-center justify-center",
+                      "gap-1 px-1.5 h-5 min-w-[38px] rounded-full bg-surface/60",
+                      // Linked band: a PHYSICAL release that's been attached to
+                      // a local (digital) folder gets a green ring around the
+                      // state cluster — visual confirmation the physical object
+                      // and its digital version are matched. Digital releases
+                      // always have a folder, so they're excluded (a future
+                      // "completed" band for digital keys on track == total).
+                      r.medium === "physical" &&
+                        r.filePath &&
+                        "ring-[1.5px] ring-ok",
+                    )}
+                    title={
+                      r.medium === "physical" && r.filePath
+                        ? `Linked to a local folder\n${r.filePath}`
+                        : undefined
+                    }
                   >
                     {(() => {
                       const m = publishStateMeta(publishStateOf(r));
