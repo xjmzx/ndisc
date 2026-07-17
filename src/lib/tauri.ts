@@ -61,6 +61,10 @@ export type VideoFilter = "with_video" | "without_video";
 // Presence of a published web image link (cover_art_url), distinct from a
 // local cover.jpg (cover_art_path) — "with_link" only counts the web URL.
 export type CoverLinkFilter = "with_link" | "without_link";
+// Acquisition-source filter. "bandcamp" = has a Bandcamp source domain, a known
+// custom storefront, or a purchase receipt; "generic" = everything else (the
+// generic digital-purchase bucket). Mirrors the layer-1 predicate in source.ts.
+export type SourceFilter = "bandcamp" | "generic";
 
 export interface Stats {
   total: number;
@@ -161,6 +165,7 @@ export async function listReleases(
   genreFilter?: GenreFilter,
   videoFilter?: VideoFilter,
   coverLinkFilter?: CoverLinkFilter,
+  sourceFilter?: SourceFilter,
 ): Promise<Release[]> {
   return invoke<Release[]>("list_releases", {
     query,
@@ -171,6 +176,7 @@ export async function listReleases(
     genreFilter,
     videoFilter,
     coverLinkFilter,
+    sourceFilter,
   });
 }
 

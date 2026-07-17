@@ -11,6 +11,7 @@ import {
   ImageOff,
   Link2,
   Music,
+  ShoppingBag,
   MoreVertical,
   Radar,
   Share2,
@@ -47,6 +48,7 @@ import {
   type ExtractSummary,
   type ImportProgress,
   type CoverLinkFilter,
+  type SourceFilter,
   type GenreFilter,
   type LabelFilter,
   type LibraryReconcileSummary,
@@ -63,7 +65,7 @@ import {
   type VideoFilter,
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
-import { sourcePlatform } from "../lib/source";
+import { sourcePlatform, SOURCE_PLATFORMS } from "../lib/source";
 import {
   PUBLISH_STATES,
   publishStateMeta,
@@ -86,6 +88,7 @@ export interface FilterContext {
   genreFilter: GenreFilter | null;
   videoFilter: VideoFilter | null;
   coverLinkFilter: CoverLinkFilter | null;
+  sourceFilter: SourceFilter | null;
   count: number;
   visibleIds: number[];
 }
@@ -132,6 +135,7 @@ export function ReleaseList({
   const [labelFilter, setLabelFilter] = useState<"" | LabelFilter>("");
   const [genreFilter, setGenreFilter] = useState<"" | GenreFilter>("");
   const [videoFilter, setVideoFilter] = useState<"" | VideoFilter>("");
+  const [sourceFilter, setSourceFilter] = useState<"" | SourceFilter>("");
   const [coverLinkFilter, setCoverLinkFilter] = useState<"" | CoverLinkFilter>(
     "",
   );
@@ -756,6 +760,7 @@ export function ReleaseList({
         genreFilter || undefined,
         videoFilter || undefined,
         coverLinkFilter || undefined,
+        sourceFilter || undefined,
       );
       setItems(list);
     } catch (e) {
@@ -768,7 +773,7 @@ export function ReleaseList({
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, medium, needsCoverOnly, publishStateFilter, labelFilter, genreFilter, videoFilter, coverLinkFilter]);
+  }, [reloadKey, medium, needsCoverOnly, publishStateFilter, labelFilter, genreFilter, videoFilter, coverLinkFilter, sourceFilter]);
 
   // Bubble the FULL filter set + the exact visible id list up so the Nostr
   // panel's bulk ops act on precisely what's on screen (and describe it in
@@ -789,6 +794,7 @@ export function ReleaseList({
       genreFilter: genreFilter === "" ? null : genreFilter,
       videoFilter: videoFilter === "" ? null : videoFilter,
       coverLinkFilter: coverLinkFilter === "" ? null : coverLinkFilter,
+      sourceFilter: sourceFilter === "" ? null : sourceFilter,
       count: items.length,
       visibleIds,
     });
@@ -802,6 +808,7 @@ export function ReleaseList({
     genreFilter,
     videoFilter,
     coverLinkFilter,
+    sourceFilter,
     visibleIdsKey,
     onFilterChange,
   ]);
@@ -894,6 +901,17 @@ export function ReleaseList({
           tooltipDefault="Filter by medium — click cycles physical / digital / any"
           tooltipFilled="Medium: physical (click for digital)"
           tooltipOutlined="Medium: digital (click to clear)"
+        />
+        <FilterToggle
+          Icon={ShoppingBag}
+          value={sourceFilter}
+          onChange={(v) => setSourceFilter(v as "" | SourceFilter)}
+          filledValue="bandcamp"
+          outlinedValue="generic"
+          color={SOURCE_PLATFORMS[0].color}
+          tooltipDefault="Filter by purchase source — click cycles Bandcamp / generic / any"
+          tooltipFilled="Source: Bandcamp (click for generic purchases)"
+          tooltipOutlined="Source: generic purchase / no source (click to clear)"
         />
         <PublishStateFilter
           value={publishStateFilter}
@@ -1746,6 +1764,11 @@ interface FilterToggleProps {
   tooltipDefault: string;
   tooltipFilled: string;
   tooltipOutlined: string;
+  // Optional brand colour. When set, the filled state paints this as its
+  // background and the outlined state as its text colour (via inline style),
+  // instead of the default `accent`. Used for the Bandcamp source toggle so it
+  // reads in the same blue as the source dot.
+  color?: string;
 }
 
 function FilterToggle({
@@ -1757,6 +1780,7 @@ function FilterToggle({
   tooltipDefault,
   tooltipFilled,
   tooltipOutlined,
+  color,
 }: FilterToggleProps) {
   const state =
     value === filledValue
@@ -1787,9 +1811,19 @@ function FilterToggle({
         "p-2 rounded-md transition-colors",
         state === "default" &&
           "bg-surface text-muted hover:text-fg hover:bg-surfaceHover",
-        state === "filled" && "bg-accent text-bg",
-        state === "outlined" && "bg-surface text-accent hover:bg-surfaceHover",
+        state === "filled" && (color ? "text-bg" : "bg-accent text-bg"),
+        state === "outlined" &&
+          (color
+            ? "bg-surface hover:bg-surfaceHover"
+            : "bg-surface text-accent hover:bg-surfaceHover"),
       )}
+      style={
+        color && state === "filled"
+          ? { backgroundColor: color }
+          : color && state === "outlined"
+            ? { color }
+            : undefined
+      }
     >
       <Icon
         size={14}

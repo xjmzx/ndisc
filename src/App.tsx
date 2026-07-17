@@ -252,6 +252,7 @@ export default function App() {
     genreFilter: null,
     videoFilter: null,
     coverLinkFilter: null,
+    sourceFilter: null,
     count: 0,
     visibleIds: [],
   });

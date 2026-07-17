@@ -1269,6 +1269,7 @@ fn export_markdown(
         None, // genre_filter — export is not genre-scoped
         None, // video_filter — export is not video-scoped
         None, // cover_link_filter — export is not cover-link-scoped
+        None, // source_filter — export is not source-scoped
     )?;
     let md = build_markdown(&releases);
     std::fs::write(&dest_path, md).map_err(|e| e.to_string())?;
@@ -1518,6 +1519,7 @@ fn list_releases(
     genre_filter: Option<String>,
     video_filter: Option<String>,
     cover_link_filter: Option<String>,
+    source_filter: Option<String>,
 ) -> Result<Vec<Release>, String> {
     let conn = open(&app)?;
     let q = query.unwrap_or_default();
@@ -1572,6 +1574,20 @@ fn list_releases(
         _ => "",
     };
 
+    // Acquisition source. A release is "Bandcamp" if its source is on
+    // bandcamp.com, on a known custom storefront, or it carries a purchase
+    // receipt (bandcamp_id) — the same predicate the frontend dot uses
+    // (src/lib/source.ts). "generic" is the complement: the generic
+    // digital-purchase bucket with no recognised source.
+    let bc_pred = "(source LIKE '%bandcamp.com%' \
+                    OR source LIKE '%shop.cpurecords.net%' \
+                    OR (bandcamp_id IS NOT NULL AND bandcamp_id <> ''))";
+    let source_clause = match source_filter.as_deref() {
+        Some("bandcamp") => format!("AND {bc_pred}"),
+        Some("generic") => format!("AND NOT {bc_pred}"),
+        _ => String::new(),
+    };
+
     let select_sql = format!(
         "SELECT {cols}
          FROM releases
@@ -1584,6 +1600,7 @@ fn list_releases(
            {genre}
            {video}
            {cover_link}
+           {source}
          ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
         cols = RELEASE_SELECT_COLS,
         cover = cover_filter,
@@ -1592,6 +1609,7 @@ fn list_releases(
         genre = genre_clause,
         video = video_clause,
         cover_link = cover_link_clause,
+        source = source_clause,
     );
     let mut stmt = conn
         .prepare(&select_sql)
