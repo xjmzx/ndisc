@@ -6,6 +6,7 @@ import {
   publishRelease,
   setReleaseLabel,
   setReleaseNotes,
+  setReleaseSource,
   type Release,
 } from "../lib/tauri";
 import { cn } from "../lib/cn";
@@ -23,7 +24,16 @@ import {
 // panel until they grow setters). Sorting is client-side over the full list.
 
 // "source" is a synthetic sort key (the platform-dot column) — not a Column.
-type SortKey = "source" | "artist" | "title" | "label" | "notes" | "year";
+// "sourceLabel" is the real, editable acquisition-source column (distinct from
+// the synthetic dot key).
+type SortKey =
+  | "source"
+  | "artist"
+  | "title"
+  | "label"
+  | "sourceLabel"
+  | "notes"
+  | "year";
 type SortDir = "asc" | "desc";
 
 interface Column {
@@ -40,15 +50,16 @@ const COLUMNS: Column[] = [
   { key: "artist", label: "artist", get: (r) => r.artist, editable: false },
   { key: "title", label: "album", get: (r) => r.title, editable: false },
   { key: "label", label: "label", get: (r) => r.label, editable: true },
+  { key: "sourceLabel", label: "source", get: (r) => r.sourceLabel, editable: true },
   { key: "notes", label: "comment", get: (r) => r.notes, editable: true },
   { key: "year", label: "year", get: (r) => r.year, editable: false, numeric: true },
 ];
 
 // One grid template shared by the header and every row so columns line up.
 // Two leading 0.85rem indicator columns: publish-state dot (not sortable) then
-// the Bandcamp dot (sortable via its header).
+// the Bandcamp dot (sortable via its header). Then the six COLUMNS.
 const GRID =
-  "grid-cols-[0.85rem_0.85rem_minmax(0,1.3fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.7fr)_3.5rem]";
+  "grid-cols-[0.85rem_0.85rem_minmax(0,1.3fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)_3.5rem]";
 
 function compare(a: Release, b: Release, key: SortKey, dir: SortDir): number {
   const col = COLUMNS.find((c) => c.key === key)!;
@@ -129,6 +140,18 @@ export function BatchEditView({
     }
     return copy;
   }, [rows, sortKey, sortDir]);
+
+  // Existing acquisition-source names, for the source cells' autocomplete —
+  // derived from the loaded rows so typing stays consistent (no "Bandcamp" vs
+  // "bandcamp" drift) without an extra round-trip.
+  const sourceNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) {
+      const s = (r.sourceLabel ?? "").trim();
+      if (s) set.add(s);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [rows]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -252,6 +275,13 @@ export function BatchEditView({
         ))}
       </div>
 
+      {/* Shared autocomplete for every source cell (option list = names in use). */}
+      <datalist id="batch-source-names">
+        {sourceNames.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+
       <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]">
         {loading ? (
           <div className="px-4 py-6 text-sm text-muted">loading…</div>
@@ -312,7 +342,17 @@ export function BatchEditView({
                     <Cell
                       key={c.key}
                       value={raw == null ? "" : String(raw)}
+                      listId={
+                        c.key === "sourceLabel" ? "batch-source-names" : undefined
+                      }
                       onCommit={async (next) => {
+                        if (c.key === "sourceLabel") {
+                          // Acquisition source is LOCAL-ONLY — not on the wire,
+                          // so no publish-marker clear and no republish queue.
+                          await setReleaseSource(r.id!, next);
+                          patchRow(r.id!, { sourceLabel: next });
+                          return;
+                        }
                         if (c.key === "label") {
                           await setReleaseLabel(r.id!, next);
                           patchRow(r.id!, { label: next });
@@ -360,9 +400,12 @@ export function BatchEditView({
 function Cell({
   value,
   onCommit,
+  listId,
 }: {
   value: string;
   onCommit: (next: string | null) => Promise<void>;
+  // Optional <datalist> id for autocomplete (used by the source column).
+  listId?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -409,6 +452,7 @@ function Cell({
       <input
         type="text"
         autoFocus
+        list={listId}
         value={draft}
         disabled={saving}
         onChange={(e) => setDraft(e.target.value)}

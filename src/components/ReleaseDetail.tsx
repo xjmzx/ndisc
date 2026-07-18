@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Check,
+  Combine,
   Copy,
   Disc,
   ExternalLink,
@@ -19,11 +20,14 @@ import {
   Undo2,
   Unlink,
   Upload,
+  X,
 } from "lucide-react";
 import { useReactions } from "../hooks/useReactions";
 import { REACTION_DOWN, REACTION_UP, displayCount } from "../lib/rating";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { cn } from "../lib/cn";
+import { MergeConfirm, hasLiveEvent } from "./MergeConfirm";
 import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
@@ -34,6 +38,7 @@ import {
   deleteRelease,
   enrichDiscogsRelease,
   getRelease,
+  listReleases,
   restoreRelease,
   publishRelease,
   refreshRelease,
@@ -45,13 +50,22 @@ import {
   setReleaseCountry,
   setReleaseGenres,
   setReleaseLabel,
+  setReleaseSource,
   setReleaseType,
   syncCoverToDisk,
   unpublishRelease,
   updateReleasePath,
+  listDistinctSources,
+  type MergeSummary,
   type RelayError,
   type Release,
 } from "../lib/tauri";
+import {
+  sourceColor,
+  sourceIsDigital,
+  sourceIsPhysical,
+  setSourceMeta,
+} from "../lib/source";
 
 const TYPE_OPTIONS = [
   "music",
@@ -148,6 +162,7 @@ export function ReleaseDetail({
   const [syncingCover, setSyncingCover] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [linkingPath, setLinkingPath] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [latestOp, setLatestOp] = useState<LatestOp | null>(null);
   // Persistent across non-release-switch ops so the copy/njump.me buttons in
   // the action row stay active after a later cover edit / refresh / sync.
@@ -248,6 +263,23 @@ export function ReleaseDetail({
     } catch (e) {
       alert(String(e));
     }
+  }
+
+  // After a merge: re-point the panel to the (possibly enriched) survivor and
+  // report what happened. onChanged re-selects by id, so this works whether the
+  // panel was showing the survivor or the now-deleted loser.
+  async function onMerged(survivorId: number, summary: MergeSummary) {
+    setMergeOpen(false);
+    const fresh = await getRelease(survivorId).catch(() => null);
+    if (fresh) onChanged(fresh);
+    const parts = [
+      summary.foldedFields.length
+        ? `absorbed ${summary.foldedFields.join(", ")}`
+        : "no new fields to absorb",
+      summary.loserRetracted && "retracted the other release's live event",
+      summary.survivorMarkedStale && "marked stale — republish to update relays",
+    ].filter(Boolean);
+    setLatestOp({ kind: "info", text: `Merged. ${parts.join("; ")}.` });
   }
 
   async function onPublish() {
@@ -469,6 +501,15 @@ export function ReleaseDetail({
     applyEdit({ label: v });
   }
 
+  // Acquisition source is LOCAL-ONLY provenance — it is not on the kind:31237
+  // wire, so re-tagging it must NOT clear publish markers. Deliberately uses a
+  // plain onChanged (not applyEdit) so a published release stays published.
+  async function onChangeSource(v: string | null) {
+    if (!release.id) return;
+    await setReleaseSource(release.id, v);
+    onChanged({ ...release, sourceLabel: v });
+  }
+
   // Changes a single genre slot. Cascade-clears later slots that are no
   // longer valid given the new value (e.g. swap primary to `electronic` and
   // any electronic-sub in slot 2/3 becomes invalid → cleared). Then
@@ -651,12 +692,28 @@ export function ReleaseDetail({
             {release.id != null && lastPublish && (
               <ReactionButtons releaseId={release.id} />
             )}
+            <button
+              onClick={() => setMergeOpen(true)}
+              className={SUBTLE_BUTTON_CLS}
+              title="Merge this with another row that's the same release"
+            >
+              <Combine size={12} /> merge
+            </button>
             <button onClick={onDelete} className={SUBTLE_BUTTON_CLS}>
               <Trash2 size={12} /> delete
             </button>
           </div>
         </div>
       </div>
+
+      {mergeOpen && (
+        <MergeDialog
+          current={release}
+          relays={relays}
+          onCancel={() => setMergeOpen(false)}
+          onMerged={onMerged}
+        />
+      )}
 
       <div className="mt-4 grid grid-cols-[max-content_1fr] gap-x-3 items-center
                       text-xs max-w-md">
@@ -695,6 +752,10 @@ export function ReleaseDetail({
           ariaLabel="label"
           placeholder="label"
           width="w-40"
+        />
+        <EditableSource
+          value={release.sourceLabel ?? null}
+          onChange={onChangeSource}
         />
         <EditableText
           value={release.catalogNumber ?? null}
@@ -1312,6 +1373,306 @@ function EditableText({
         <span className="ml-2 text-alert text-[10px]">{error}</span>
       )}
     </>
+  );
+}
+
+interface EditableSourceProps {
+  value: string | null;
+  onChange: (v: string | null) => Promise<void> | void;
+}
+
+// Acquisition-source editor: assign WHERE/how a release was obtained. The name
+// is a free-text category (pick an existing one from the datalist or type a new
+// store — the vocabulary is just the set of names in use). Per-name presentation
+// lives in localStorage: a colour (the swatch, and the list's grouping ring/
+// glyph tint) and a "digital" flag marking the source as a download you own —
+// which lets a physical release from it count as a physical+digital pairing.
+function EditableSource({ value, onChange }: EditableSourceProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [options, setOptions] = useState<string[]>([]);
+  // Bumped after a localStorage meta write so sourceColor/sourceIsDigital
+  // (which read storage on each call) re-read on the next render.
+  const [, setBump] = useState(0);
+
+  useEffect(() => {
+    if (!editing) setDraft(value ?? "");
+  }, [value, editing]);
+
+  // Lazy-load the existing source names for the datalist when editing starts.
+  useEffect(() => {
+    if (!editing || options.length) return;
+    let live = true;
+    listDistinctSources()
+      .then((rows) => live && setOptions(rows.map((r) => r.name)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [editing, options.length]);
+
+  const swatch = sourceColor(value);
+
+  async function commitName() {
+    const trimmed = draft.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    if ((value ?? null) === next) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onChange(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <>
+        <button
+          onClick={() => setEditing(true)}
+          title={value ? `source: ${value}` : "Set acquisition source"}
+          aria-label="acquisition source"
+          className="w-40 h-6 group inline-flex items-center gap-1.5 px-1.5 py-0
+                     rounded bg-surface/40 hover:bg-surface/70 border
+                     border-surface/60 hover:border-accent/50 transition-colors
+                     text-left text-fg/90"
+        >
+          <span
+            className="shrink-0 w-2.5 h-2.5 rounded-full border border-surface"
+            style={
+              swatch
+                ? { backgroundColor: swatch }
+                : { backgroundColor: "transparent" }
+            }
+          />
+          <span
+            className={`flex-1 truncate ${value ? "" : "italic text-muted/50"}`}
+          >
+            {value ?? "source"}
+          </span>
+          <Pencil
+            size={10}
+            className="shrink-0 text-muted/50 group-hover:text-accent transition-colors"
+          />
+        </button>
+        {error && <span className="ml-2 text-alert text-[10px]">{error}</span>}
+      </>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <input
+        type="text"
+        autoFocus
+        list="acq-source-names"
+        value={draft}
+        disabled={saving}
+        aria-label="acquisition source name"
+        placeholder="source"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commitName}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            setDraft(value ?? "");
+            setEditing(false);
+          }
+        }}
+        spellCheck={false}
+        className="w-32 h-6 px-1.5 py-0 rounded bg-surface text-fg outline-none
+                   border border-accent/50 text-xs placeholder:text-muted/60
+                   disabled:opacity-50"
+      />
+      <datalist id="acq-source-names">
+        {options.map((o) => (
+          <option key={o} value={o} />
+        ))}
+      </datalist>
+      {/* Colour + digital/physical flags apply to the SOURCE name (shared by
+          every release from it), so they only make sense once a name is
+          committed. A source can be both (e.g. Bandcamp vinyl → download too). */}
+      {value && (
+        <>
+          <input
+            type="color"
+            aria-label="source colour"
+            title="Source colour (used by the list ring + glyph)"
+            value={swatch ?? "#888888"}
+            onChange={(e) => {
+              setSourceMeta(value, { color: e.target.value });
+              setBump((n) => n + 1);
+            }}
+            className="w-6 h-6 rounded bg-surface border border-surface/60
+                       cursor-pointer p-0.5"
+          />
+          <label
+            title="This source gives you a physical copy — lets a digital release from it count as a physical+digital pairing"
+            className="inline-flex items-center gap-1 text-[10px] text-fg/80
+                       cursor-pointer select-none"
+          >
+            <input
+              type="checkbox"
+              checked={sourceIsPhysical(value)}
+              onChange={(e) => {
+                setSourceMeta(value, { physical: e.target.checked });
+                setBump((n) => n + 1);
+              }}
+            />
+            physical
+          </label>
+          <label
+            title="This source gives you a digital copy you own — lets a physical release from it count as a physical+digital pairing"
+            className="inline-flex items-center gap-1 text-[10px] text-fg/80
+                       cursor-pointer select-none"
+          >
+            <input
+              type="checkbox"
+              checked={sourceIsDigital(value)}
+              onChange={(e) => {
+                setSourceMeta(value, { digital: e.target.checked });
+                setBump((n) => n + 1);
+              }}
+            />
+            digital
+          </label>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            title="Done"
+            className="text-[10px] text-muted hover:text-accent px-1"
+          >
+            done
+          </button>
+        </>
+      )}
+    </span>
+  );
+}
+
+// Merge entry from the detail panel: search for the counterpart row, then hand
+// the pair to the shared MergeConfirm diagram. (The diagram, fold preview, and
+// commit live in MergeConfirm so the duplicates review reuses them.)
+function MergeDialog({
+  current,
+  relays,
+  onCancel,
+  onMerged,
+}: {
+  current: Release;
+  relays: string[];
+  onCancel: () => void;
+  onMerged: (survivorId: number, summary: MergeSummary) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Release[]>([]);
+  const [target, setTarget] = useState<Release | null>(null);
+
+  useEffect(() => {
+    if (target) return;
+    let live = true;
+    const q = query.trim();
+    listReleases(q.length ? q : undefined)
+      .then(
+        (rs) =>
+          live &&
+          setResults(rs.filter((r) => r.id !== current.id).slice(0, 30)),
+      )
+      .catch(() => live && setResults([]));
+    return () => {
+      live = false;
+    };
+  }, [query, target, current.id]);
+
+  return (
+    <div
+      className="absolute inset-0 z-30 flex items-start justify-center p-4
+                 bg-bg/70 backdrop-blur-sm"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-lg mt-6 rounded-lg border border-surface/70
+                   bg-panel shadow-xl p-4 text-xs"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-medium text-fg inline-flex items-center gap-1.5">
+            <Combine size={14} /> Merge release
+          </h3>
+          <button
+            onClick={onCancel}
+            className="text-muted hover:text-fg"
+            aria-label="Close"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="mb-3 text-muted">
+          Fold another row that is the same release into{" "}
+          <span className="text-fg">
+            {current.artist} — {current.title}
+          </span>
+          .
+        </div>
+
+        {!target ? (
+          <>
+            <input
+              autoFocus
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="search for the duplicate…"
+              spellCheck={false}
+              className="w-full h-8 px-2 rounded bg-surface text-fg outline-none
+                         border border-accent/40 mb-2"
+            />
+            <div className="max-h-64 overflow-y-auto divide-y divide-surface/40">
+              {results.length === 0 ? (
+                <div className="py-3 text-muted">no matches</div>
+              ) : (
+                results.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => setTarget(r)}
+                    className="w-full text-left py-1.5 px-1 hover:bg-surface/60
+                               flex items-center gap-2"
+                  >
+                    <span
+                      className={cn(
+                        "w-2 h-2 rounded-full shrink-0",
+                        hasLiveEvent(r) ? "bg-mauve" : "bg-muted/40",
+                      )}
+                    />
+                    <span className="flex-1 truncate text-fg/90">
+                      {r.artist} — {r.title}
+                    </span>
+                    <span className="text-muted shrink-0">
+                      {[r.year, r.medium].filter(Boolean).join(" · ")}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </>
+        ) : (
+          <MergeConfirm
+            a={current}
+            b={target}
+            relays={relays}
+            cancelLabel="← pick another"
+            onCancel={() => setTarget(null)}
+            onMerged={onMerged}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 

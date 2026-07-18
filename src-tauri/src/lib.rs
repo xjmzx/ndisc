@@ -108,6 +108,11 @@ pub struct Release {
     pub bandcamp_id: Option<String>,
     pub release_type: Option<String>,
     pub category: Option<String>,
+    // Acquisition source — the user-assigned category for where/how this
+    // release was obtained (Bandcamp, a record store, …). Local-only, never
+    // published. Null when uncategorised. The colour for a given name is a
+    // frontend concern (localStorage["ndisc.sources"]).
+    pub source_label: Option<String>,
     // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
     // each optional, each one of the 35 active slugs in schema/release.v2.json.
     // See genreInvariants there: distinct slugs, no parent+own-sub, dense
@@ -379,6 +384,26 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     // NULL for rows published before this column existed — "Reconcile relays"
     // recovers those ids from the relays themselves.
     ensure_column(&conn, "releases", "last_published_event_id", "TEXT")?;
+    // Acquisition source — a user-curated, extensible category for where/how a
+    // release was obtained (Bandcamp, a record store, a marketplace…). Local-
+    // only, never published; distinct from `source` (the release URL) and
+    // `bandcamp_id` (a purchase receipt). The vocabulary is the distinct set of
+    // values in use (see list_distinct_sources), mirroring how `label` works;
+    // per-name colours live in localStorage on the frontend. See Release.source_label.
+    ensure_column(&conn, "releases", "source_label", "TEXT")?;
+    // Seed the category for rows we already recognise as Bandcamp (a purchase
+    // receipt or a Bandcamp source URL) so their grouping ring reads blue
+    // without any manual tagging. Idempotent — only fills rows still unset, so
+    // a later manual re-categorisation is never clobbered.
+    conn.execute(
+        "UPDATE releases SET source_label = 'Bandcamp'
+           WHERE (source_label IS NULL OR source_label = '')
+             AND (source LIKE '%bandcamp.com%'
+                  OR source LIKE '%shop.cpurecords.net%'
+                  OR (bandcamp_id IS NOT NULL AND bandcamp_id <> ''))",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     // Backfill the four-state column for rows that predate it: anything with a
     // live publish marker is 'published'; the rest stay NULL (read as 'never').
     // Idempotent — only touches rows still NULL. We can't recover 'stale' or
@@ -777,9 +802,10 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
           discogs_id, bandcamp_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary,
           last_published_at, last_published_naddr, added_at, updated_at,
-          track_count, track_total)
+          track_count, track_total, source_label)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
+                 ?29)",
         params![
             id,
             release.artist,
@@ -809,6 +835,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.updated_at,
             release.track_count,
             release.track_total,
+            release.source_label,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1147,6 +1174,28 @@ fn set_release_catalog_number(
     Ok(())
 }
 
+// Set (or clear, on empty/None) a release's acquisition-source category. This
+// is local-only provenance and is NOT carried in the kind:31237 event, so it
+// deliberately does NOT call mark_unpublished — re-tagging where you bought a
+// record must not make its published release stale.
+#[tauri::command]
+fn set_release_source(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: Option<String>,
+) -> Result<(), String> {
+    let normalized = normalize_field(value);
+    let conn = open(&app)?;
+    conn.execute(
+        "UPDATE releases
+         SET source_label = ?1, updated_at = strftime('%s','now')
+         WHERE id = ?2",
+        params![normalized, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // Manually set (or clear, on None/<=0) a release's physical disc count. Discogs
 // enrichment also fills disc_total (and stays canonical — a later enrich on a
 // Discogs-linked release will overwrite this), but this lets non-Discogs
@@ -1330,6 +1379,16 @@ pub struct LabelCount {
     pub dominant_genre_3: Option<String>,
 }
 
+/// One acquisition-source category and how many releases carry it. The distinct
+/// set of these IS the source vocabulary (there is no separate registry table),
+/// mirroring list_distinct_labels. Ordered by count desc, then name.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCount {
+    pub name: String,
+    pub count: i64,
+}
+
 /// Read-only summary of one record label, for the LABEL panel's at-a-glance
 /// strip. Purely derived from rows we already have — it adds no publishing
 /// surface and cannot mutate the labels.v1 image manifest.
@@ -1463,6 +1522,38 @@ fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String
     Ok(out)
 }
 
+/// The acquisition-source vocabulary in use: every distinct `source_label`
+/// value and how many releases carry it. Derived from rows (no registry table),
+/// mirroring list_distinct_labels — this is what the source filter and the
+/// per-source colour UI enumerate.
+#[tauri::command]
+fn list_distinct_sources(app: tauri::AppHandle) -> Result<Vec<SourceCount>, String> {
+    let conn = open(&app)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_label, COUNT(*) AS n
+             FROM releases
+             WHERE source_label IS NOT NULL AND source_label <> ''
+             GROUP BY source_label
+             ORDER BY n DESC, source_label COLLATE NOCASE
+             LIMIT 500",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SourceCount {
+                name: row.get::<_, String>(0)?,
+                count: row.get::<_, i64>(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
 fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
     Ok(Release {
         id: row.get(0)?,
@@ -1497,6 +1588,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         video_count: row.get(29)?,
         publish_state: row.get(30)?,
         last_published_event_id: row.get(31)?,
+        source_label: row.get(32)?,
     })
 }
 
@@ -1506,7 +1598,8 @@ const RELEASE_SELECT_COLS: &str =
      discogs_id, bandcamp_id, added_at, updated_at, cover_art_url,
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
-     disc_total, video_count, publish_state, last_published_event_id";
+     disc_total, video_count, publish_state, last_published_event_id,
+     source_label";
 
 #[tauri::command]
 fn list_releases(
@@ -3378,6 +3471,267 @@ async fn unpublish_release(
         naddr: String::new(),
         accepted_by,
         rejected,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate detection — suggest suspect same-release rows (never auto-acts)
+// ---------------------------------------------------------------------------
+
+/// Normalise a title/artist for duplicate grouping: lowercase, keep only
+/// alphanumerics. So "No Comment_0007" == "No Comment 0007" == "nocomment0007",
+/// but "Vol.1"/"Vol.2" and "0002"/"0007" stay distinct.
+fn dup_norm(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroup {
+    /// The shared normalized key (`artist|title`) — stable id for dismissal.
+    pub key: String,
+    /// The suspect rows (2+), full records for a side-by-side comparison.
+    pub releases: Vec<Release>,
+}
+
+/// Suspected-duplicate groups: releases sharing a normalized artist+title key.
+/// Read-only — this only surfaces candidates for the review UI; nothing is
+/// merged or deleted. Groups of 2+ are returned, largest first then by artist.
+#[tauri::command]
+fn find_duplicate_groups(app: tauri::AppHandle) -> Result<Vec<DuplicateGroup>, String> {
+    let conn = open(&app)?;
+    let sql = format!("SELECT {RELEASE_SELECT_COLS} FROM releases");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_release).map_err(|e| e.to_string())?;
+
+    let mut groups: HashMap<String, Vec<Release>> = HashMap::new();
+    for r in rows {
+        let r = r.map_err(|e| e.to_string())?;
+        let a = dup_norm(&r.artist);
+        let t = dup_norm(&r.title);
+        if a.is_empty() && t.is_empty() {
+            continue; // a blank artist+title shouldn't cluster
+        }
+        groups.entry(format!("{a}|{t}")).or_default().push(r);
+    }
+
+    let mut out: Vec<DuplicateGroup> = groups
+        .into_iter()
+        .filter(|(_, v)| v.len() >= 2)
+        .map(|(key, mut releases)| {
+            releases.sort_by_key(|r| r.id.unwrap_or_default());
+            DuplicateGroup { key, releases }
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.releases
+            .len()
+            .cmp(&a.releases.len())
+            .then_with(|| {
+                a.releases[0]
+                    .artist
+                    .to_lowercase()
+                    .cmp(&b.releases[0].artist.to_lowercase())
+            })
+            .then_with(|| a.releases[0].title.to_lowercase().cmp(&b.releases[0].title.to_lowercase()))
+    });
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Merge — collapse two rows that are one logical release into one
+// ---------------------------------------------------------------------------
+
+fn str_nonempty(s: &Option<String>) -> bool {
+    s.as_deref().map(|x| !x.trim().is_empty()).unwrap_or(false)
+}
+
+/// Fold a String field: the survivor's own non-empty value always wins; the
+/// loser fills only a gap. Records the field name + whether it's a wire field
+/// (carried on the kind:31237 event) when the loser's value is taken.
+fn fold_str(
+    folded: &mut Vec<String>,
+    wire_changed: &mut bool,
+    name: &str,
+    wire: bool,
+    surv: Option<String>,
+    lose: Option<String>,
+) -> Option<String> {
+    if str_nonempty(&surv) {
+        return surv;
+    }
+    if str_nonempty(&lose) {
+        folded.push(name.to_string());
+        if wire {
+            *wire_changed = true;
+        }
+        return lose;
+    }
+    surv
+}
+
+/// Fold an Option<i64> field (0/negative treated as absent for counts).
+fn fold_i64(
+    folded: &mut Vec<String>,
+    wire_changed: &mut bool,
+    name: &str,
+    wire: bool,
+    surv: Option<i64>,
+    lose: Option<i64>,
+) -> Option<i64> {
+    if surv.map(|n| n > 0).unwrap_or(false) {
+        return surv;
+    }
+    if lose.map(|n| n > 0).unwrap_or(false) {
+        folded.push(name.to_string());
+        if wire {
+            *wire_changed = true;
+        }
+        return lose;
+    }
+    surv.or(lose)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeSummary {
+    pub survivor_id: i64,
+    /// Field names the survivor absorbed from the loser (empty gaps it filled).
+    pub folded_fields: Vec<String>,
+    /// The loser had a live kind:31237 that we retracted before deleting it.
+    pub loser_retracted: bool,
+    /// The survivor was published and a wire field changed, so it was flagged
+    /// stale for re-publish.
+    pub survivor_marked_stale: bool,
+}
+
+/// Merge two rows that are the same logical release (a physical Discogs row and
+/// its digital Bandcamp/folder twin). The SURVIVOR keeps every non-empty field
+/// it already has and absorbs the LOSER's values only where the survivor is
+/// empty — provenance (file_path, bandcamp_id, source, discogs_id, covers,
+/// source_label), counts, descriptive metadata, and genres (only when the
+/// survivor has none). The loser is then deleted. If the loser has a live
+/// kind:31237 it is RETRACTED first (kind:5) so no naddr is stranded; if that
+/// retraction is rejected by every relay the merge aborts rather than orphan an
+/// event. If the survivor is published and a WIRE field changed, it is marked
+/// stale so the enriched release re-publishes. Callers pass survivor == the
+/// published row (see the UI), so the common path retracts nothing.
+#[tauri::command]
+async fn merge_releases(
+    app: tauri::AppHandle,
+    survivor_id: i64,
+    loser_id: i64,
+    relays: Vec<String>,
+) -> Result<MergeSummary, String> {
+    if survivor_id == loser_id {
+        return Err("cannot merge a release with itself".into());
+    }
+    let survivor = get_release(app.clone(), survivor_id)?
+        .ok_or_else(|| format!("survivor release {survivor_id} not found"))?;
+    let loser = get_release(app.clone(), loser_id)?
+        .ok_or_else(|| format!("loser release {loser_id} not found"))?;
+
+    let mut folded: Vec<String> = Vec::new();
+    let mut wire = false;
+    // Descriptive + provenance (wire flag per release_event's tag set).
+    let year = {
+        let s = survivor.year.map(i64::from);
+        let l = loser.year.map(i64::from);
+        fold_i64(&mut folded, &mut wire, "year", true, s, l).map(|n| n as i32)
+    };
+    let format = fold_str(&mut folded, &mut wire, "format", true, survivor.format, loser.format);
+    let label = fold_str(&mut folded, &mut wire, "label", true, survivor.label, loser.label);
+    let catalog_number = fold_str(&mut folded, &mut wire, "catalog", true, survivor.catalog_number, loser.catalog_number);
+    let country = fold_str(&mut folded, &mut wire, "country", true, survivor.country, loser.country);
+    let condition = fold_str(&mut folded, &mut wire, "condition", true, survivor.condition, loser.condition);
+    let notes = fold_str(&mut folded, &mut wire, "notes", true, survivor.notes, loser.notes);
+    let source = fold_str(&mut folded, &mut wire, "source", true, survivor.source, loser.source);
+    let cover_art_url = fold_str(&mut folded, &mut wire, "image", true, survivor.cover_art_url, loser.cover_art_url);
+    let release_type = fold_str(&mut folded, &mut wire, "type", true, survivor.release_type, loser.release_type);
+    let category = fold_str(&mut folded, &mut wire, "category", true, survivor.category, loser.category);
+    let discogs_id = fold_i64(&mut folded, &mut wire, "discogs", true, survivor.discogs_id, loser.discogs_id);
+    let track_total = fold_i64(&mut folded, &mut wire, "tracks", true, survivor.track_total, loser.track_total);
+    let disc_total = fold_i64(&mut folded, &mut wire, "discs", true, survivor.disc_total, loser.disc_total);
+    let video_count = fold_i64(&mut folded, &mut wire, "video", true, survivor.video_count, loser.video_count);
+    // Local-only fields (wire = false — never force a re-publish).
+    let file_path = fold_str(&mut folded, &mut wire, "file_path", false, survivor.file_path, loser.file_path);
+    let bandcamp_id = fold_str(&mut folded, &mut wire, "bandcamp_id", false, survivor.bandcamp_id, loser.bandcamp_id);
+    let cover_art_path = fold_str(&mut folded, &mut wire, "cover_art_path", false, survivor.cover_art_path, loser.cover_art_path);
+    let source_label = fold_str(&mut folded, &mut wire, "source", false, survivor.source_label, loser.source_label);
+    let track_count = fold_i64(&mut folded, &mut wire, "track_count", false, survivor.track_count, loser.track_count);
+    // Genres move as a block only when the survivor has none (density/validity
+    // are already enforced on each row, so copying all three slots is safe).
+    let (gp, gs, gt) = if !str_nonempty(&survivor.genre_primary) && str_nonempty(&loser.genre_primary)
+    {
+        folded.push("genres".to_string());
+        wire = true;
+        (loser.genre_primary, loser.genre_secondary, loser.genre_tertiary)
+    } else {
+        (survivor.genre_primary, survivor.genre_secondary, survivor.genre_tertiary)
+    };
+
+    // Retract the loser's live event first (only when it actually has one), so a
+    // delete never strands an naddr. Abort if no relay accepts the deletion.
+    let loser_live = loser.last_published_naddr.is_some()
+        || matches!(loser.publish_state.as_deref(), Some("published") | Some("stale"));
+    let mut loser_retracted = false;
+    if loser_live {
+        let res = unpublish_release(app.clone(), loser_id, relays.clone()).await?;
+        if res.accepted_by.is_empty() {
+            return Err(format!(
+                "aborted: could not retract the other release's live event from any relay ({} rejected). Nothing was merged.",
+                res.rejected.len()
+            ));
+        }
+        loser_retracted = true;
+    }
+
+    // Apply the fold, delete the loser, and (if needed) re-stale the survivor —
+    // all in one transaction so a mid-way failure leaves both rows intact.
+    let mut conn = open(&app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE releases SET
+           year = ?2, format = ?3, label = ?4, catalog_number = ?5, country = ?6,
+           condition = ?7, notes = ?8, source = ?9, cover_art_url = ?10,
+           release_type = ?11, category = ?12, discogs_id = ?13, track_total = ?14,
+           disc_total = ?15, video_count = ?16, file_path = ?17, bandcamp_id = ?18,
+           cover_art_path = ?19, source_label = ?20, track_count = ?21,
+           genre_primary = ?22, genre_secondary = ?23, genre_tertiary = ?24,
+           updated_at = strftime('%s','now')
+         WHERE id = ?1",
+        params![
+            survivor_id, year, format, label, catalog_number, country, condition,
+            notes, source, cover_art_url, release_type, category, discogs_id,
+            track_total, disc_total, video_count, file_path, bandcamp_id,
+            cover_art_path, source_label, track_count, gp, gs, gt,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM releases WHERE id = ?1", params![loser_id])
+        .map_err(|e| e.to_string())?;
+
+    let survivor_marked_stale = wire && survivor.publish_state.as_deref() == Some("published");
+    if survivor_marked_stale {
+        tx.execute(
+            "UPDATE releases
+             SET last_published_at = NULL, last_published_naddr = NULL,
+                 publish_state = 'stale'
+             WHERE id = ?1",
+            params![survivor_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(MergeSummary {
+        survivor_id,
+        folded_fields: folded,
+        loser_retracted,
+        survivor_marked_stale,
     })
 }
 
@@ -6856,16 +7210,20 @@ pub fn run() {
             set_release_notes,
             set_release_condition,
             set_release_label,
+            set_release_source,
             set_release_catalog_number,
             set_release_discogs_id,
             set_release_disc_total,
             set_release_genres,
             list_distinct_labels,
+            list_distinct_sources,
             get_label_overview,
             export_markdown,
             list_releases,
             get_release,
             delete_release,
+            merge_releases,
+            find_duplicate_groups,
             recount_tracks,
             publish_reaction,
             delete_reaction,

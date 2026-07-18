@@ -20,6 +20,11 @@ export interface Release {
   bandcampId?: string | null;
   releaseType?: string | null;
   category?: string | null;
+  // Acquisition source — the user-assigned category for where/how this release
+  // was obtained (Bandcamp, a record store, …). Local-only, never published.
+  // Null when uncategorised; the per-name colour lives in localStorage
+  // ("ndisc.sources"). See sourceColor / releaseSourceColor in lib/source.ts.
+  sourceLabel?: string | null;
   // v2: three ordered genre slots (primary / secondary / tertiary). Each
   // slot is one of the 22 valid slugs (see schema/release.v2.json) or null.
   // Invariants (distinct, dense ordering) enforced by
@@ -184,6 +189,47 @@ export async function deleteRelease(id: number): Promise<void> {
   return invoke("delete_release", { id });
 }
 
+// Outcome of merging two rows that are one logical release.
+export interface MergeSummary {
+  survivorId: number;
+  // Field names the survivor absorbed from the loser (gaps it filled).
+  foldedFields: string[];
+  // The loser had a live kind:31237 that was retracted before deletion.
+  loserRetracted: boolean;
+  // The survivor was published and a wire field changed → flagged stale.
+  survivorMarkedStale: boolean;
+}
+
+// A cluster of releases suspected to be the same (shared normalized
+// artist+title). `key` is stable — used to remember dismissals.
+export interface DuplicateGroup {
+  key: string;
+  releases: Release[];
+}
+
+// Suspected-duplicate groups (2+ each), largest first. Read-only — suggests
+// candidates for the review UI; nothing is merged.
+export async function findDuplicateGroups(): Promise<DuplicateGroup[]> {
+  return invoke<DuplicateGroup[]>("find_duplicate_groups");
+}
+
+// Collapse two rows that are the same logical release into one. The survivor
+// keeps its own non-empty fields and absorbs the loser's only where empty; the
+// loser is deleted (its live event retracted first). `relays` is only used when
+// the loser has something live to retract. Callers pass survivor = the
+// published row.
+export async function mergeReleases(
+  survivorId: number,
+  loserId: number,
+  relays: string[],
+): Promise<MergeSummary> {
+  return invoke<MergeSummary>("merge_releases", {
+    survivorId,
+    loserId,
+    relays,
+  });
+}
+
 /**
  * Backfill / refresh each release's leaf count (trackCount) from the audio
  * files in its folder. Default fills only releases whose count is unknown
@@ -243,6 +289,15 @@ export async function setReleaseLabel(
   return invoke("set_release_label", { releaseId, value });
 }
 
+// Set/clear a release's acquisition-source category. Local-only provenance —
+// does NOT mark a published release stale (the backend skips mark_unpublished).
+export async function setReleaseSource(
+  releaseId: number,
+  value: string | null,
+): Promise<void> {
+  return invoke("set_release_source", { releaseId, value });
+}
+
 export async function setReleaseGenres(
   releaseId: number,
   primary: string | null,
@@ -297,6 +352,18 @@ export interface LabelCount {
 
 export async function listDistinctLabels(): Promise<LabelCount[]> {
   return invoke<LabelCount[]>("list_distinct_labels");
+}
+
+// One acquisition-source category + its release count. The distinct set of
+// these IS the source vocabulary (derived from rows, no registry table) —
+// mirrors LabelCount / listDistinctLabels.
+export interface SourceCount {
+  name: string;
+  count: number;
+}
+
+export async function listDistinctSources(): Promise<SourceCount[]> {
+  return invoke<SourceCount[]>("list_distinct_sources");
 }
 
 export async function exportMarkdown(

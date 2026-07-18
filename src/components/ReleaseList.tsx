@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
+  Combine,
   Disc3,
   Film,
   FolderCog,
@@ -33,6 +34,7 @@ import {
   deleteRelease,
   exportPublishedManifest,
   extractEmbeddedCovers,
+  findDuplicateGroups,
   getLibraryRoot,
   listReleases,
   publishByIds,
@@ -65,7 +67,16 @@ import {
   type VideoFilter,
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
-import { sourcePlatform, SOURCE_PLATFORMS } from "../lib/source";
+import { getDismissedDupKeys } from "../lib/dupDismiss";
+import { DuplicatesDialog } from "./DuplicatesDialog";
+import {
+  SOURCE_PLATFORMS,
+  releaseSourceColor,
+  releaseSourceName,
+  isPaired,
+  hasBandcampReceipt,
+  colorWithAlpha,
+} from "../lib/source";
 import {
   PUBLISH_STATES,
   publishStateMeta,
@@ -142,6 +153,10 @@ export function ReleaseList({
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Duplicate review: count of non-dismissed suspect groups (toolbar badge) +
+  // whether the review dialog is open.
+  const [dupCount, setDupCount] = useState(0);
+  const [dupOpen, setDupOpen] = useState(false);
 
   // Scroll container, for the index-rail jump-to-letter chevrons.
   const listRef = useRef<HTMLUListElement>(null);
@@ -775,6 +790,18 @@ export function ReleaseList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey, medium, needsCoverOnly, publishStateFilter, labelFilter, genreFilter, videoFilter, coverLinkFilter, sourceFilter]);
 
+  // Suspect-duplicate group count for the toolbar badge (non-dismissed only).
+  // Cheap read; refreshed on the same beat as the list.
+  function refreshDupCount() {
+    const dismissed = getDismissedDupKeys();
+    findDuplicateGroups()
+      .then((gs) => setDupCount(gs.filter((g) => !dismissed.has(g.key)).length))
+      .catch(() => setDupCount(0));
+  }
+  useEffect(() => {
+    refreshDupCount();
+  }, [reloadKey]);
+
   // Bubble the FULL filter set + the exact visible id list up so the Nostr
   // panel's bulk ops act on precisely what's on screen (and describe it in
   // full). Every filter must be represented here — a missing one silently
@@ -1082,6 +1109,22 @@ export function ReleaseList({
             </div>
           )}
         </div>
+        {dupCount > 0 && (
+          <button
+            onClick={() => setDupOpen(true)}
+            className="relative p-2 rounded-md bg-surface hover:bg-surfaceHover text-fg"
+            title={`Review ${dupCount} suspected duplicate group${dupCount === 1 ? "" : "s"}`}
+          >
+            <Combine size={14} />
+            <span
+              className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5
+                         rounded-full bg-warn text-bg text-[9px] font-medium
+                         grid place-items-center"
+            >
+              {dupCount}
+            </span>
+          </button>
+        )}
         <button
           onClick={reload}
           disabled={loading}
@@ -1092,6 +1135,17 @@ export function ReleaseList({
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
+
+      {dupOpen && (
+        <DuplicatesDialog
+          relays={relays}
+          onClose={() => setDupOpen(false)}
+          onResolved={() => {
+            refreshDupCount();
+            reload();
+          }}
+        />
+      )}
 
       {error && (
         <p className="mt-2 text-xs text-alert font-mono break-all">{error}</p>
@@ -1614,20 +1668,47 @@ export function ReleaseList({
                   <div
                     className={cn(
                       "shrink-0 inline-flex items-center justify-center",
-                      "gap-1 px-1.5 h-5 min-w-[38px] rounded-full bg-surface/60",
-                      // Linked band: a PHYSICAL release that's been attached to
-                      // a local (digital) folder gets a green ring around the
-                      // state cluster — visual confirmation the physical object
-                      // and its digital version are matched. Digital releases
-                      // always have a folder, so they're excluded (a future
-                      // "completed" band for digital keys on track == total).
-                      r.medium === "physical" &&
-                        r.filePath &&
-                        "ring-[1.5px] ring-ok",
+                      "gap-1 px-1.5 h-5 min-w-[38px] rounded-full",
+                      // Neutral pill base only when NOT paired — a paired row
+                      // replaces it with the source-tinted fill below.
+                      !isPaired(r) && "bg-surface/60",
                     )}
+                    style={
+                      // Paired band: a release that exists in BOTH physical and
+                      // digital form — a physical row with a digital half (files
+                      // or a digital source), or a digital row with a physical
+                      // half (a Discogs entry or a physical source) — gets a
+                      // translucent FILL behind the state + medium dots. Its
+                      // COLOUR encodes the acquisition source (Bandcamp blue,
+                      // Discogs its hue, …); leaf-green --c-ok is the default.
+                      // See isPaired in lib/source.ts.
+                      isPaired(r)
+                        ? {
+                            backgroundColor: colorWithAlpha(
+                              releaseSourceColor(r) ?? "rgb(var(--c-ok))",
+                              0.5,
+                            ),
+                          }
+                        : undefined
+                    }
                     title={
-                      r.medium === "physical" && r.filePath
-                        ? `Linked to a local folder\n${r.filePath}`
+                      isPaired(r)
+                        ? [
+                            "Physical + digital — paired",
+                            r.filePath ? `Files: ${r.filePath}` : null,
+                            r.discogsId != null
+                              ? `Discogs: ${r.discogsId}`
+                              : null,
+                            hasBandcampReceipt(r) ||
+                            releaseSourceName(r)?.toLowerCase() === "bandcamp"
+                              ? "Bandcamp download"
+                              : null,
+                            releaseSourceName(r)
+                              ? `Source: ${releaseSourceName(r)}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join("\n")
                         : undefined
                     }
                   >
@@ -1647,19 +1728,22 @@ export function ReleaseList({
                         </span>
                       );
                     })()}
-                    {/* Medium — sharpened contrast: physical is a solid filled
-                        disc, digital a hollow ring (intangible — no platter).
-                        Tinted by source platform (Bandcamp cyan, SoundCloud
-                        orange, …) when one is detected, so a release's origin
-                        reads at a glance; neutral `text-medium` otherwise. The
-                        shape still encodes physical/digital — only colour
-                        changes. */}
+                    {/* Medium — physical is a solid disc (Disc3), digital a
+                        solid dot; both filled. Tinted by source platform
+                        (Bandcamp blue, SoundCloud orange, …) when detected, so a
+                        release's origin reads at a glance; neutral `text-medium`
+                        otherwise (digital faded to 70%). Shape encodes
+                        physical/digital — only colour changes. */}
                     {(() => {
-                      const platform = sourcePlatform(r);
-                      const tip = platform ? ` · ${platform.label}` : "";
-                      const tint = platform
-                        ? { color: platform.color }
-                        : undefined;
+                      // Tint the medium glyph by acquisition source — the
+                      // assigned `sourceLabel` colour wins, falling back to the
+                      // platform inferred from the URL/receipt; neutral when
+                      // neither applies. Shares releaseSourceColor with the ring
+                      // so a release's origin reads consistently.
+                      const color = releaseSourceColor(r);
+                      const name = releaseSourceName(r);
+                      const tip = name ? ` · ${name}` : "";
+                      const tint = color ? { color } : undefined;
                       if (r.medium === "physical") {
                         return (
                           <span
@@ -1667,7 +1751,7 @@ export function ReleaseList({
                             aria-label={`physical${tip}`}
                             className={cn(
                               "grid place-items-center",
-                              !platform && "text-medium",
+                              !color && "text-medium",
                             )}
                             style={tint}
                           >
@@ -1682,11 +1766,11 @@ export function ReleaseList({
                             aria-label={`digital${tip}`}
                             className={cn(
                               "grid place-items-center",
-                              !platform && "text-medium/70",
+                              !color && "text-medium/70",
                             )}
                             style={tint}
                           >
-                            <Circle size={11} />
+                            <Circle size={11} fill="currentColor" />
                           </span>
                         );
                       }
