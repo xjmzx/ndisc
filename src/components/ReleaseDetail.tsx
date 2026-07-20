@@ -28,6 +28,7 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
 import { MergeConfirm, hasLiveEvent } from "./MergeConfirm";
+import { DeleteDialog, fmtBytes } from "./DeleteDialog";
 import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
@@ -35,7 +36,6 @@ import { coverImageSrc } from "../lib/cover";
 import { genreDisplay, GENRE_ORDER } from "../lib/genre";
 import {
   clearReleasePath,
-  deleteRelease,
   enrichDiscogsRelease,
   getRelease,
   listReleases,
@@ -61,6 +61,7 @@ import {
   type MergeSummary,
   type RelayError,
   type Release,
+  type ResolveSummary,
 } from "../lib/tauri";
 import {
   sourceColor,
@@ -166,6 +167,7 @@ export function ReleaseDetail({
   const [linkingPath, setLinkingPath] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [latestOp, setLatestOp] = useState<LatestOp | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // Persistent across non-release-switch ops so the copy/njump.me buttons in
   // the action row stay active after a later cover edit / refresh / sync.
   const [lastPublish, setLastPublish] =
@@ -225,32 +227,20 @@ export function ReleaseDetail({
 
   const coverSrc = coverImageSrc(release);
 
-  async function onDelete() {
+  // Deleting has two genuinely different intents — "I catalogued this wrong"
+  // (keep the music) vs "I don't want this music" — so it opens a dialog with
+  // both, rather than a yes/no that can only mean one of them.
+  function onDelete() {
     if (!release.id) return;
-    const details = [
-      release.medium && `medium: ${release.medium}`,
-      release.year && `year: ${release.year}`,
-      release.format && `format: ${release.format}`,
-      release.catalogNumber && `catalog: ${release.catalogNumber}`,
-      release.discogsId && `discogs id: ${release.discogsId}`,
-      release.filePath && `file path: ${release.filePath}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const message =
-      `Delete "${release.artist} — ${release.title}"?\n` +
-      (details ? `\n${details}\n` : "") +
-      `\nThis removes the database row only. Files on disk are not touched, ` +
-      `and any previously-published Nostr event remains until you Unpublish it.`;
-    const yes = await ask(message, {
-      title: "Delete release",
-      kind: "warning",
-    });
-    if (!yes) return;
+    setDeleteOpen(true);
+  }
+
+  function onDeleteDone(mode: "row" | "files", summary?: ResolveSummary) {
     const snapshot = release;
-    try {
-      await deleteRelease(release.id);
-      onDeleted();
+    setDeleteOpen(false);
+    onDeleted();
+    if (mode === "row") {
+      // Row-only deletes stay undoable: nothing on disk changed.
       showUndoToast?.(
         `Deleted "${snapshot.artist} — ${snapshot.title}"`,
         async () => {
@@ -262,10 +252,17 @@ export function ReleaseDetail({
           }
         },
       );
-    } catch (e) {
-      alert(String(e));
+    } else if (summary) {
+      // No undo offered — restoring the row would point at files that are now
+      // in the Trash. Recovery is a desktop-Trash restore, and saying so is
+      // more honest than an Undo that only half works.
+      setLatestOp({
+        kind: "warn",
+        text: `Deleted — moved ${summary.files} files (${fmtBytes(summary.bytes)}) to Trash`,
+      });
     }
   }
+
 
   // After a merge: re-point the panel to the (possibly enriched) survivor and
   // report what happened. onChanged re-selects by id, so this works whether the
@@ -723,6 +720,14 @@ export function ReleaseDetail({
           </div>
         </div>
       </div>
+
+      {deleteOpen && (
+        <DeleteDialog
+          release={release}
+          onCancel={() => setDeleteOpen(false)}
+          onDone={onDeleteDone}
+        />
+      )}
 
       {mergeOpen && (
         <MergeDialog

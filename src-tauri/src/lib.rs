@@ -3878,6 +3878,98 @@ fn audit_release_folder(app: tauri::AppHandle, release_id: i64) -> Result<Folder
     Ok(out)
 }
 
+/// Shared guard for "we are about to move a directory to the Trash". Every check
+/// here is a REFUSAL, not a warning: the path must be non-empty, resolve to a
+/// real directory, and live INSIDE the configured library root. Also measures
+/// what is about to move, before it moves, so the summary can be truthful.
+/// Used by both duplicate resolution and delete-with-files — guard logic like
+/// this is the last thing that should be duplicated.
+fn guard_library_dir(
+    app: &tauri::AppHandle,
+    dir: &str,
+) -> Result<(PathBuf, usize, u64), String> {
+    if dir.trim().is_empty() {
+        return Err("that release has no folder on disk — nothing to trash".into());
+    }
+    let target = PathBuf::from(dir)
+        .canonicalize()
+        .map_err(|e| format!("{dir}: {e}"))?;
+    if !target.is_dir() {
+        return Err(format!("not a directory: {}", target.display()));
+    }
+    let root = PathBuf::from(library_root(app)?)
+        .canonicalize()
+        .map_err(|e| format!("library root: {e}"))?;
+    if !target.starts_with(&root) {
+        return Err(format!(
+            "refused: {} is outside the library root {}",
+            target.display(),
+            root.display()
+        ));
+    }
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    if let Ok(rd) = std::fs::read_dir(&target) {
+        for e in rd.filter_map(|e| e.ok()) {
+            if e.path().is_file() {
+                files += 1;
+                bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    Ok((target, files, bytes))
+}
+
+/// Delete a release AND move its folder to the OS trash — the "I don't want this
+/// music any more" action, as opposed to plain delete which only drops the row.
+///
+/// Offered for UNPUBLISHED releases only. A live `kind:31237` must be retracted
+/// first (Unpublish), otherwise we would leave an `naddr` advertising a release
+/// whose files no longer exist. Deliberately a refusal rather than an automatic
+/// retraction: silently un-publishing something as a side effect of a delete is
+/// too surprising for an irreversible action.
+///
+/// No `merged_paths` entry — the folder is gone, so there is nothing for a
+/// rescan to re-import, and if the user restores it from Trash then re-importing
+/// it is the correct behaviour.
+#[tauri::command]
+async fn delete_release_with_files(
+    app: tauri::AppHandle,
+    release_id: i64,
+) -> Result<ResolveSummary, String> {
+    let release = get_release(app.clone(), release_id)?
+        .ok_or_else(|| format!("release {release_id} not found"))?;
+    if release.last_published_naddr.is_some()
+        || matches!(
+            release.publish_state.as_deref(),
+            Some("published") | Some("stale")
+        )
+    {
+        return Err("that release is published — Unpublish it first, so no naddr \
+                    is left pointing at files that no longer exist"
+            .into());
+    }
+    let dir = release.file_path.clone().unwrap_or_default();
+    let (target, files, bytes) = guard_library_dir(&app, &dir)?;
+
+    let moved = target.clone();
+    tauri::async_runtime::spawn_blocking(move || trash::delete(&moved))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("trash failed for {}: {e}", target.display()))?;
+
+    let conn = open(&app)?;
+    conn.execute("DELETE FROM releases WHERE id = ?1", params![release_id])
+        .map_err(|e| e.to_string())?;
+
+    Ok(ResolveSummary {
+        trashed_dir: dir,
+        files,
+        bytes,
+        retracted: false,
+    })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveSummary {
@@ -3914,15 +4006,7 @@ async fn resolve_duplicate(
         .ok_or_else(|| format!("release {trash_id} not found"))?;
 
     let dir = loser.file_path.clone().unwrap_or_default();
-    if dir.trim().is_empty() {
-        return Err("that release has no folder on disk — nothing to trash".into());
-    }
-    let target = PathBuf::from(&dir)
-        .canonicalize()
-        .map_err(|e| format!("{dir}: {e}"))?;
-    if !target.is_dir() {
-        return Err(format!("not a directory: {}", target.display()));
-    }
+    let (target, files, bytes) = guard_library_dir(&app, &dir)?;
     // Never the copy being kept.
     if let Some(k) = keep.file_path.as_deref() {
         if let Ok(kp) = PathBuf::from(k).canonicalize() {
@@ -3930,17 +4014,6 @@ async fn resolve_duplicate(
                 return Err("both releases point at the SAME folder — nothing to trash".into());
             }
         }
-    }
-    // Never outside the library.
-    let root = PathBuf::from(library_root(&app)?)
-        .canonicalize()
-        .map_err(|e| format!("library root: {e}"))?;
-    if !target.starts_with(&root) {
-        return Err(format!(
-            "refused: {} is outside the library root {}",
-            target.display(),
-            root.display()
-        ));
     }
 
     // Retract before deleting, so no naddr is left pointing at a dead release.
@@ -3956,18 +4029,6 @@ async fn resolve_duplicate(
             ));
         }
         retracted = true;
-    }
-
-    // Measure before moving, so the summary is truthful.
-    let mut files = 0usize;
-    let mut bytes = 0u64;
-    if let Ok(rd) = std::fs::read_dir(&target) {
-        for e in rd.filter_map(|e| e.ok()) {
-            if e.path().is_file() {
-                files += 1;
-                bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
-            }
-        }
     }
 
     let moved = target.clone();
@@ -7636,6 +7697,7 @@ pub fn run() {
             merge_releases,
             audit_release_folder,
             resolve_duplicate,
+            delete_release_with_files,
             find_duplicate_groups,
             recount_tracks,
             publish_reaction,

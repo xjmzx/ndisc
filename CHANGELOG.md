@@ -54,6 +54,23 @@ wave; an app-only change bumps ndisc alone. See
   pointing at `$HOME`, which would have had "sync cover to disk" write a
   `cover.jpg` there.
 
+### Delete offers a choice about the files
+- Delete now opens a dialog with **two options** rather than a yes/no that could
+  only mean one of them: **"Remove from library"** (drops the row, files
+  untouched — still undoable, and it now *says* that a rescan will re-import the
+  folder) and **"Remove and move files to Trash"** (drops the row and trashes
+  the folder).
+- The trash option is **gated, with the reason shown**: a **published** release
+  must be Unpublished first (a refusal, not an automatic retraction — silently
+  un-publishing as a side effect of a delete is too surprising for an
+  irreversible action), and a release with no folder has nothing to trash.
+- **No undo on the trash path**, deliberately: restoring the row would leave it
+  pointing at files now sitting in the Trash, and a half-working Undo is worse
+  than none. A warn line reports what moved instead.
+- The trash guards are now factored into `guard_library_dir()` and shared with
+  duplicate resolution — inside the library root, a real directory,
+  `trash::delete` only. Security-critical checks should exist once.
+
 ### Suite catalogue export
 - **`catalogue.json`**, written beside `published.json` by the same export
   action: the whole catalogue keyed by release folder, with `label` + `catalog`.

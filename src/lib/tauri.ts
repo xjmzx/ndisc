@@ -977,3 +977,13 @@ export async function inspectReleasePath(
 ): Promise<string[]> {
   return invoke<string[]>("inspect_release_path", { path, releaseId });
 }
+
+/** Delete a release AND move its folder to the OS trash. Unpublished releases
+ *  only — a live event must be retracted (Unpublish) first, so no naddr is left
+ *  pointing at files that no longer exist. Guarded server-side; irreversible
+ *  from ndisc (recover from the desktop Trash). */
+export async function deleteReleaseWithFiles(
+  releaseId: number,
+): Promise<ResolveSummary> {
+  return invoke<ResolveSummary>("delete_release_with_files", { releaseId });
+}
