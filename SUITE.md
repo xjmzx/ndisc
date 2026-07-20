@@ -224,8 +224,10 @@ each app declaring its own stack.
   cross-user version of `ndisc`'s local physical+digital **merge/pairing** (one
   work, many format facets). Mechanism (sketch, undecided): each user still
   publishes their own personal `31237`, but every entry also carries a shared key
-  as an additive tag — a **content-derived hash** of a normalized
-  artist/title/year tuple, and/or a **MusicBrainz release-group MBID** when known.
+  as an additive tag. **Mechanism decided 2026-07-20: a content-derived hash** —
+  computed independently by every user, so it needs no lookup and has no coverage
+  gaps on self-released material (an MBID can be layered on later as an additive
+  strengthener). The normalization feeding it is the open question.
   Aggregation and "clips of the work" discovery then filter on that key. Additive
   to SHA-pinned `release.v2` → a coordinated wave when ready. Stub +
   candidate keys: [`schema/master-release-key-design-2026-07-19.md`](schema/master-release-key-design-2026-07-19.md).
