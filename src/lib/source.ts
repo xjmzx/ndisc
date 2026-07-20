@@ -59,6 +59,32 @@ export function hasBandcampReceipt(r: Release): boolean {
 
 const SOURCE_META_KEY = "ndisc.sources"; // { [lowercased name]: SourceMeta }
 
+// --- change notification -----------------------------------------------------
+// `setSourceMeta` writes localStorage, which React cannot observe — so a source
+// recolour / digital / physical edit used to update only the panel that made it
+// while the release-list rings + glyphs (which derive from the same meta via
+// isPaired / releaseSourceColor) lagged until their next unrelated render. This
+// tiny external store lets every derived view re-render together on a write.
+// Subscribe with `useSourceMetaVersion` (hooks/useSourceMeta.ts).
+let sourceMetaVer = 0;
+const sourceMetaListeners = new Set<() => void>();
+
+export function subscribeSourceMeta(onChange: () => void): () => void {
+  sourceMetaListeners.add(onChange);
+  return () => {
+    sourceMetaListeners.delete(onChange);
+  };
+}
+
+export function sourceMetaVersion(): number {
+  return sourceMetaVer;
+}
+
+function notifySourceMetaChanged(): void {
+  sourceMetaVer += 1;
+  sourceMetaListeners.forEach((cb) => cb());
+}
+
 export interface SourceMeta {
   // Swatch/tint colour (full CSS colour, e.g. a hex). Undefined → no colour.
   color?: string;
@@ -125,6 +151,9 @@ export function setSourceMeta(
   map[key] = { ...map[key], ...patch };
   try {
     localStorage.setItem(SOURCE_META_KEY, JSON.stringify(map));
+    // Re-render every view derived from source meta (release-list rings,
+    // detail panel), not just the caller.
+    notifySourceMetaChanged();
   } catch {
     /* storage full / unavailable — colour just won't persist */
   }
@@ -184,18 +213,15 @@ export function hasDigitalCounterpart(r: Release): boolean {
   return p ? sourceIsDigital(p.label) : false;
 }
 
-// The mirror: the "physical half" of a pairing, for a digital release. True
-// when there's evidence it also exists physically:
-//   • a Discogs catalogue link (discogsId) — a physical release entry, or
-//   • an acquisition source flagged as physical (a record shop, Discogs
-//     marketplace) — either the assigned sourceLabel or the inferred platform.
-// Symmetric with hasDigitalCounterpart; driven by per-source metadata, so
-// flagging any store "physical" makes its digital releases pair automatically.
+// The "physical half" of a pairing, for a digital release: does it also exist
+// physically? Evidence is a Discogs catalogue link (`discogsId` = a physical
+// release entry). Physical is otherwise a DELIBERATE PER-RELEASE choice
+// (`pairedOverride`, handled in isPaired), NOT a source-wide flag: a dual-nature
+// store like Bandcamp is vinyl for a few releases and a download for the rest,
+// so inferring "physical" from the source would paint every Bandcamp release at
+// once. (Source-wide physical inference was removed for exactly that reason.)
 export function hasPhysicalCounterpart(r: Release): boolean {
-  if (r.discogsId != null) return true;
-  if (sourceIsPhysical(r.sourceLabel)) return true;
-  const p = sourcePlatform(r);
-  return p ? sourceIsPhysical(p.label) : false;
+  return r.discogsId != null;
 }
 
 // A release is "paired" — shows the tinted state-cluster fill — when it exists
@@ -203,6 +229,8 @@ export function hasPhysicalCounterpart(r: Release): boolean {
 // digital row with a physical half. The fill colour is releaseSourceColor (the
 // same in both directions), green when the source is unknown.
 export function isPaired(r: Release): boolean {
+  // A deliberate per-release override wins over any inference (either direction).
+  if (r.pairedOverride != null) return r.pairedOverride;
   if (r.medium === "physical") return hasDigitalCounterpart(r);
   if (r.medium === "digital") return hasPhysicalCounterpart(r);
   return false;

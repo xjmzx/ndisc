@@ -15,6 +15,52 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.5 — unreleased
+
+### Pairing is now a per-release choice
+- **Per-release `pairedOverride`** (new nullable column): null = auto (the old
+  source/Discogs inference), true = forced paired, false = forced solo. A
+  `+physical` / `+digital` checkbox on the detail panel sets it. Local-only —
+  never published, never clears publish state.
+- **Dropped the source-wide `physical` flag from pairing inference.** It was too
+  coarse for a dual-nature store: flagging *Bandcamp* physical (for the handful
+  bought on vinyl) silently painted **every** Bandcamp release as physically
+  paired, because inference also consulted the platform guessed from the URL /
+  receipt. A physical counterpart is now evidence-based (`discogsId`) or a
+  deliberate per-release override. The stale localStorage flag becomes inert.
+- **Source metadata edits now refresh the list live.** `setSourceMeta` writes
+  localStorage, which React can't observe, so a colour / digital edit updated
+  only the panel that made it while the release-list rings lagged until some
+  unrelated render — which read as the view being unstable. A small external
+  store (`subscribeSourceMeta` + `useSourceMetaVersion`) re-renders every derived
+  view together.
+
+### Duplicate resolution — remove the losing copy
+- **"remove a copy"** in duplicate review, beside merge: compares both folders
+  (path, file count, total size, format summary) and trashes the one you pick.
+  Warns when **tracks exist only in the copy being removed** (loosely
+  name-matched, so differing filename styles still line up), and retracts a live
+  `kind:31237` first — aborting if no relay accepts, rather than stranding an
+  `naddr`. Files go to the desktop Trash; ndisc cannot undo it.
+- Guards are refusals, not warnings: inside the library root, an existing
+  directory, never the survivor's own folder, `trash::delete` only.
+- **`merged_paths` — merges and removals now survive a rescan.** Previously the
+  loser's row was deleted while its folder stayed on disk unowned, so the next
+  library scan re-imported it and the duplicate came back. Both `merge_releases`
+  (files untouched) and the new removal record the path; import skips it.
+- **Advisory notes when linking a folder** — outside the library root, no audio
+  inside, already claimed, or the home directory. Warn-only: nothing is refused,
+  because unusual layouts are legitimate. Prompted by a row that had ended up
+  pointing at `$HOME`, which would have had "sync cover to disk" write a
+  `cover.jpg` there.
+
+### Suite catalogue export
+- **`catalogue.json`**, written beside `published.json` by the same export
+  action: the whole catalogue keyed by release folder, with `label` + `catalog`.
+  A deliberate sibling — `published.json` means "what ndisc has published" and
+  ntree scopes its released filter to it, so it must never gain unpublished
+  rows. Consumed by nplay for its label filter.
+
 ## 0.2.0-beta.4 — 2026-07-15
 
 Closes a small layout pass (with beta.2–beta.3): trimming rarely-used editable

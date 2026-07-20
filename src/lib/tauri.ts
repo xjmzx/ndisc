@@ -25,6 +25,9 @@ export interface Release {
   // Null when uncategorised; the per-name colour lives in localStorage
   // ("ndisc.sources"). See sourceColor / releaseSourceColor in lib/source.ts.
   sourceLabel?: string | null;
+  // Per-release pairing override: null/undefined = auto (source/Discogs
+  // inference), true = forced paired (physical + digital), false = forced solo.
+  pairedOverride?: boolean | null;
   // v2: three ordered genre slots (primary / secondary / tertiary). Each
   // slot is one of the 22 valid slugs (see schema/release.v2.json) or null.
   // Invariants (distinct, dense ordering) enforced by
@@ -296,6 +299,15 @@ export async function setReleaseSource(
   value: string | null,
 ): Promise<void> {
   return invoke("set_release_source", { releaseId, value });
+}
+
+// Per-release pairing override. null = auto (inference), true = forced paired,
+// false = forced solo. Local-only — does not clear publish state.
+export async function setReleasePaired(
+  releaseId: number,
+  value: boolean | null,
+): Promise<void> {
+  return invoke("set_release_paired", { releaseId, value });
 }
 
 export async function setReleaseGenres(
@@ -917,4 +929,51 @@ export interface ManifestSummary {
  *  how the others find out, without coupling to this schema. */
 export async function exportPublishedManifest(): Promise<ManifestSummary> {
   return invoke<ManifestSummary>("export_published_manifest");
+}
+
+// ---- duplicate resolution (trash the losing copy) ---------------------------
+
+/// What a release's folder actually holds — the evidence for choosing which
+/// duplicate copy to keep. Read-only.
+export interface FolderAudit {
+  dir: string;
+  exists: boolean;
+  fileCount: number;
+  totalBytes: number;
+  /** e.g. "FLAC 192000/24" — exposes a 24/192 copy vs a 16/44.1 one. */
+  formats: string[];
+  /** Audio file names, so the UI can show what only ONE copy has. */
+  tracks: string[];
+}
+
+export async function auditReleaseFolder(releaseId: number): Promise<FolderAudit> {
+  return invoke<FolderAudit>("audit_release_folder", { releaseId });
+}
+
+export interface ResolveSummary {
+  trashedDir: string;
+  files: number;
+  bytes: number;
+  retracted: boolean;
+}
+
+/// Move the losing release's folder to the OS trash, drop its row, and remember
+/// the path so a rescan cannot re-import it. Guarded server-side; irreversible
+/// from ndisc (recover from the desktop Trash if needed).
+export async function resolveDuplicate(
+  keepId: number,
+  trashId: number,
+  relays: string[],
+): Promise<ResolveSummary> {
+  return invoke<ResolveSummary>("resolve_duplicate", { keepId, trashId, relays });
+}
+
+/** Advisory notes about a folder being linked to a release — outside the
+ *  library root, no audio inside, already claimed, or the home directory.
+ *  Purely informational: nothing is refused, odd layouts are legitimate. */
+export async function inspectReleasePath(
+  path: string,
+  releaseId?: number,
+): Promise<string[]> {
+  return invoke<string[]>("inspect_release_path", { path, releaseId });
 }

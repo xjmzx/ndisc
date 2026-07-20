@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Check, Combine, ImageOff, Loader2, X } from "lucide-react";
+import { AlertTriangle, Check, Combine, ImageOff, Loader2, Trash2, X } from "lucide-react";
+import { TrashConfirm } from "./TrashConfirm";
 import { cn } from "../lib/cn";
 import { coverImageSrc } from "../lib/cover";
 import { releaseSourceColor, releaseSourceName } from "../lib/source";
@@ -31,6 +32,8 @@ export function DuplicatesDialog({
   const [picks, setPicks] = useState<Record<string, number[]>>({});
   // The group key currently showing its MergeConfirm panel.
   const [confirming, setConfirming] = useState<string | null>(null);
+  // The group key currently showing its TrashConfirm panel (remove-a-copy).
+  const [trashing, setTrashing] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -122,6 +125,7 @@ export function DuplicatesDialog({
               const many = g.releases.length > 2;
               const pair = pairFor(g);
               const isConfirming = confirming === g.key;
+              const isTrashing = trashing === g.key;
               return (
                 <div
                   key={g.key}
@@ -160,7 +164,21 @@ export function DuplicatesDialog({
                     ))}
                   </div>
 
-                  {isConfirming && pair ? (
+                  {isTrashing && pair ? (
+                    <div className="mt-3 rounded border border-alert/40 bg-panel p-3">
+                      <TrashConfirm
+                        a={pair[0]}
+                        b={pair[1]}
+                        relays={relays}
+                        onCancel={() => setTrashing(null)}
+                        onResolved={() => {
+                          setTrashing(null);
+                          onResolved();
+                          load();
+                        }}
+                      />
+                    </div>
+                  ) : isConfirming && pair ? (
                     <div className="mt-3 rounded border border-surface/60 bg-panel p-3">
                       <MergeConfirm
                         a={pair[0]}
@@ -180,15 +198,27 @@ export function DuplicatesDialog({
                             : "select two rows to merge"
                           : "the published row survives; the other is folded in + removed"}
                       </div>
-                      <button
-                        onClick={() => setConfirming(g.key)}
-                        disabled={!pair}
-                        className="px-2.5 h-6 rounded bg-mauve/15 text-mauve
-                                   hover:bg-mauve hover:text-bg transition-colors
-                                   disabled:opacity-40 inline-flex items-center gap-1.5 text-xs"
-                      >
-                        <Combine size={12} /> merge{many ? " selected" : ""}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setTrashing(g.key)}
+                          disabled={!pair}
+                          title="Remove one copy's folder to Trash (for two rips of the same release)"
+                          className="px-2.5 h-6 rounded bg-alert/15 text-alert
+                                     hover:bg-alert hover:text-bg transition-colors
+                                     disabled:opacity-40 inline-flex items-center gap-1.5 text-xs"
+                        >
+                          <Trash2 size={12} /> remove a copy
+                        </button>
+                        <button
+                          onClick={() => setConfirming(g.key)}
+                          disabled={!pair}
+                          className="px-2.5 h-6 rounded bg-mauve/15 text-mauve
+                                     hover:bg-mauve hover:text-bg transition-colors
+                                     disabled:opacity-40 inline-flex items-center gap-1.5 text-xs"
+                        >
+                          <Combine size={12} /> merge{many ? " selected" : ""}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

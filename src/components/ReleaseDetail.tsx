@@ -51,10 +51,12 @@ import {
   setReleaseGenres,
   setReleaseLabel,
   setReleaseSource,
+  setReleasePaired,
   setReleaseType,
   syncCoverToDisk,
   unpublishRelease,
   updateReleasePath,
+  inspectReleasePath,
   listDistinctSources,
   type MergeSummary,
   type RelayError,
@@ -63,7 +65,7 @@ import {
 import {
   sourceColor,
   sourceIsDigital,
-  sourceIsPhysical,
+  isPaired,
   setSourceMeta,
 } from "../lib/source";
 
@@ -362,7 +364,15 @@ export function ReleaseDetail({
       await updateReleasePath(release.id, picked);
       const fresh = await getRelease(release.id);
       onChanged(fresh ?? { ...release, filePath: picked });
-      setLatestOp({ kind: "info", text: "folder linked" });
+      // Advisory only — the link stands either way; odd layouts are legitimate.
+      const notes = await inspectReleasePath(picked, release.id).catch(
+        () => [] as string[],
+      );
+      setLatestOp(
+        notes.length
+          ? { kind: "warn", text: `folder linked — ${notes.join("; ")}` }
+          : { kind: "info", text: "folder linked" },
+      );
     } catch (e) {
       setLatestOp({ kind: "error", text: String(e) });
     } finally {
@@ -508,6 +518,14 @@ export function ReleaseDetail({
     if (!release.id) return;
     await setReleaseSource(release.id, v);
     onChanged({ ...release, sourceLabel: v });
+  }
+
+  // Per-release pairing override (also-physical / also-digital). Local-only,
+  // like the source label — must not clear publish markers.
+  async function onChangePaired(v: boolean | null) {
+    if (!release.id) return;
+    await setReleasePaired(release.id, v);
+    onChanged({ ...release, pairedOverride: v });
   }
 
   // Changes a single genre slot. Cascade-clears later slots that are no
@@ -757,6 +775,7 @@ export function ReleaseDetail({
           value={release.sourceLabel ?? null}
           onChange={onChangeSource}
         />
+        <PairedToggle release={release} onChange={onChangePaired} />
         <EditableText
           value={release.catalogNumber ?? null}
           onChange={onChangeCatalogNumber}
@@ -1387,6 +1406,44 @@ interface EditableSourceProps {
 // lives in localStorage: a colour (the swatch, and the list's grouping ring/
 // glyph tint) and a "digital" flag marking the source as a download you own —
 // which lets a physical release from it count as a physical+digital pairing.
+// Per-release pairing toggle: does this release ALSO exist in the other medium
+// (a digital release that's also on vinyl, or vice-versa)? A deliberate
+// per-release choice that overrides the source/Discogs inference in isPaired —
+// so a dual-nature store like Bandcamp stays digital-only by default and you
+// tick only the specific releases that are also physical. Checked reflects the
+// effective paired state; toggling writes an explicit override.
+function PairedToggle({
+  release,
+  onChange,
+}: {
+  release: Release;
+  onChange: (value: boolean | null) => void | Promise<void>;
+}) {
+  if (release.medium !== "physical" && release.medium !== "digital") return null;
+  const counterpart = release.medium === "digital" ? "physical" : "digital";
+  const paired = isPaired(release);
+  const overridden = release.pairedOverride != null;
+  return (
+    <label
+      title={
+        `This release also exists as a ${counterpart} edition — shows the ` +
+        `physical+digital pairing ring. Per-release; overrides the source default` +
+        (overridden ? " (set explicitly)." : " (currently auto).")
+      }
+      className="inline-flex items-center gap-1 text-[10px] text-fg/80
+                 cursor-pointer select-none whitespace-nowrap"
+    >
+      <input
+        type="checkbox"
+        checked={paired}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={`also ${counterpart}`}
+      />
+      +{counterpart}
+    </label>
+  );
+}
+
 function EditableSource({ value, onChange }: EditableSourceProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
@@ -1511,21 +1568,6 @@ function EditableSource({ value, onChange }: EditableSourceProps) {
             className="w-6 h-6 rounded bg-surface border border-surface/60
                        cursor-pointer p-0.5"
           />
-          <label
-            title="This source gives you a physical copy — lets a digital release from it count as a physical+digital pairing"
-            className="inline-flex items-center gap-1 text-[10px] text-fg/80
-                       cursor-pointer select-none"
-          >
-            <input
-              type="checkbox"
-              checked={sourceIsPhysical(value)}
-              onChange={(e) => {
-                setSourceMeta(value, { physical: e.target.checked });
-                setBump((n) => n + 1);
-              }}
-            />
-            physical
-          </label>
           <label
             title="This source gives you a digital copy you own — lets a physical release from it count as a physical+digital pairing"
             className="inline-flex items-center gap-1 text-[10px] text-fg/80

@@ -36,6 +36,16 @@ const LABELS_D_TAG: &str = "disco-vault:labels";
 const LABELS_ALT: &str = "ndisc record-label image library";
 
 const SCHEMA: &str = r#"
+-- Release folders deliberately removed (duplicate resolution: the losing copy
+-- was trashed). Import consults this so a rescan does NOT re-import the folder
+-- as a fresh release — without it, every resolved duplicate comes back on the
+-- next scan, because the row is gone but the folder is still on disk.
+CREATE TABLE IF NOT EXISTS merged_paths (
+    path        TEXT PRIMARY KEY,
+    survivor_id INTEGER,
+    trashed     INTEGER NOT NULL DEFAULT 0,
+    merged_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 CREATE TABLE IF NOT EXISTS releases (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     artist          TEXT    NOT NULL,
@@ -113,6 +123,13 @@ pub struct Release {
     // published. Null when uncategorised. The colour for a given name is a
     // frontend concern (localStorage["ndisc.sources"]).
     pub source_label: Option<String>,
+    // Per-release pairing override. None = auto (follow the source / Discogs
+    // inference in isPaired); Some(true) = force paired (exists physical AND
+    // digital); Some(false) = force solo. Lets a dual-nature source like
+    // Bandcamp be physical for one release and digital-only for another,
+    // instead of a single source-wide flag. Local-only, never published.
+    #[serde(default)]
+    pub paired_override: Option<bool>,
     // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
     // each optional, each one of the 35 active slugs in schema/release.v2.json.
     // See genreInvariants there: distinct slugs, no parent+own-sub, dense
@@ -391,6 +408,10 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     // values in use (see list_distinct_sources), mirroring how `label` works;
     // per-name colours live in localStorage on the frontend. See Release.source_label.
     ensure_column(&conn, "releases", "source_label", "TEXT")?;
+    // Per-release pairing override (NULL auto / 0 solo / 1 paired) — see
+    // Release.paired_override. Lets Bandcamp-style dual-nature sources be marked
+    // physical per release instead of via one source-wide flag.
+    ensure_column(&conn, "releases", "paired_override", "INTEGER")?;
     // Seed the category for rows we already recognise as Bandcamp (a purchase
     // receipt or a Bandcamp source URL) so their grouping ring reads blue
     // without any manual tagging. Idempotent — only fills rows still unset, so
@@ -802,10 +823,10 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
           discogs_id, bandcamp_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary,
           last_published_at, last_published_naddr, added_at, updated_at,
-          track_count, track_total, source_label)
+          track_count, track_total, source_label, paired_override)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
-                 ?29)",
+                 ?29, ?30)",
         params![
             id,
             release.artist,
@@ -836,6 +857,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.track_count,
             release.track_total,
             release.source_label,
+            release.paired_override,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1191,6 +1213,27 @@ fn set_release_source(
          SET source_label = ?1, updated_at = strftime('%s','now')
          WHERE id = ?2",
         params![normalized, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Set (or clear, on None) a release's pairing override. Local-only, exactly like
+// set_release_source — a pairing tweak is provenance, not wire data, and must
+// not make a published release stale. None → auto (inference); Some(true) →
+// forced paired; Some(false) → forced solo.
+#[tauri::command]
+fn set_release_paired(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: Option<bool>,
+) -> Result<(), String> {
+    let conn = open(&app)?;
+    conn.execute(
+        "UPDATE releases
+         SET paired_override = ?1, updated_at = strftime('%s','now')
+         WHERE id = ?2",
+        params![value, release_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1589,6 +1632,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         publish_state: row.get(30)?,
         last_published_event_id: row.get(31)?,
         source_label: row.get(32)?,
+        paired_override: row.get(33)?,
     })
 }
 
@@ -1599,7 +1643,7 @@ const RELEASE_SELECT_COLS: &str =
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
      disc_total, video_count, publish_state, last_published_event_id,
-     source_label";
+     source_label, paired_override";
 
 #[tauri::command]
 fn list_releases(
@@ -2597,6 +2641,80 @@ fn suite_shared_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".local/share/ndisc-suite"))
 }
 
+// The WHOLE catalogue (not just published), with the local metadata other suite
+// apps need to enrich their own view of the same files — currently label +
+// catalog, joined by `dir`. Deliberately a SIBLING of published.json rather than
+// an extension of it: published.json means "what ndisc has published" and ntree
+// scopes its released filter to it, so it must never gain unpublished rows.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogueRelease {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    /// Absolute path of the release folder on disk — the join key for consumers.
+    pub dir: String,
+    pub label: Option<String>,
+    pub catalog: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogueManifest {
+    pub version: u32,
+    pub generated_at: i64,
+    pub library_root: Option<String>,
+    pub releases: Vec<CatalogueRelease>,
+}
+
+/// Write `catalogue.json` beside `published.json`. Every release that has a
+/// folder on disk (the join key); label/catalog are null when unset.
+fn write_catalogue_manifest(
+    conn: &rusqlite::Connection,
+    dir: &std::path::Path,
+    library_root: Option<String>,
+) -> Result<usize, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, artist, title, file_path,
+                    NULLIF(TRIM(COALESCE(label,'')),''),
+                    NULLIF(TRIM(COALESCE(catalog_number,'')),'')
+               FROM releases
+              WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''
+              ORDER BY artist, title",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(CatalogueRelease {
+                id: r.get(0)?,
+                artist: r.get(1)?,
+                title: r.get(2)?,
+                dir: r.get(3)?,
+                label: r.get(4)?,
+                catalog: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut releases = Vec::new();
+    for row in rows {
+        releases.push(row.map_err(|e| e.to_string())?);
+    }
+    let manifest = CatalogueManifest {
+        version: 1,
+        generated_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        library_root,
+        releases,
+    };
+    let path = dir.join("catalogue.json");
+    let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(manifest.releases.len())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManifestRelease {
@@ -2681,6 +2799,10 @@ fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, S
     let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| format!("write {}: {e}", path.display()))?;
 
+    // Refresh the sibling catalogue export in the same action, so the two suite
+    // manifests never drift apart. Consumers: nplay (label filter).
+    write_catalogue_manifest(&conn, &dir, manifest.library_root.clone())?;
+
     Ok(ManifestSummary {
         path: path.to_string_lossy().to_string(),
         releases: manifest.releases.len(),
@@ -2728,6 +2850,68 @@ fn get_library_summary(app: tauri::AppHandle) -> Result<LibrarySummary, String> 
         last_scanned_at,
         library_root,
     })
+}
+
+/// Advisory sanity notes about a folder being linked to a release. Deliberately
+/// ADVISORY — odd layouts are legitimate (a release really can live outside the
+/// main root), so nothing here refuses anything; it only says what looks off.
+/// Exists because a row once ended up pointing at `$HOME`, which then made
+/// "sync cover to disk" want to write a cover.jpg into the home directory.
+#[tauri::command]
+fn inspect_release_path(
+    app: tauri::AppHandle,
+    path: String,
+    release_id: Option<i64>,
+) -> Result<Vec<String>, String> {
+    let mut notes: Vec<String> = Vec::new();
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(notes);
+    }
+    let p = PathBuf::from(trimmed);
+    if !p.is_dir() {
+        notes.push("that path is not a directory".into());
+        return Ok(notes);
+    }
+    // A home directory is essentially never a release folder, and it's the
+    // specific mistake that motivated this check.
+    if let Ok(home) = std::env::var("HOME") {
+        if p == PathBuf::from(&home) {
+            notes.push("that is your home directory, not a release folder".into());
+        }
+    }
+    if let Ok(root) = library_root(&app) {
+        if !root.trim().is_empty() && !p.starts_with(PathBuf::from(&root)) {
+            notes.push(format!("outside the library root ({root})"));
+        }
+    }
+    let audio = std::fs::read_dir(&p)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| {
+                    let q = e.path();
+                    q.is_file() && is_audio(&q)
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    if audio == 0 {
+        notes.push("no audio files directly in this folder".into());
+    }
+    let conn = open(&app)?;
+    let claimed: Option<(i64, String, String)> = conn
+        .query_row(
+            "SELECT id, artist, title FROM releases WHERE file_path = ?1 LIMIT 1",
+            params![trimmed],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+    if let Some((id, artist, title)) = claimed {
+        if Some(id) != release_id {
+            notes.push(format!("already linked to \"{artist} — {title}\""));
+        }
+    }
+    Ok(notes)
 }
 
 #[tauri::command]
@@ -3619,6 +3803,181 @@ pub struct MergeSummary {
 /// event. If the survivor is published and a WIRE field changed, it is marked
 /// stale so the enriched release re-publishes. Callers pass survivor == the
 /// published row (see the UI), so the common path retracts nothing.
+// ---- duplicate resolution: audit a folder, then trash the losing copy -------
+
+/// What a release's folder actually contains — the evidence for choosing which
+/// duplicate to keep. Purely read-only.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAudit {
+    pub dir: String,
+    pub exists: bool,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    /// Distinct "codec sr/depth" summaries across the audio files, e.g.
+    /// "flac 192000/24" — reveals a 24/192 copy vs a 16/44.1 one at a glance.
+    pub formats: Vec<String>,
+    /// Audio file names, so the UI can show what only ONE copy has (the guard
+    /// against trashing away a hidden/bonus track).
+    pub tracks: Vec<String>,
+}
+
+#[tauri::command]
+fn audit_release_folder(app: tauri::AppHandle, release_id: i64) -> Result<FolderAudit, String> {
+    let release = get_release(app, release_id)?
+        .ok_or_else(|| format!("release {release_id} not found"))?;
+    let dir = release.file_path.unwrap_or_default();
+    let mut out = FolderAudit {
+        dir: dir.clone(),
+        exists: false,
+        file_count: 0,
+        total_bytes: 0,
+        formats: Vec::new(),
+        tracks: Vec::new(),
+    };
+    let p = PathBuf::from(&dir);
+    if dir.trim().is_empty() || !p.is_dir() {
+        return Ok(out);
+    }
+    out.exists = true;
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&p)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|q| q.is_file() && is_audio(q))
+        .collect();
+    files.sort();
+    for f in &files {
+        out.file_count += 1;
+        out.total_bytes += std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
+        if let Some(n) = f.file_name().and_then(|n| n.to_str()) {
+            out.tracks.push(n.to_owned());
+        }
+    }
+    let info = read_dir_tags(&files);
+    let fmt = build_format_string(&info);
+    if !fmt.trim().is_empty() {
+        out.formats.push(fmt);
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveSummary {
+    pub trashed_dir: String,
+    pub files: usize,
+    pub bytes: u64,
+    /// True when the removed release had a live event that we retracted first.
+    pub retracted: bool,
+}
+
+/// Resolve a duplicate: move the LOSING release's folder to the OS trash, drop
+/// its row, and remember the path so a rescan cannot re-import it.
+///
+/// Deliberately conservative — every one of these is a refusal, not a warning:
+///   • the folder must be inside the configured library root,
+///   • it must exist and be a directory,
+///   • it must not be the survivor's own folder,
+///   • a live published event is retracted FIRST (aborting if no relay accepts),
+///     so we never strand an naddr pointing at a release we deleted.
+/// Files go to the desktop Trash (recoverable there); ndisc itself cannot undo it.
+#[tauri::command]
+async fn resolve_duplicate(
+    app: tauri::AppHandle,
+    keep_id: i64,
+    trash_id: i64,
+    relays: Vec<String>,
+) -> Result<ResolveSummary, String> {
+    if keep_id == trash_id {
+        return Err("cannot resolve a release against itself".into());
+    }
+    let keep = get_release(app.clone(), keep_id)?
+        .ok_or_else(|| format!("release {keep_id} not found"))?;
+    let loser = get_release(app.clone(), trash_id)?
+        .ok_or_else(|| format!("release {trash_id} not found"))?;
+
+    let dir = loser.file_path.clone().unwrap_or_default();
+    if dir.trim().is_empty() {
+        return Err("that release has no folder on disk — nothing to trash".into());
+    }
+    let target = PathBuf::from(&dir)
+        .canonicalize()
+        .map_err(|e| format!("{dir}: {e}"))?;
+    if !target.is_dir() {
+        return Err(format!("not a directory: {}", target.display()));
+    }
+    // Never the copy being kept.
+    if let Some(k) = keep.file_path.as_deref() {
+        if let Ok(kp) = PathBuf::from(k).canonicalize() {
+            if kp == target {
+                return Err("both releases point at the SAME folder — nothing to trash".into());
+            }
+        }
+    }
+    // Never outside the library.
+    let root = PathBuf::from(library_root(&app)?)
+        .canonicalize()
+        .map_err(|e| format!("library root: {e}"))?;
+    if !target.starts_with(&root) {
+        return Err(format!(
+            "refused: {} is outside the library root {}",
+            target.display(),
+            root.display()
+        ));
+    }
+
+    // Retract before deleting, so no naddr is left pointing at a dead release.
+    let live = loser.last_published_naddr.is_some()
+        || matches!(loser.publish_state.as_deref(), Some("published") | Some("stale"));
+    let mut retracted = false;
+    if live {
+        let res = unpublish_release(app.clone(), trash_id, relays.clone()).await?;
+        if res.accepted_by.is_empty() {
+            return Err(format!(
+                "aborted: could not retract that release's live event from any relay ({} rejected). Nothing was trashed.",
+                res.rejected.len()
+            ));
+        }
+        retracted = true;
+    }
+
+    // Measure before moving, so the summary is truthful.
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    if let Ok(rd) = std::fs::read_dir(&target) {
+        for e in rd.filter_map(|e| e.ok()) {
+            if e.path().is_file() {
+                files += 1;
+                bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+
+    let moved = target.clone();
+    tauri::async_runtime::spawn_blocking(move || trash::delete(&moved))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("trash failed for {}: {e}", target.display()))?;
+
+    let conn = open(&app)?;
+    conn.execute("DELETE FROM releases WHERE id = ?1", params![trash_id])
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO merged_paths (path, survivor_id, trashed)
+         VALUES (?1, ?2, 1)",
+        params![dir, keep_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(ResolveSummary {
+        trashed_dir: dir,
+        files,
+        bytes,
+        retracted,
+    })
+}
+
 #[tauri::command]
 async fn merge_releases(
     app: tauri::AppHandle,
@@ -3633,6 +3992,11 @@ async fn merge_releases(
         .ok_or_else(|| format!("survivor release {survivor_id} not found"))?;
     let loser = get_release(app.clone(), loser_id)?
         .ok_or_else(|| format!("loser release {loser_id} not found"))?;
+    // Kept aside because the fold consumes it: if the loser had its OWN folder
+    // that the survivor doesn't end up owning, that folder is left on disk with
+    // no row — and the next library rescan re-imports it as a fresh release,
+    // resurrecting the duplicate you just merged. Recorded below so it doesn't.
+    let loser_dir = loser.file_path.clone();
 
     let mut folded: Vec<String> = Vec::new();
     let mut wire = false;
@@ -3713,6 +4077,20 @@ async fn merge_releases(
     .map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM releases WHERE id = ?1", params![loser_id])
         .map_err(|e| e.to_string())?;
+
+    // Remember a folder the merge orphaned (loser had one, survivor kept its
+    // own), so import skips it instead of re-importing the duplicate. The files
+    // are untouched — trashed=0; this only says "not its own release".
+    if let Some(d) = loser_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        if Some(d) != file_path.as_deref() {
+            tx.execute(
+                "INSERT OR REPLACE INTO merged_paths (path, survivor_id, trashed)
+                 VALUES (?1, ?2, 0)",
+                params![d, survivor_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
 
     let survivor_marked_stale = wire && survivor.publish_state.as_deref() == Some("published");
     if survivor_marked_stale {
@@ -5799,6 +6177,22 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
             continue;
         }
 
+        // Deliberately removed as a duplicate — do not resurrect it. The folder
+        // may still be on disk (trashing is the user's call, and they may have
+        // restored it from Trash), but they have already said it isn't wanted
+        // as its own release.
+        let resolved: bool = tx
+            .query_row(
+                "SELECT 1 FROM merged_paths WHERE path = ?1 LIMIT 1",
+                params![dir_str],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if resolved {
+            summary.skipped += 1;
+            continue;
+        }
+
         let info = read_dir_tags(&files);
 
         let dir_name = dir
@@ -7211,6 +7605,7 @@ pub fn run() {
             set_release_condition,
             set_release_label,
             set_release_source,
+            set_release_paired,
             set_release_catalog_number,
             set_release_discogs_id,
             set_release_disc_total,
@@ -7223,6 +7618,8 @@ pub fn run() {
             get_release,
             delete_release,
             merge_releases,
+            audit_release_folder,
+            resolve_duplicate,
             find_duplicate_groups,
             recount_tracks,
             publish_reaction,
@@ -7252,6 +7649,7 @@ pub fn run() {
             export_published_manifest,
             sync_cover_to_disk,
             update_release_path,
+            inspect_release_path,
             clear_release_path,
             generate_keypair,
             import_keypair,

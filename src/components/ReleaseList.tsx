@@ -77,6 +77,7 @@ import {
   hasBandcampReceipt,
   colorWithAlpha,
 } from "../lib/source";
+import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 import {
   PUBLISH_STATES,
   publishStateMeta,
@@ -153,6 +154,11 @@ export function ReleaseList({
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Re-render the whole list when a source's colour / digital / physical flag is
+  // edited from a detail panel (localStorage — otherwise the pairing rings +
+  // glyphs would lag until an unrelated render). Fixes the "changed all
+  // releases" appearing only after a stale delay.
+  useSourceMetaVersion();
   // Duplicate review: count of non-dismissed suspect groups (toolbar badge) +
   // whether the review dialog is open.
   const [dupCount, setDupCount] = useState(0);
