@@ -50,6 +50,27 @@ alongside the project as its public face.
 
 ## Shared architecture conventions
 
+**The shared suite directory (per platform).** `published.json`,
+`catalogue.json` and `bpm.json` live in one directory that every app resolves
+**identically** — deliberately OUTSIDE each app's private data dir, because the
+whole point is that the others can read it. `roots.json` is its config
+counterpart.
+
+| Platform | shared data | config (`roots.json`) |
+|---|---|---|
+| Linux | `$HOME/.local/share/ndisc-suite` | `$HOME/.config/ndisc-suite` |
+| macOS | *same as Linux* | *same as Linux* |
+| Windows | `%LOCALAPPDATA%\ndisc-suite` | *same dir* (no XDG split) |
+
+macOS shares the Linux location because **nothing on macOS uses it yet** (the
+Mac builds `nview` iOS and the `glmps` readers, neither of which touches it) —
+so there is no migration, and consistency beats platform idiom until a macOS
+desktop app actually exists. Windows uses **`LOCALAPPDATA`, not `APPDATA`**:
+everything here is *machine-specific* (`roots.json` names local library paths),
+so it must never roam between machines. Every app implements this as
+`suite_shared_dir()` / `suite_config_dir()`; changing it is a coordinated wave,
+not a local edit.
+
 - **Desktop = Tauri 2** (React + Vite + TypeScript front end, Rust backend over
   IPC). **Mobile = Capacitor** (`nview` only).
 - **SQLite** (`rusqlite`, bundled) where a local library index is needed

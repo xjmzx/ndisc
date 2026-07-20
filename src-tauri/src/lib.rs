@@ -2637,8 +2637,24 @@ pub struct LibrarySummary {
 /// Where suite apps look for cross-app state. Deliberately NOT ndisc's own
 /// app-data dir — this is shared, not private.
 fn suite_shared_dir() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|e| format!("HOME: {e}"))?;
-    Ok(PathBuf::from(home).join(".local/share/ndisc-suite"))
+    // Deliberately OUTSIDE each app's private data dir — the whole point is that
+    // the other suite apps can read it, so every app must resolve this the same
+    // way. Linux is unchanged (existing installs depend on the path); macOS gets
+    // the same location because nothing there uses it yet, so there is nothing
+    // to migrate and consistency beats platform idiom. Windows uses LOCALAPPDATA
+    // rather than APPDATA on purpose: everything here is MACHINE-specific
+    // (roots.json points at local library paths), so it must not roam.
+    #[cfg(windows)]
+    {
+        let base =
+            std::env::var("LOCALAPPDATA").map_err(|e| format!("LOCALAPPDATA: {e}"))?;
+        Ok(PathBuf::from(base).join("ndisc-suite"))
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var("HOME").map_err(|e| format!("HOME: {e}"))?;
+        Ok(PathBuf::from(home).join(".local/share/ndisc-suite"))
+    }
 }
 
 // The WHOLE catalogue (not just published), with the local metadata other suite
