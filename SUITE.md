@@ -94,14 +94,31 @@ shared `contract.vN` SHA (see `schema/README.md`). `labels.v1` and `clip.v1` are
 emits it. `clip.v1` is the clip↔release provenance link; design +
 reconcile/manifest spec in
 [`schema/clip-mapping-design-2026-07-17.md`](schema/clip-mapping-design-2026-07-17.md).
+The contract is **internal** — the only consumers are the suite's own readers
+(`glmps`, `nview`) — so a change stays a coordinated wave, not a public
+deprecation exercise.
+
+**Truth model (framing, 2026-07-19).** Two authorities that never conflict:
+**relays are the network truth** (what exists, is discoverable, and reconciles —
+no app is authoritative over network state), while **`ndisc` is the contract
+authority** — it owns the schema *shape* in [`schema/`](schema/), nothing about
+network state. "ndisc is truth" only ever means *schema authority for the vendor
+apps that consume it*.
 
 **Relay notes.** `ndisc`'s relay set must be a **superset** of the website's
 read set. Primal doesn't enforce `kind:5` deletions, so deletes are filtered
-client-side.
+client-side. **Discovery = shared hub (decided 2026-07-19):** `relay.fizx.uk`
+stays in every app's read set as the union point, so cross-user discovery works
+without per-user relay lists. NIP-65 / outbox (each user advertising their own
+relays — the real "a relay each" model) is the eventual vision but **deferred**;
+relays stay manually configured for now.
 
 **Signing paths.** Local `nsec` in the OS keyring → `ndisc`, `ntree`, `nsmpl`.
 Remote NIP-46 bunker → `nview`. No keys (read-only / connectivity only) →
-`nplay`, `nping`.
+`nplay`, `nping`. **One key per person (decided 2026-07-19):** the desktop tools
+sign with the **same** `nsec` (one person = one `npub`) so "my clips/samples"
+reconciles under a single author pubkey. Pasting in / switching between multiple
+accounts is a noted future *want*, not planned.
 
 ---
 
@@ -194,8 +211,28 @@ each app declaring its own stack.
 
 **Mid / long-term**
 - Media edits — destructive *and* non-destructive.
-- **BPM analysis** improvements (especially for `nplay`) — potentially emitted
-  as its own `nevent` when a value is worth sharing.
+- **BPM on the wire (decided 2026-07-19):** carry BPM as an **additive optional
+  tag on `clip.v1`** — it's unfrozen, and BPM belongs to the derivative/track,
+  not the SHA-pinned release-level `release.v2`. The local suite `bpm.json` stays
+  the per-track truth for the whole library; only shared clips/samples put BPM on
+  the wire. Serves source-track / sample identification.
+- **Shared "work" identity across users (direction, 2026-07-19).** Today a
+  release is a **personal shelf entry** — two collectors cataloguing the same
+  album publish two different `31237` coordinates, and clip `#a` discovery finds
+  only clips of *one* person's entry. Goal: a shared **master-release key** so the
+  network can group "the same work" across users and media formats — the
+  cross-user version of `ndisc`'s local physical+digital **merge/pairing** (one
+  work, many format facets). Mechanism (sketch, undecided): each user still
+  publishes their own personal `31237`, but every entry also carries a shared key
+  as an additive tag — a **content-derived hash** of a normalized
+  artist/title/year tuple, and/or a **MusicBrainz release-group MBID** when known.
+  Aggregation and "clips of the work" discovery then filter on that key. Additive
+  to SHA-pinned `release.v2` → a coordinated wave when ready. Stub +
+  candidate keys: [`schema/master-release-key-design-2026-07-19.md`](schema/master-release-key-design-2026-07-19.md).
+- **Reconcile test rig (to-do).** "Relays are truth" needs multi-relay /
+  partial-availability testing — a local relay (strfry / nostr-rs-relay) plus a
+  throwaway test key — so reconcile and best-effort `kind:5` retraction are
+  exercised without publishing test data to `relay.fizx.uk`.
 
 **Ultimate aim**
 - Samples as first-class objects for **collaboration** → track construction →

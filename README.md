@@ -81,6 +81,40 @@ multi-database switcher in the header.
 - One-shot migration on launch blanks any stale relative-path image
   URLs left over from those older builds, so the entry stays visible
   but you can see which labels still need a fresh upload.
+- Labels can be **published to Nostr** as `kind:31238` events
+  (`publish_labels`, `labels.v1`) so subscribers can resolve label
+  artwork.
+
+### Genres
+
+- Three genre slots per release (`genre_primary / _secondary /
+  _tertiary`) drawn from a fixed ~35-slug palette (`src/lib/genre.ts`),
+  edited from the detail panel with completeness dots. Genres are emitted
+  as `t` tags on the release event.
+
+### Acquisition source & de-duplication
+
+- **Acquisition-source dimension** — a user-extensible `source_label` per
+  release (Bandcamp, a record store, a marketplace…), mirroring the label
+  pattern: the vocabulary is the distinct set of assigned values and
+  colours live in `localStorage`. Local provenance only — never published.
+  Per-source metadata (colour, a `digital` flag) drives a source dot and
+  colours the physical↔digital **pairing** indicator.
+- **Merge** two rows that are really one release (a physical Discogs copy
+  plus a digital Bandcamp purchase): pick a survivor, backfill its empty
+  provenance / count fields from the loser, retract the loser's live
+  `kind:31237` event first so no orphan `naddr` is left, then delete it.
+  Entered from the detail panel via a search-pick + confirmation diagram
+  (`MergeConfirm`, `DuplicatesDialog`).
+- **Bulk edit** — a spreadsheet-style `BatchEditView` for tagging label /
+  source / comment across many rows at once.
+
+### Current (feed) view
+
+- Author and publish short **feed notes** (`kind:31239`, `feed.v1`) — a
+  running "now playing / just added" stream read by the companion reader.
+  Backed by a local `feed_notes` table; `useFeed` / `CurrentView` render
+  it.
 
 ### Nostr identity & publishing
 
@@ -123,6 +157,9 @@ multi-database switcher in the header.
   cover from the local directory, writing any changes back into the
   DB. Useful after editing files in another music tool. Reports
   precisely which fields changed; no-ops when nothing differs.
+- **Reconcile library** (`reconcile_library`) does this across the whole
+  music root in one pass: discovers newly-added folders *and* refreshes
+  existing releases, tracking orphaned/last-scanned rows.
 
 ### UI niceties
 
@@ -161,20 +198,25 @@ releases (
   id, artist, title, year, medium, format,
   label, catalog_number, country, condition, notes, source,
   file_path, cover_art_path, cover_art_url,
-  discogs_id, musicbrainz_id,
+  discogs_id, bandcamp_id, source_label,
   release_type, category,
-  last_published_at, last_published_naddr,
+  genre, genre_primary, genre_secondary, genre_tertiary,
+  track_count, track_total, disc_total, video_count,
+  publish_state, last_published_at, last_published_naddr, last_published_event_id,
   added_at, updated_at
 )
 ```
 
 `medium` is `'physical' | 'digital'`. Indexes on `artist`, `title`,
-`year`, `medium`. New columns (cover_art_url, release_type, category,
-last_published_at, last_published_naddr) are added via `ALTER TABLE`
-migration so existing DBs upgrade in place. `source` is normalised to
-an http(s) URL on import (Discogs CSV synthesises
-`https://www.discogs.com/release/<id>`); legacy keyword values from
-older builds are converted on first open.
+`year`, `medium`. Columns beyond the original core (cover_art_url,
+release_type, category, the three `genre_*` slots, the track/disc counts,
+`source_label`, `bandcamp_id`, `publish_state`, `last_published_event_id`)
+are added via `ensure_column` `ALTER TABLE` migrations so existing DBs
+upgrade in place — including a one-shot rename of the dead `musicbrainz_id`
+column to `bandcamp_id` (now a **local** Bandcamp receipt id, never
+published). `source` is normalised to an http(s) URL on import (Discogs CSV
+synthesises `https://www.discogs.com/release/<id>`); legacy keyword values
+from older builds are converted on first open.
 
 ## Install dependencies (Debian / Ubuntu)
 
@@ -258,21 +300,20 @@ they're still on disk.
 ndisc/
 ├── src/                          # React + TS frontend
 │   ├── App.tsx                   # top-level layout + header + DB controls
-│   ├── components/
-│   │   ├── LibraryPanel.tsx      # stats + import combined section
-│   │   ├── ReleaseList.tsx       # the Releases list + filters + extract/rescan
-│   │   ├── ReleaseDetail.tsx     # detail panel: cover, fields, publish, refresh
-│   │   ├── AddReleaseForm.tsx    # add-release form (compact inline-label rows)
-│   │   ├── NostrPanel.tsx        # keypair management + publish-library + relays
-│   │   ├── LabelPanel.tsx        # label-image carousel + add/edit form
-│   │   ├── LabelviewPanel.tsx    # distinct-labels list + search
-│   │   ├── UndoToast.tsx         # floating undo toast (used by delete)
-│   │   └── Section.tsx           # shared panel wrapper
-│   ├── lib/buttonStyles.ts       # shared mauve "tool-tier" button class
-│   ├── lib/cn.ts                 # clsx + tailwind-merge helper
-│   ├── lib/cover.ts              # cover-image source resolution
+│   ├── components/               # LibraryPanel, ReleaseList, ReleaseDetail,
+│   │                             # AddReleaseForm, BatchEditView, NostrPanel,
+│   │                             # LabelPanel, LabelviewPanel, CurrentView,
+│   │                             # DiscogsEnrichPanel, DuplicatesDialog,
+│   │                             # MergeConfirm, StatsView, UndoToast, Section
+│   ├── hooks/                    # useFeed, useReactions
+│   ├── lib/source.ts             # acquisition-source colour + pairing logic
+│   ├── lib/genre.ts              # genre-slug palette
+│   ├── lib/feed.ts               # feed-note helpers
+│   ├── lib/{curation,publishState,dupDismiss,rating,cover}.ts
 │   ├── lib/labelSeed.ts          # nostr.build label-URL seed + migration
+│   ├── lib/{buttonStyles,cn}.ts  # shared button class + clsx helper
 │   └── lib/tauri.ts              # typed wrappers around invoke()
+├── schema/                       # SHA-pinned wire contracts (release.v2, feed.v1, …)
 ├── src-tauri/                    # Rust crate (Tauri shell + SQLite layer)
 │   ├── src/lib.rs                # schema, commands, import, publish, migrations
 │   ├── Cargo.toml                # rusqlite, lofty, nostr-sdk, keyring, reqwest
@@ -316,11 +357,23 @@ events addressable across the rename.
 | `country`   | no       | ISO 2-letter or free text |
 | `condition` | no       | Physical-only: `M`, `NM`, `VG+`, … |
 | `source`    | no       | http(s) URL pointing at the listing (Discogs, Bandcamp, label store, …). Only emitted when the value is a real URL — legacy non-URL values are silently dropped on the way out. |
-| `i`         | repeat   | NIP-73 external IDs, e.g. `discogs:release:12345`, `musicbrainz:release:<uuid>` |
-| `t`         | repeat   | Hashtag / genre |
+| `i`         | repeat   | NIP-73 external IDs — currently `discogs:release:<id>` only |
+| `t`         | repeat   | Hashtag / genre (one per populated `genre_*` slot) |
 | `image`     | no       | Cover art URL — square image, served by nostr.build, Blossom, or any HTTPS host (relays do not store binaries) |
+| `tracks`    | no       | Track count (audio leaves) |
+| `video`     | no       | Video-file count, emitted only when non-zero |
 
 `content` carries free-form notes (personal annotations, source).
+
+### Companion event kinds
+
+Beyond the `kind:31237` release, ndisc publishes a few related kinds:
+
+- **`31238`** — label events (`labels.v1`): label name + artwork URL.
+- **`31239`** — `feed.v1` notes authored in the Current view.
+- **`30000`** — a NIP-51 people-set of release contributors.
+- **`4550`** — NIP-72 per-note approvals.
+- **`7`** — NIP-25 reactions on releases.
 
 ### NIPs in play
 
@@ -329,7 +382,10 @@ events addressable across the rename.
   Unpublish action.
 - **NIP-19**: `naddr1…` shareable links produced after each successful
   publish.
-- **NIP-73**: external IDs (Discogs, MusicBrainz) emitted as `i` tags.
+- **NIP-73**: external IDs (Discogs) emitted as `i` tags.
+- **NIP-25**: `kind:7` reactions on releases.
+- **NIP-51**: `kind:30000` people-set of contributors.
+- **NIP-72**: `kind:4550` approvals.
 - **NIP-65** (not yet emitted by ndisc): user-advertised relay list.
   Subscribers currently configure relays manually in the companion
   site.
@@ -344,14 +400,27 @@ specific item you chose to share.
 
 ## Still to come
 
-- Pull metadata from external sources (Discogs API, MusicBrainz,
-  Bandcamp) at import time to enrich what the local files don't carry.
+- Pull metadata from **MusicBrainz / Bandcamp** at import time to enrich
+  what the local files don't carry. (Per-release and library-wide
+  **Discogs API** enrichment via `DiscogsEnrichPanel` has already shipped.)
 - Subscribe to other users' collections from within ndisc (discovery).
 - Cross-reference with `audio-flac-quality-check` reports for digital
   files — surface tracks flagged `PROBABLY-LOSSY` on the release entry.
-- Bulk variants of **Refresh-from-disk** and **Sync-cover-to-disk**.
-  (Embedded-cover extract and broader filename rescan already run
-  across every no-cover release in one go.)
+- Bulk **Sync-cover-to-disk**. (Library-wide refresh landed as **Reconcile
+  library**; embedded-cover extract and filename rescan already run across
+  every no-cover release in one go.)
+- **De-duplicate releases** — a release owned on both a physical (Discogs)
+  and a digital (Bandcamp) route should be one row, not two. The
+  acquisition-source dimension, per-source colour / `digital` metadata,
+  symmetric physical↔digital pairing, and the two-row **merge** action have
+  all shipped. Still open: a **duplicate finder** (auto-surface likely dup
+  pairs to feed merge, reusing the `bc_tokens` fuzzy matcher), **bulk
+  merge**, and generalising the tri-state source toggle into a **"filter by
+  source"** dropdown over the distinct set.
+- Suite-wide work that touches ndisc lives in
+  [`SUITE.md` § Direction / roadmap](SUITE.md) — e.g. surfacing
+  "published to Nostr" status across the apps, and the `clip.v1` provenance
+  links that `ntree` / `nsmpl` clips will point back at.
 
 ## Companion apps in the suite
 
