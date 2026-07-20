@@ -1,7 +1,5 @@
 <img src="docs/ndisc-lockup.svg" alt="ndisc" width="300">
 
-# ndisc
-
 Local music discography library — track and evaluate a collection of
 **physical and digital** music releases, with Nostr-backed sharing.
 
