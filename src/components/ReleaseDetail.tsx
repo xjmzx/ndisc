@@ -40,6 +40,7 @@ import {
   getRelease,
   listReleases,
   restoreRelease,
+  forgetMergedPath,
   publishRelease,
   refreshRelease,
   setCoverArtUrl,
@@ -235,17 +236,27 @@ export function ReleaseDetail({
     setDeleteOpen(true);
   }
 
-  function onDeleteDone(mode: "row" | "files", summary?: ResolveSummary) {
+  function onDeleteDone(
+    mode: "row" | "ignore" | "files",
+    summary?: ResolveSummary,
+  ) {
     const snapshot = release;
     setDeleteOpen(false);
     onDeleted();
-    if (mode === "row") {
-      // Row-only deletes stay undoable: nothing on disk changed.
+    if (mode === "row" || mode === "ignore") {
+      // Both keep the files, so both are undoable. Ignore also wrote a
+      // merged_paths marker; its undo forgets that too, else the restored row's
+      // folder would stay excluded from rescans.
       showUndoToast?.(
-        `Deleted "${snapshot.artist} — ${snapshot.title}"`,
+        mode === "ignore"
+          ? `Removed "${snapshot.artist} — ${snapshot.title}" (folder now ignored)`
+          : `Deleted "${snapshot.artist} — ${snapshot.title}"`,
         async () => {
           try {
             await restoreRelease(snapshot);
+            if (mode === "ignore" && snapshot.filePath) {
+              await forgetMergedPath(snapshot.filePath);
+            }
             onDeleted();
           } catch (e) {
             alert(`Restore failed: ${e}`);

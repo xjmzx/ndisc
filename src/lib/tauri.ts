@@ -987,3 +987,15 @@ export async function deleteReleaseWithFiles(
 ): Promise<ResolveSummary> {
   return invoke<ResolveSummary>("delete_release_with_files", { releaseId });
 }
+
+/** Delete a release AND record its folder so a rescan won't re-import it — the
+ *  "keep the files but don't catalogue this" middle option. Files untouched.
+ *  Returns the ignored path. Undo with restoreRelease + forgetMergedPath. */
+export async function deleteReleaseIgnorePath(releaseId: number): Promise<string> {
+  return invoke<string>("delete_release_ignore_path", { releaseId });
+}
+
+/** Un-ignore a folder so a rescan imports it again (undoes delete-and-ignore). */
+export async function forgetMergedPath(path: string): Promise<void> {
+  return invoke("forget_merged_path", { path });
+}

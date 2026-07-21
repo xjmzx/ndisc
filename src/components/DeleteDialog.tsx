@@ -4,6 +4,7 @@ import { cn } from "../lib/cn";
 import {
   deleteRelease,
   deleteReleaseWithFiles,
+  deleteReleaseIgnorePath,
   type Release,
   type ResolveSummary,
 } from "../lib/tauri";
@@ -30,9 +31,9 @@ export function DeleteDialog({
 }: {
   release: Release;
   onCancel: () => void;
-  onDone: (mode: "row" | "files", summary?: ResolveSummary) => void;
+  onDone: (mode: "row" | "ignore" | "files", summary?: ResolveSummary) => void;
 }) {
-  const [busy, setBusy] = useState<null | "row" | "files">(null);
+  const [busy, setBusy] = useState<null | "row" | "ignore" | "files">(null);
   const [error, setError] = useState<string | null>(null);
 
   const published = hasLiveEvent(release);
@@ -52,7 +53,7 @@ export function DeleteDialog({
     release.discogsId && `discogs: ${release.discogsId}`,
   ].filter(Boolean) as string[];
 
-  async function run(mode: "row" | "files") {
+  async function run(mode: "row" | "ignore" | "files") {
     if (!release.id) return;
     setBusy(mode);
     setError(null);
@@ -60,6 +61,9 @@ export function DeleteDialog({
       if (mode === "row") {
         await deleteRelease(release.id);
         onDone("row");
+      } else if (mode === "ignore") {
+        await deleteReleaseIgnorePath(release.id);
+        onDone("ignore");
       } else {
         onDone("files", await deleteReleaseWithFiles(release.id));
       }
@@ -115,8 +119,33 @@ export function DeleteDialog({
             <div className="text-[11px] text-muted">
               Drops the database row only — the files stay exactly where they are.
               {dir && " A rescan will find the folder again and re-import it."}
+              {published && (
+                <span className="text-nostr">
+                  {" "}
+                  Its published Nostr event stays live until you Unpublish it.
+                </span>
+              )}
             </div>
           </button>
+
+          {dir && (
+            <button
+              onClick={() => run("ignore")}
+              disabled={busy !== null}
+              className="w-full text-left rounded border border-surface/60 bg-surface/20
+                         hover:border-accent/50 p-2 disabled:opacity-40 transition-colors"
+            >
+              <div className="text-xs text-fg/90 inline-flex items-center gap-1.5">
+                {busy === "ignore" && <Loader2 size={12} className="animate-spin" />}
+                Remove and don't re-import
+              </div>
+              <div className="text-[11px] text-muted">
+                Drops the row and keeps the files, but records the folder so a
+                rescan won't bring it back. For folders you want on disk but not
+                in the catalogue. Undoable.
+              </div>
+            </button>
+          )}
 
           <button
             onClick={() => run("files")}

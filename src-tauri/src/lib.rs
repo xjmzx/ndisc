@@ -3970,6 +3970,48 @@ async fn delete_release_with_files(
     })
 }
 
+/// Delete a release AND record its folder in `merged_paths` so a rescan will not
+/// re-import it — the middle option between plain delete (which re-imports the
+/// folder on the next scan) and trashing (which removes the files). The files
+/// are left exactly where they are; only the catalogue forgets them, durably.
+/// `trashed = 0`: the folder is intact, this is "not its own release", not "gone".
+/// Undoable via `forget_merged_path` + `restore_release`.
+#[tauri::command]
+fn delete_release_ignore_path(
+    app: tauri::AppHandle,
+    release_id: i64,
+) -> Result<String, String> {
+    let release = get_release(app.clone(), release_id)?
+        .ok_or_else(|| format!("release {release_id} not found"))?;
+    let dir = release.file_path.unwrap_or_default().trim().to_owned();
+    if dir.is_empty() {
+        return Err("that release has no folder to ignore — plain delete already \
+                    keeps it out until you re-add it"
+            .into());
+    }
+    let conn = open(&app)?;
+    conn.execute("DELETE FROM releases WHERE id = ?1", params![release_id])
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO merged_paths (path, survivor_id, trashed)
+         VALUES (?1, NULL, 0)",
+        params![dir],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Un-ignore a folder: drop its `merged_paths` row so a rescan imports it again.
+/// Undoes delete-and-ignore, and is the general escape hatch for a path that was
+/// merged/ignored and is now wanted back.
+#[tauri::command]
+fn forget_merged_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let conn = open(&app)?;
+    conn.execute("DELETE FROM merged_paths WHERE path = ?1", params![path])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveSummary {
@@ -7698,6 +7740,8 @@ pub fn run() {
             audit_release_folder,
             resolve_duplicate,
             delete_release_with_files,
+            delete_release_ignore_path,
+            forget_merged_path,
             find_duplicate_groups,
             recount_tracks,
             publish_reaction,
