@@ -163,12 +163,24 @@ edition qualifiers (`Deluxe`, `Remastered`, `(2019)`) — these split, on purpos
   shared fixture~~ → **built**: `src-tauri/src/master_key.rs` (pure, tested) and
   `schema/master-key.vectors.json`. Wire form: `master:` + 32-hex SHA-256 (the
   raw-key alternative is noted above but the hash is chosen).
+- ~~Cross-implementation coordination test~~ → **DONE (2026-07-21).** The JS port
+  landed on all three consumers — `nview`, `glmps.fizx.uk`, `glmps.upleb.uk` each
+  carry `src/lib/masterKey.ts` + `masterKey.test.ts` (commit *"feat(master-key):
+  JS port of the normalize()/masterKey/masterTag reference"*), each vendoring the
+  **byte-identical** `master-key.vectors.json` (`c86fabc7…`) and pinning it. The
+  Rust reference and all three JS ports assert against that one shared fixture, so
+  no implementation can silently drift. The authority (ndisc) now **also** pins
+  the fixture — `schema/master-key.vectors.json.sha256` + the
+  `fixture_matches_the_committed_pin` drift-guard test — closing the gap where
+  ndisc could have drifted from what the consumers vendored.
 - **NOT built — the coordinated wave:** emitting the `master` tag on the
   `kind:31237` release event and having consumers filter on it. That is the
   SHA-pinned-contract change across ndisc + glmps + nview together, done as one
-  wave like clip.v1 — deliberately separate from the pure function above.
-- **Still open for the wave:** port `master_key` to JS in glmps/nview and prove
-  it against `master-key.vectors.json`; decide the tag name/shape on `31237`.
+  wave like clip.v1 — deliberately separate from the pure function above. The
+  normalization function + its cross-language conformance are settled (above); the
+  wave is now purely the wire-emission + filter step, gated on the tag-shape
+  decision below.
+- **Still open for the wave:** decide the tag name/shape on `31237`.
 - Tag form: an `i`-tag (`master:<key>` / NIP-73 external-id style) vs a
   dedicated tag. Additive to SHA-pinned `release.v2` → coordinated wave.
 - Does `clip.v1` *also* carry the master key, or do consumers resolve it

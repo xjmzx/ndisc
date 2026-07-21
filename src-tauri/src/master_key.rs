@@ -164,6 +164,35 @@ mod tests {
     }
 
     #[test]
+    fn fixture_matches_the_committed_pin() {
+        // The vectors file is vendored + SHA-pinned by every consumer (glmps,
+        // nview). ndisc is the authority, so it pins the canonical bytes too — if
+        // this file drifts from schema/master-key.vectors.json.sha256 the suite
+        // has silently diverged from what the consumers vendored (a mismatch
+        // `fixture_json_matches_implementation` can't see, since impl + fixture
+        // can drift together). Re-cut the pin in the same commit:
+        // (cd schema && sha256sum master-key.vectors.json > master-key.vectors.json.sha256).
+        let raw = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../schema/master-key.vectors.json"
+        ))
+        .expect("read master-key fixture");
+        let pin = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../schema/master-key.vectors.json.sha256"
+        ))
+        .expect("read master-key fixture pin");
+        let actual: String = Sha256::digest(&raw).iter().map(|b| format!("{b:02x}")).collect();
+        let pinned = pin.split_whitespace().next().expect("pin hex digest");
+        assert_eq!(
+            actual, pinned,
+            "schema/master-key.vectors.json drifted from its pin — re-cut it in the \
+             same commit: (cd schema && sha256sum master-key.vectors.json > \
+             master-key.vectors.json.sha256)"
+        );
+    }
+
+    #[test]
     fn tag_is_master_prefix_plus_32_hex() {
         let tag = master_tag("Aphex Twin", "Windowlicker").unwrap();
         let hex = tag.strip_prefix("master:").unwrap();
