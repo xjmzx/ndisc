@@ -247,6 +247,10 @@ each app declaring its own stack.
 
 **Near-term — tighten suite integration**
 - Bring `ndisc`'s tree-dots + track/disc-count styling into `nplay`.
+  **Count-badge styling done (2026-07-21)** — `nplay` now shares `--c-medium`
+  and the neutral quantity badge (soft in the Collection tree). Leaf-dots /
+  disc-counts are N/A there (no expected-vs-present data, single-disc tree), so
+  this line is effectively complete.
 - Surface **"published to Nostr" status** for a release across the apps
   (starting from `ndisc`, which already tracks it) — the clip side is the
   truthful, relay-reconciled dot in `clip-mapping-design-2026-07-17.md`.
