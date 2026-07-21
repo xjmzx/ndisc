@@ -15,7 +15,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## 0.2.0-beta.5 — unreleased
+## 0.2.0-beta.5 — 2026-07-21
 
 ### Monochrome dots in the mono theme, colour reserved for a source
 - The suite's green dots were "green everywhere". Now the neutral source /
@@ -30,11 +30,36 @@ wave; an app-only change bumps ndisc alone. See
 - **Inner-dot / ring model:** a neutral release's inner medium dot is white
   (`--c-fg`) over a `--c-medium` ring ("bright inner, darker ring"); a named
   source colours its inner dot with a theme-independent hex and its ring with
-  that hex at 0.5 alpha. Boomkat added (`#416644`). The model is documented in
-  SUITE.md as the suite reference.
-- **Boomkat** added to the source palette (warm amber, inferred from
-  `boomkat.com`). **Record Store** is forced neutral — a generic
-  physical-purchase bucket, not a branded source, so it reads as the default dot.
+  that hex at 0.5 alpha. The model is documented in SUITE.md as the suite
+  reference.
+
+### Source-colour palette curated
+- Replaced the ad-hoc platform list with a small curated roster. Because the dot
+  **shape** already encodes physical-vs-digital (Disc3 vs Circle), colour is
+  free to identify the **store**, not the bucket. Digital stores: Bandcamp
+  `#1da0c3`, Boomkat `#e0913a`, Bleep `#e05a9c`, Warp `#8b6be8`, Planet Mu
+  `#a8c94a`. Physical marketplace: Discogs `#5e5c64` — near-neutral, manual-only
+  (a `discogs.com` link is a pairing signal via `discogsId`, not a source to
+  auto-tint).
+- Two forced-neutral defaults via `NEUTRAL_SOURCE_NAMES`: **Record Store** (the
+  physical default) and **Unknown** (the digital / unavailable default), so a
+  stale assigned colour can never override the default dot. Seed metadata keys by
+  lowercased label so multi-word names ("Planet Mu") resolve, and `domain` is
+  now optional (a source can be colour-only, no URL inference).
+- Reset the stale per-name colour overrides in localStorage — a green Boomkat
+  override was beating its amber seed — so the curated seeds plus neutral-forcing
+  now govern every source name in the library. Kept byte-identical for the JS
+  consumers (nview / glmps).
+
+### Label art scales to the column
+- The label viewer sat at a fixed 140px square that floated in a 200–285px
+  column with lots of horizontal air, and stayed 140px even when collapsing Add
+  Release freed vertical room. It is now **width-driven** with a cap that
+  responds to the column — 200px compact, 248px when the detail card is collapsed
+  and the column has spare height — so it fills the room without pushing the
+  3-panel row taller than its neighbours. Image, brand carousel card, and the
+  placeholder share the one responsive box, so they scale together and stay
+  square; `object-cover` and the accent-lighten overlay are unchanged.
 
 ### Fix a stale orphan count in the header
 - `orphaned` is the one header stat that is a cached snapshot (`lastOrphaned` in
