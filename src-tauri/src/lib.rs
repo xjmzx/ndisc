@@ -9085,3 +9085,61 @@ mod reconcile_root {
         assert_eq!(derive_common_root(&conn).unwrap().as_deref(), Some("/"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// clip.v1 — the NIP-94 clip/sample contract (kind:1063). ndisc is the schema
+// AUTHORITY for it but NOT an emitter: ntree (clips) and nsmpl (samples) emit
+// it. So this module cannot pin an emitter the way `schema_v2` / `schema_feed_v1`
+// pin ndisc's own output; instead it pins the canonical FILE. It asserts
+// schema/clip.v1.json parses and declares the clip.v1 tag set, and that its
+// bytes still hash to the committed schema/clip.v1.json.sha256. Editing the
+// schema without re-cutting the pin fails the build here — locking json<->pin
+// coherence at the authority repo. The EMISSION conformance tests live in
+// ntree/nsmpl when they adopt the tag set, at which point clip.v1 flips
+// `frozen: true` (see the file's changePolicy).
+#[cfg(test)]
+mod schema_clip_v1 {
+    use sha2::{Digest, Sha256};
+
+    const CLIP_V1_JSON: &str = include_str!("../../schema/clip.v1.json");
+    const CLIP_V1_SHA256: &str = include_str!("../../schema/clip.v1.json.sha256");
+
+    #[test]
+    fn schema_parses_and_declares_the_clip_v1_tag_set() {
+        let v: serde_json::Value =
+            serde_json::from_str(CLIP_V1_JSON).expect("schema/clip.v1.json must be valid JSON");
+        assert_eq!(v["schemaVersion"], "clip.v1");
+        // Provisionally pinned but not yet frozen — flips true when ntree + nsmpl
+        // emit and add their emission tests (see the file's changePolicy).
+        assert_eq!(v["frozen"], false);
+
+        let tags = &v["kinds"]["clip"]["tags"];
+        // NIP-94 essentials a consumer may require structurally.
+        for essential in ["url", "m", "x", "t"] {
+            assert!(tags[essential].is_object(), "clip.v1 missing NIP-94 tag `{essential}`");
+        }
+        // The provenance set clip.v1 adds — all OPTIONAL to consumers.
+        for provenance in ["a", "track", "disc", "source-hash"] {
+            assert!(
+                tags[provenance].is_object(),
+                "clip.v1 missing provenance tag `{provenance}`"
+            );
+        }
+    }
+
+    #[test]
+    fn pinned_sha256_matches_the_schema_bytes() {
+        let digest = Sha256::digest(CLIP_V1_JSON.as_bytes());
+        let actual: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        // sha256sum format: "<hex digest>  clip.v1.json".
+        let pinned = CLIP_V1_SHA256
+            .split_whitespace()
+            .next()
+            .expect("clip.v1.json.sha256 must start with the hex digest");
+        assert_eq!(
+            actual, pinned,
+            "schema/clip.v1.json drifted from its pin — re-cut it in the same commit: \
+             (cd schema && sha256sum clip.v1.json > clip.v1.json.sha256)"
+        );
+    }
+}

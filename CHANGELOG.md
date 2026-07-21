@@ -6,9 +6,15 @@
 **Feed contract:** `feed.v1` @ `077fe7a6f70831ccf7c9640185c29e0b9c289ea22a1e4283064a1803ed1ea50c`
 (kind:31239 feed-note channel — frozen 2026-06-23, pinned by `mod schema_feed_v1`)
 
+**Clip contract:** `clip.v1` @ `9650699f8d133c2e32250dc436eb7f6deb03dddc5e2204b5402e5a76d3a2469e`
+(kind:1063 clip/sample provenance — **provisionally pinned, not yet frozen**;
+guarded by `mod schema_clip_v1`. Flips frozen when ntree + nsmpl emit the tag set.)
+
 ndisc now sits on two frozen contracts — `release.v2` (the discography wire) and
 `feed.v1` (the feed-note channel) — each on its own SHA, each moved as its own
-coordinated wave.
+coordinated wave. A third, `clip.v1` (the clip/sample provenance wire), is
+**provisionally SHA-pinned** at the authority but not yet frozen — ndisc guards
+the canonical file though `ntree` / `nsmpl` are its emitters.
 
 ndisc uses two version axes — this app's semver (below) and the shared
 `release.vN` contract (above). A contract change moves the whole suite in one
@@ -16,6 +22,19 @@ wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
 ## 0.2.0-beta.5 — 2026-07-21
+
+### Pin `clip.v1` at the authority + a drift-guard conformance test
+- `clip.v1` (the kind:1063 clip/sample provenance wire, emitted by `ntree` +
+  `nsmpl`) is now **SHA-pinned** in `schema/clip.v1.json.sha256` and guarded by a
+  new `mod schema_clip_v1` test — a parse check plus a freeze check that fails the
+  build if the schema bytes drift from the pin. ndisc is the schema **authority**
+  for `clip.v1` though it doesn't emit it, so this is the honest analogue of the
+  emission tests that pin `release.v2` / `feed.v1`.
+- Kept **`frozen: false`** deliberately (mirroring `labels.v1`): a *provisional*
+  pin that gives `ntree` / `nsmpl` a stable target to build against, not a freeze.
+  It flips `frozen: true` once both producers emit the tag set and add their own
+  emission tests — a clean forward promotion. Until then a schema edit is allowed
+  but must re-cut the pin in the same commit.
 
 ### Monochrome dots in the mono theme, colour reserved for a source
 - The suite's green dots were "green everywhere". Now the neutral source /
