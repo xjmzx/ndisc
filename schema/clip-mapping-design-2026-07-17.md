@@ -98,7 +98,8 @@ New:
   than have every consumer re-hardcode the frozen `disco-vault:` d-tag scheme.
   Materialises the coordinate so relay→folder is a real bridge.
 - per-release **`tracks[]`**: `{ relpath, title, track, disc }` — the
-  track-level join data (`published.json` is track-blind today).
+  track-level join data (`published.json` is track-blind today). **Shape landed
+  2026-07-21 but ships EMPTY** — its data source is undecided; see the addendum.
 - **Auto-export on publish/unpublish.** It's a manual button now, so the join
   goes stale between exports (a clip of a newly-published release won't resolve
   until the next manual export).
@@ -112,6 +113,49 @@ New:
   the flow is proven. Load-bearing either way.
 
 Other manifests (`bpm.json`, `labels.v1`, contributor registry) are unaffected.
+
+### Addendum (2026-07-21): the `tracks[]` source is open — ndisc has no tracklist
+
+Scaffolding `published.json` v2 surfaced a wrong assumption in this note: §"Why
+it's broken today" pt 6 claims *"per-track data lives only in ndisc's local SQLite
+index."* **It does not.** ndisc persists only track *counts* (`track_count` /
+`track_total`); the Discogs tracklist is fetched transiently to derive those
+counts and then discarded — there is no `{relpath, title, track, disc}` anywhere
+in ndisc's schema (verified against the `Release` struct + `RELEASE_SELECT_COLS`).
+So `tracks[]` cannot simply be exported; it needs a data source.
+
+**Built 2026-07-21** (`write_published_manifest`, manifest `version: 2`):
+`ndiscPubkey`, per-release `naddr`, auto-export on every publish/unpublish path.
+`tracks[]` is present in the shape but always `[]` — consumers must read an
+absent/empty `tracks` as "not yet indexed", never "zero tracks".
+
+**Two candidate sources (undecided):**
+
+1. **Walk the release folder at export.** Auto-export enumerates audio files under
+   each release `dir`; `relpath` = path relative to `dir`. *Pros:* keeps ndisc the
+   sole manifest writer; no new cross-app dependency; export is already a
+   deliberate (non-per-render) action, so a folder walk is affordable. *Cons:*
+   ndisc has **no audio-tag reader** (that's ntree/nplay's job), so
+   `title`/`track`/`disc` would be *filename-derived* (parse `01 - Title.flac`) or
+   left null — `relpath` is reliable, the rest best-effort unless a tag reader is
+   added.
+
+2. **Hand off ntree's scan.** ntree already walks the real audio files with a
+   proper tag reader and knows `track`/`disc`/`title` authoritatively; it could
+   write a per-release track index into the suite-shared dir for ndisc (or the
+   reconcile) to read. *Pros:* authoritative metadata, no duplicated tag-reading.
+   *Cons:* inverts today's flow (ntree *reads* ndisc's manifest — §"Why it's
+   broken" pt 2/3 — so this adds a back-channel); reconcile now depends on ntree
+   having scanned; a coordination point, not an ndisc-local fix.
+
+**Leaning:** option 1 (folder walk, `relpath`-first) as the ndisc-local minimum —
+it keeps ndisc the single writer and unblocks the `a`-tag + coordinate half of
+provenance, which is what actually makes the published dot truthful. The richer
+`title`/`track`/`disc` locator (option 2, or a tag reader bolted onto option 1)
+can layer on once the reconcile flow is proven end-to-end — matching this note's
+own "generator later, once the flow is proven" posture for `roots.json`. The
+`source-hash` strengthener is unaffected either way: the producer computes it at
+publish time, not from the manifest.
 
 ## 3. Reconcile / republish flow
 
