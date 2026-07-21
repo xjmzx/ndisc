@@ -227,11 +227,16 @@ each app declaring its own stack.
     included.
   - **`--c-ok` (green) is never greyed in mono** — it means lossless/ok, which
     is information, not decoration.
-  - Generic bucket names (e.g. `Record Store`) are forced neutral in
-    `releaseSourceColor`, so they read as the default dot, not a branded source.
-- **Source-platform indicators** — `lib/source.ts` detects and colours
-  bandcamp `#1da0c3` / boomkat `#416644` / soundcloud / mixcloud / wavlake /
-  tidal (plus user-assigned sources); kept byte-identical in
+  - Generic bucket names (`Record Store`, `Unknown`) are forced neutral in
+    `releaseSourceColor` via `NEUTRAL_SOURCE_NAMES`, so they read as the default
+    dot, not a branded source — `Record Store` is the physical default, `Unknown`
+    the digital / unavailable-source default.
+- **Source-platform indicators** — `lib/source.ts` seeds a small curated roster
+  (~10 max, not one hue per label; shape already carries physical-vs-digital, so
+  colour identifies the *store*). Digital stores: bandcamp `#1da0c3` / boomkat
+  `#e0913a` / bleep `#e05a9c` / warp `#8b6be8` / planet-mu `#a8c94a`. Physical
+  marketplace: discogs `#5e5c64` (near-neutral, manual-only — no domain
+  inference). Plus user-assigned sources. Kept byte-identical in
   `ndisc` / `nview` / `glmps`.
 - **Genre palette** — 38 active slugs with fixed hue assignments, shared between
   `ndisc` and `glmps` (the `g.*` Tailwind tokens; all slugs are pure peers).

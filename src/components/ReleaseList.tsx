@@ -1742,7 +1742,7 @@ export function ReleaseList({
                     })()}
                     {/* Medium — physical is a solid disc (Disc3), digital a
                         solid dot; both filled. Tinted by source platform
-                        (Bandcamp blue, SoundCloud orange, …) when detected, so a
+                        (Bandcamp blue, Boomkat amber, …) when detected, so a
                         release's origin reads at a glance; neutral `text-medium`
                         otherwise (digital faded to 70%). Shape encodes
                         physical/digital — only colour changes. */}

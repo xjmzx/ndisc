@@ -8,17 +8,27 @@ import type { Release } from "./tauri";
 export interface SourcePlatform {
   key: string;
   label: string;
-  domain: string; // matched as a substring of the lowercased source URL
+  domain?: string; // matched as a substring of the lowercased source URL; omit for manual-only sources
   color: string;
 }
 
+// Named acquisition sources with their own hue. The medium-glyph SHAPE already
+// encodes digital-vs-physical (Disc3 vs Circle), so colour is free to answer a
+// single question — *which store* — rather than the bucket. A small, curated
+// roster (~10 max) is the intent: recognisable stores, not one hue per label.
+// Digital stores sit across the spectrum so none collide; the physical
+// marketplace stays near-neutral on purpose (a marketplace, not a brand).
 export const SOURCE_PLATFORMS: SourcePlatform[] = [
+  // Digital stores — a download you own, each recognisable at a glance.
   { key: "bandcamp", label: "Bandcamp", domain: "bandcamp.com", color: "#1da0c3" },
-  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#416644" },
-  { key: "soundcloud", label: "SoundCloud", domain: "soundcloud.com", color: "#ff5500" },
-  { key: "mixcloud", label: "Mixcloud", domain: "mixcloud.com", color: "#5000ff" },
-  { key: "wavlake", label: "Wavlake", domain: "wavlake.com", color: "#00c853" },
-  { key: "tidal", label: "Tidal", domain: "tidal.com", color: "#e8eaed" },
+  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#e0913a" },
+  { key: "bleep", label: "Bleep", domain: "bleep.com", color: "#e05a9c" },
+  { key: "warp", label: "Warp", domain: "warp.net", color: "#8b6be8" },
+  { key: "planetmu", label: "Planet Mu", domain: "planet.mu", color: "#a8c94a" },
+  // Physical marketplace — no domain inference: a Discogs catalogue link is a
+  // pairing signal (discogsId), not an acquisition source to auto-tint. Its
+  // muted grey applies only when "Discogs" is the chosen sourceLabel.
+  { key: "discogs", label: "Discogs", color: "#5e5c64" },
 ];
 
 // Custom Bandcamp storefronts on their own domain (label stores that don't use
@@ -34,7 +44,7 @@ const BANDCAMP_CUSTOM_DOMAINS = ["shop.cpurecords.net"];
 export function sourcePlatform(r: Release): SourcePlatform | null {
   const src = (r.source ?? "").toLowerCase();
   for (const p of SOURCE_PLATFORMS) {
-    if (src.includes(p.domain)) return p;
+    if (p.domain && src.includes(p.domain)) return p;
   }
   const hasReceipt = !!(r.bandcampId ?? "").trim();
   if (hasReceipt || BANDCAMP_CUSTOM_DOMAINS.some((d) => src.includes(d))) {
@@ -101,14 +111,25 @@ export interface SourceMeta {
 
 // Platforms whose acquisition is a download you own (a digital half), as
 // opposed to a streaming link. Seeds the `digital` default for these names.
-const DIGITAL_SEED_KEYS = new Set(["bandcamp", "wavlake"]);
+const DIGITAL_SEED_KEYS = new Set(["bandcamp", "boomkat", "bleep", "warp", "planetmu"]);
+
+// Platforms whose acquisition is a physical copy (a marketplace/record order).
+// Seeds the `physical` default; drives the reverse pairing (a digital row with
+// a physical half).
+const PHYSICAL_SEED_KEYS = new Set(["discogs"]);
 
 // Seed metadata, derived from the recognised platforms so colour is defined in
-// exactly one place (SOURCE_PLATFORMS above) and digital-ness from the set above.
+// exactly one place (SOURCE_PLATFORMS above) and digital/physical from the sets
+// above. Keyed by the lowercased LABEL — the same shape sourceMeta looks up by
+// name — so multi-word labels ("Planet Mu") resolve, not just single-word keys.
 const SEED_META: Record<string, SourceMeta> = Object.fromEntries(
   SOURCE_PLATFORMS.map((p) => [
-    p.key,
-    { color: p.color, digital: DIGITAL_SEED_KEYS.has(p.key) },
+    p.label.toLowerCase(),
+    {
+      color: p.color,
+      digital: DIGITAL_SEED_KEYS.has(p.key),
+      physical: PHYSICAL_SEED_KEYS.has(p.key),
+    },
   ]),
 );
 
@@ -182,10 +203,13 @@ export function sourceIsDigital(name: string | null | undefined): boolean {
 // grouping ring and the medium-glyph tint. Prefers the user-assigned
 // `sourceLabel`; falls back to the platform inferred from the URL/receipt; null
 // when neither applies (callers then use the neutral default, e.g. --c-ok).
-// Generic "default" source names that stay MONOCHROME — a "Record Store" is the
-// catch-all physical-purchase bucket, not a branded source with its own hue, so
-// it reads as the neutral dot (grey in mono) regardless of any assigned colour.
-const NEUTRAL_SOURCE_NAMES = new Set(["record store"]);
+// Generic "default" source names that stay MONOCHROME — a catch-all bucket, not
+// a branded source with its own hue, so it reads as the neutral dot (grey in
+// mono / green in colour themes) regardless of any assigned colour. Two buckets:
+//   • "record store" — any physical shop (new or used), the physical default;
+//   • "unknown" — an unnamed / unavailable digital source, the digital default.
+// Forced-neutral so a stale assigned colour can never override the default look.
+const NEUTRAL_SOURCE_NAMES = new Set(["record store", "unknown"]);
 
 export function releaseSourceColor(r: Release): string | null {
   if (NEUTRAL_SOURCE_NAMES.has((r.sourceLabel ?? "").trim().toLowerCase())) {
