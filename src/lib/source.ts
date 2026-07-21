@@ -14,7 +14,7 @@ export interface SourcePlatform {
 
 export const SOURCE_PLATFORMS: SourcePlatform[] = [
   { key: "bandcamp", label: "Bandcamp", domain: "bandcamp.com", color: "#1da0c3" },
-  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#e5a23a" },
+  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#416644" },
   { key: "soundcloud", label: "SoundCloud", domain: "soundcloud.com", color: "#ff5500" },
   { key: "mixcloud", label: "Mixcloud", domain: "mixcloud.com", color: "#5000ff" },
   { key: "wavlake", label: "Wavlake", domain: "wavlake.com", color: "#00c853" },

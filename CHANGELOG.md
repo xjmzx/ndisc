@@ -25,8 +25,13 @@ wave; an app-only change bumps ndisc alone. See
   source**, whose hex shows through in every theme. `--c-ok` stays green
   throughout: it means lossless/ok, which is information, not decoration.
 - Applied across the list (leaf-dots, disc circles, pairing fill) and the detail
-  panel (disc tile). Brightened the mono value so small dots at 70 %/25 % alpha
-  don't read too dark, and unified on one value so small and medium sizes match.
+  panel (disc tile). Present dots + disc badges render at **full opacity** (only
+  missing-track slots stay faint) for contrast against the near-black bg.
+- **Inner-dot / ring model:** a neutral release's inner medium dot is white
+  (`--c-fg`) over a `--c-medium` ring ("bright inner, darker ring"); a named
+  source colours its inner dot with a theme-independent hex and its ring with
+  that hex at 0.5 alpha. Boomkat added (`#416644`). The model is documented in
+  SUITE.md as the suite reference.
 - **Boomkat** added to the source palette (warm amber, inferred from
   `boomkat.com`). **Record Store** is forced neutral — a generic
   physical-purchase bucket, not a branded source, so it reads as the default dot.

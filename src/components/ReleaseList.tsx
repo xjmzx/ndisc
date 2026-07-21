@@ -1656,7 +1656,7 @@ export function ReleaseList({
                       shapeClassName="rounded-full"
                       // Neutral-dot token like the track dots — grey in mono,
                       // green in the colour themes. (Squares stay as they were.)
-                      colorClassName="bg-medium/70 text-bg"
+                      colorClassName="bg-medium text-bg"
                     />
                   )}
                   {/* Audio-visual marker — present when the release folder
@@ -1763,7 +1763,10 @@ export function ReleaseList({
                             aria-label={`physical${tip}`}
                             className={cn(
                               "grid place-items-center",
-                              !color && "text-medium",
+                              // Neutral (Unknown / Record Store) inner dot is
+                              // WHITE; its ring is the darker --c-medium fill.
+                              // A named source tints this via `style` instead.
+                              !color && "text-fg",
                             )}
                             style={tint}
                           >
@@ -1778,7 +1781,10 @@ export function ReleaseList({
                             aria-label={`digital${tip}`}
                             className={cn(
                               "grid place-items-center",
-                              !color && "text-medium/70",
+                              // Neutral digital inner dot: white, faded to 70%
+                              // so digital still reads a touch softer than
+                              // physical. Named source tints via `style`.
+                              !color && "text-fg/70",
                             )}
                             style={tint}
                           >

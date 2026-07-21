@@ -243,6 +243,10 @@ body {
      `--c-ok` is deliberately NOT greyed — it stays green because it means
      lossless/ok, which is real information, not decoration. Brightened a touch
      (was 170) so the small track dots at 70%/25% alpha don't read too dark;
-     all neutral dots share this one value so small and medium sizes match. */
-  --c-medium: 194 194 200;
+     all neutral dots share this one value so small and medium sizes match.
+     Present dots + disc badges now render at FULL opacity (not 70%) for contrast
+     against the near-black bg; only missing-track slots stay faint. This is the
+     "darker shade" behind a white neutral inner dot (--c-fg) — a notch below
+     white, muted on purpose; the neutral pairing ring is this at 50%. */
+  --c-medium: 210 210 216;
 }
