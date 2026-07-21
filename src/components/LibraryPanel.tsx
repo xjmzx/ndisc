@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react";
 import { cn } from "../lib/cn";
 import {
+  CircleDashed,
   Disc,
   FileDown,
+  Film,
   FolderInput,
+  HardDrive,
   Library,
+  Music,
   Play,
   RotateCcw,
+  Unlink,
+  Users,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   open as openDialog,
@@ -295,31 +302,52 @@ export function LibraryStats({
   summary?: LibrarySummary | null;
 }) {
   if (!stats) return null;
+  // One background across every stat (a segmented bar), not eight separate
+  // pills: adjacent pills each paid a doubled padding boundary plus a gap
+  // between them, which is where the horizontal space was going. Segments are
+  // divided by a hairline instead, and each value reserves a fixed width (`w`
+  // ch, right-aligned) so a count growing from 9 to 9,999 never reflows the bar
+  // — the endpoints stay put beside the title and the import button.
+  // Icons instead of word-labels reclaim the most width; the full name lives in
+  // the segment's tooltip. A 2px divider in the page-bg colour (not a faint
+  // hairline) makes the grooves between segments actually read.
   return (
-    <div className="flex items-center gap-1.5">
-      <StatChip label="Total" value={stats.total} />
-      <StatChip label="Physical" value={stats.physical} />
-      <StatChip label="Digital" value={stats.digital} />
-      <StatChip label="Artists" value={stats.uniqueArtists} />
-      {/* Library-summary counts share the StatChip shell with the four above —
-          they are the same kind of fact (a count of the library), so they read
-          as one row rather than chips-then-loose-text.
-          "scanned N ago" is NOT here: it moved to the footer, being passive
-          status rather than a count, and the first thing to truncate. */}
+    <div
+      className="inline-flex items-stretch rounded-md bg-surface text-xs
+                 overflow-hidden divide-x-2 divide-bg"
+    >
+      <Stat icon={Library} label="Total" value={stats.total} w={5} />
+      <Stat icon={Disc} label="Physical" value={stats.physical} w={5} />
+      <Stat icon={HardDrive} label="Digital" value={stats.digital} w={5} />
+      <Stat icon={Users} label="Artists" value={stats.uniqueArtists} w={5} />
+      {/* Library-summary counts share the same shell — same kind of fact (a
+          count of the library), so they read as one bar. "scanned N ago" is NOT
+          here: it moved to the footer, being passive status rather than a count,
+          and the first thing to truncate. */}
       {summary && (
         <>
-          <StatChip label="Tracks" value={summary.tracks} />
+          <Stat icon={Music} label="Tracks" value={summary.tracks} w={6} />
           {summary.videos > 0 && (
-            <StatChip label="Video" value={summary.videos} />
+            <Stat icon={Film} label="Video" value={summary.videos} w={3} />
           )}
           {summary.incomplete > 0 && (
-            <StatChip label="Incomplete" value={summary.incomplete} />
+            <Stat
+              icon={CircleDashed}
+              label="Incomplete"
+              value={summary.incomplete}
+              w={3}
+            />
           )}
           {summary.orphaned > 0 && (
-            <StatChip
+            // Amber for a handful; red once it hits double digits — a single
+            // comparison, no percentage tier (a ratio is more complexity than
+            // a personal library of stable size warrants).
+            <Stat
+              icon={Unlink}
               label="Orphaned"
               value={summary.orphaned}
-              tone="warn"
+              w={2}
+              tone={summary.orphaned >= 10 ? "alert" : "warn"}
             />
           )}
         </>
@@ -328,28 +356,38 @@ export function LibraryStats({
   );
 }
 
-function StatChip({
+function Stat({
+  icon: Icon,
   label,
   value,
+  w,
   tone = "accent",
 }: {
+  icon: LucideIcon;
+  /** Full name — shown on hover, since the face is now icon-only. */
   label: string;
   value: number;
-  // `warn` is for counts that mean something is wrong (orphaned rows) — the
-  // chip shell stays identical so the row still reads as one family.
-  tone?: "accent" | "warn";
+  /** Reserved value width in `ch`, sized to the stat's realistic max, so the
+   *  segment doesn't resize as the number grows. */
+  w: number;
+  // `warn` (amber) / `alert` (red) for counts that mean something is wrong —
+  // same shell, so the bar still reads as one family.
+  tone?: "accent" | "warn" | "alert";
 }) {
+  const color =
+    tone === "alert" ? "text-alert" : tone === "warn" ? "text-warn" : "text-accent";
   return (
     <span
-      className="inline-flex items-baseline gap-1.5 px-2.5 py-2 rounded-md
-                 bg-surface text-xs whitespace-nowrap"
+      title={`${label}: ${value.toLocaleString()}`}
+      className="flex items-center gap-1.5 px-2 py-1.5 whitespace-nowrap"
     >
-      <span className="text-muted">{label}</span>
+      <Icon
+        size={13}
+        className={cn("shrink-0", tone === "accent" ? "text-muted" : color)}
+      />
       <span
-        className={cn(
-          "font-mono",
-          tone === "warn" ? "text-warn" : "text-accent",
-        )}
+        className={cn("font-mono tabular-nums text-right", color)}
+        style={{ minWidth: `${w}ch` }}
       >
         {value.toLocaleString()}
       </span>

@@ -17,6 +17,18 @@ wave; an app-only change bumps ndisc alone. See
 
 ## 0.2.0-beta.5 — unreleased
 
+### Header stats reclaim their horizontal space
+- The eight header stats were eight separate pills, each paying a doubled
+  padding boundary plus a gap — that is where the width was going, crowding the
+  title on one side and the import button on the other. They are now **one
+  segmented bar** with 2px grooves between segments, and **icons instead of
+  word-labels** (full name on hover), which is the bulk of the reclaim.
+- Each value reserves a fixed `ch` width, right-aligned with `tabular-nums`, so a
+  count growing (9 → 9,999, or climbing during a scan) never reflows the bar.
+- **Orphaned** goes red (not just amber) once it hits double digits — a single
+  comparison, no percentage tier (a ratio is more than a stable personal library
+  warrants).
+
 ### Pairing is now a per-release choice
 - **Per-release `pairedOverride`** (new nullable column): null = auto (the old
   source/Discogs inference), true = forced paired, false = forced solo. A
