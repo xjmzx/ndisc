@@ -1,0 +1,108 @@
+{
+  "$comment": "Conformance vectors for the master-release-key normalization. An implementation is conformant iff key/tag match for every case. Canonical spec: schema/master-release-key-design-2026-07-19.md; Rust reference: src-tauri/src/master_key.rs. key=null means no key (both fields empty). tag = 'master:' + first 32 hex of SHA-256(utf8(key)).",
+  "schemaVersion": "master-key.v1 (UNFROZEN)",
+  "algorithm": [
+    "NFKD",
+    "drop combining marks (Unicode category M)",
+    "lowercase",
+    "'&' and '+' -> ' and '",
+    "keep Unicode letters+numbers, else space",
+    "tokenize on whitespace",
+    "drop tokens feat/ft/featuring",
+    "drop a single leading 'the'",
+    "join with single spaces",
+    "key = norm(artist) + '|' + norm(title), or null if both empty"
+  ],
+  "vectors": [
+    {
+      "artist": "Coldcut",
+      "title": "More Beats + Pieces",
+      "key": "coldcut|more beats and pieces",
+      "tag": "master:bbd61eaedcf77badd03cf02b85ec0251"
+    },
+    {
+      "artist": "Coldcut",
+      "title": "More Beats & Pieces",
+      "key": "coldcut|more beats and pieces",
+      "tag": "master:bbd61eaedcf77badd03cf02b85ec0251"
+    },
+    {
+      "artist": "Coldcut & Hexstatic",
+      "title": "Timber",
+      "key": "coldcut and hexstatic|timber",
+      "tag": "master:76432272939c6c41a2c09642a77c3cb8"
+    },
+    {
+      "artist": "The Orb",
+      "title": "Auntie Aubrey's Excursions",
+      "key": "orb|auntie aubrey s excursions",
+      "tag": "master:33cc46427639c2198603430987a8a88f"
+    },
+    {
+      "artist": "Aleksi Perälä",
+      "title": "Sunshine 1",
+      "key": "aleksi perala|sunshine 1",
+      "tag": "master:279e87a2bb91efbf90fa2d3fc9855bff"
+    },
+    {
+      "artist": "王磊",
+      "title": "馨",
+      "key": "王磊|馨",
+      "tag": "master:dbb01da5b1f1719b1414e6b717b484a1"
+    },
+    {
+      "artist": "µ-Ziq",
+      "title": "Urmur Bile Trax Volume 1",
+      "key": "μ ziq|urmur bile trax volume 1",
+      "tag": "master:79e1b1e29dc0912bc0c0759277ef3bbb"
+    },
+    {
+      "artist": "Aphex Twin",
+      "title": "Windowlicker",
+      "key": "aphex twin|windowlicker",
+      "tag": "master:d0711611a1facffc229697935f877d51"
+    },
+    {
+      "artist": "X",
+      "title": "Vol 1",
+      "key": "x|vol 1",
+      "tag": "master:7999b16e7c4236c05d5a76743e25df1a"
+    },
+    {
+      "artist": "X",
+      "title": "Vol 2",
+      "key": "x|vol 2",
+      "tag": "master:700ee920e9556b47c514bdf6d8b50543"
+    },
+    {
+      "artist": "A feat. B",
+      "title": "T",
+      "key": "a b|t",
+      "tag": "master:af1b2950b1b25f0e8222632d27eae168"
+    },
+    {
+      "artist": "The The",
+      "title": "X",
+      "key": "the|x",
+      "tag": "master:044cb8f3b6c7369646d2a8eafc82bc5a"
+    },
+    {
+      "artist": "Mark Pritchard",
+      "title": "? / The Hologram - Single",
+      "key": "mark pritchard|hologram single",
+      "tag": "master:3e044e3efb3ff490508a5be8dc9b4b0c"
+    },
+    {
+      "artist": "{{{{",
+      "title": "{{{{",
+      "key": null,
+      "tag": null
+    },
+    {
+      "artist": "",
+      "title": "",
+      "key": null,
+      "tag": null
+    }
+  ]
+}

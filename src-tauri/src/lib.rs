@@ -471,6 +471,8 @@ fn rename_legacy_musicbrainz_column(conn: &Connection) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod master_key;
+
 mod bandcamp_id_migration {
     use rusqlite::Connection;
 
@@ -7898,6 +7900,8 @@ mod schema_v1 {
             track_total: None,
             disc_total: None,
             video_count: None,
+            source_label: None,
+            paired_override: None,
         }
     }
 
@@ -8075,6 +8079,8 @@ mod schema_v2 {
             track_total: None,
             disc_total: None,
             video_count: None,
+            source_label: None,
+            paired_override: None,
         }
     }
 

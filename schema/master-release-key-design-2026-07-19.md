@@ -75,15 +75,100 @@ foreclose option 2; it just refuses to depend on it.
 3. **Hybrid** — MBID when known, content-hash fallback; carry both so a later
    MBID backfill can reconcile hash-keyed entries.
 
-## Open questions
+## Normalization (pinned 2026-07-21, calibrated on the ~2,500-release library)
 
-- ~~Which key~~ — **decided: content-derived hash.** Still open: the exact
-  canonical field set (artist + title, and does `year` belong in it at all — a
-  reissue shares the work but not the year), the normalization algorithm
-  (case, punctuation, diacritics, articles, feat./&/and, "The"), and which hash
-  + truncation. Normalization is the whole ballgame: too loose and *Vol 1* and
-  *Vol 2* collapse (a mistake already made once by a throwaway heuristic during
-  design); too strict and nothing groups.
+**Field set: `artist` + `title` only. `year` is excluded** — a reissue shares
+the work but not the year, so including it would split editions that should
+group. Calibration found no same-artist/same-title *distinct* works, so
+excluding year introduced no false merges.
+
+**Algorithm** (per field, independently). Deliberately **regex-free and
+token-based** so Rust and JS implement it identically — no word-boundary /
+regex-dialect divergence. Reference: `src-tauri/src/master_key.rs`; the vectors
+below are machine-readable in `schema/master-key.vectors.json`.
+
+1. **NFKD** normalise, then **delete** combining marks (Unicode category `M*`;
+   JS `\p{M}`, Rust `unicode_normalization::char::is_combining_mark`). *Delete*,
+   not space: `Perälä → perala`, not `pera la`. Also folds `µ → μ` (MICRO SIGN →
+   Greek mu). CJK/Cyrillic untouched.
+2. **lowercase** (Unicode).
+3. `&` and `+` → `" and "` — conjunction variants (`Beats + Pieces` ≡
+   `Beats & Pieces` ≡ `Beats and Pieces`). MUST precede step 4, or `&` would be
+   dropped as punctuation and never become "and".
+4. replace every character that is **not** a Unicode letter (`L*`) or number
+   (`N*`) with a space. (ASCII-only `[a-z0-9]` was WRONG — it erased CJK/Cyrillic
+   titles to empty and collided them; the category test preserves all scripts.)
+5. split on whitespace into tokens.
+6. drop any token equal to `feat` / `ft` / `featuring`.
+7. if the first remaining token is `the`, drop it.
+8. join tokens with a single space.
+
+(This token form was calibrated to match a regex reference on the whole library
+bar one oddity — an A/B single `? / The Hologram` — where the token form strips
+the leading article after clearing the `? /`. Both are defensible; the token
+form is canonical because it is what every implementation runs, so they agree
+with each other. Its behaviour is locked by the vectors.)
+
+**Key** = `norm(artist) + "|" + norm(title)`. `"|"` is a safe separator: step 6
+guarantees it never appears inside a field. If both fields normalise to empty
+(e.g. an all-punctuation title), emit **no key** — a release with no
+normalisable content cannot have a meaningful content key and must not group.
+
+**Wire value:** `master:` + lowercase hex of `SHA-256(utf8(key))`, truncated to
+**32 hex chars** (128 bits — collision-safe far past any realistic scale). The
+hash is not for privacy (the title is already public) — it is a fixed-length,
+opaque match token. Emitting the raw `key` instead is a viable alternative
+(human-debuggable, one fewer thing to agree on) if that's later preferred.
+
+**Cross-implementation hazard — this is why the test vectors are the contract.**
+Normalisation must be byte-identical across ndisc (Rust), glmps/nview (JS), and
+any future consumer, or keys silently fail to match. NFKD, the `M*`/`L*`/`N*`
+category tests, and SHA-256 all agree across Rust / JS / Python. The one real
+divergence risk is **Unicode lowercasing** of exotic cases (Turkish dotted-I,
+German ß, Greek final sigma) — vanishingly rare in music metadata, but any impl
+must pass the vectors below, not merely "look right".
+
+### Test vectors (input → key) — an implementation is conformant iff it reproduces these
+
+| artist | title | key |
+|---|---|---|
+| `Coldcut` | `More Beats + Pieces` | `coldcut\|more beats and pieces` |
+| `Coldcut` | `More Beats & Pieces` | `coldcut\|more beats and pieces` |
+| `Coldcut & Hexstatic` | `Timber` | `coldcut and hexstatic\|timber` |
+| `The Orb` | `Auntie Aubrey's Excursions` | `orb\|auntie aubrey s excursions` |
+| `Aleksi Perälä` | `Sunshine 1` | `aleksi perala\|sunshine 1` |
+| `王磊` | `馨` | `王磊\|馨` |
+| `µ-Ziq` | `Urmur Bile Trax Volume 1` | `μ ziq\|urmur bile trax volume 1` |
+| `Aphex Twin` | `Windowlicker` | `aphex twin\|windowlicker` |
+| `A feat. B` | `T` | `a b\|t` |
+| `The The` | `X` | `the\|x` (only the *leading* article drops) |
+| `Mark Pritchard` | `? / The Hologram - Single` | `mark pritchard\|hologram single` |
+| `X` | `Vol 1` | `x\|vol 1` |
+| `X` | `Vol 2` | `x\|vol 2` |  ← MUST differ from `Vol 1` (regression guard)
+| `{{{{` | `{{{{` | *(no key — both fields empty)* |
+
+The full set is in `schema/master-key.vectors.json` (with wire `tag`s);
+`src-tauri/src/master_key.rs`'s test suite asserts the implementation reproduces
+every row, so fixture and code cannot drift.
+
+**Deliberately NOT normalised** (accepted splits — conservative by design, since
+a false merge is worse than a missed group, and an MBID strengthener can bridge
+these later): word-vs-numeral (`One` ≠ `1`), `Vol.`≠`Volume`, `Pt.`≠`Part`, and
+edition qualifiers (`Deluxe`, `Remastered`, `(2019)`) — these split, on purpose.
+
+## Status (2026-07-21)
+
+- ~~Which key~~ → content-derived hash. ~~Field set~~ → artist+title, no year.
+  ~~Normalisation~~ → pinned + calibrated on the library. ~~Canonical function +
+  shared fixture~~ → **built**: `src-tauri/src/master_key.rs` (pure, tested) and
+  `schema/master-key.vectors.json`. Wire form: `master:` + 32-hex SHA-256 (the
+  raw-key alternative is noted above but the hash is chosen).
+- **NOT built — the coordinated wave:** emitting the `master` tag on the
+  `kind:31237` release event and having consumers filter on it. That is the
+  SHA-pinned-contract change across ndisc + glmps + nview together, done as one
+  wave like clip.v1 — deliberately separate from the pure function above.
+- **Still open for the wave:** port `master_key` to JS in glmps/nview and prove
+  it against `master-key.vectors.json`; decide the tag name/shape on `31237`.
 - Tag form: an `i`-tag (`master:<key>` / NIP-73 external-id style) vs a
   dedicated tag. Additive to SHA-pinned `release.v2` → coordinated wave.
 - Does `clip.v1` *also* carry the master key, or do consumers resolve it

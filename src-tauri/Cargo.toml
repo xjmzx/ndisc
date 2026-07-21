@@ -23,6 +23,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Bundled SQLite — vendors libsqlite3 with the build, so no system dep needed.
 rusqlite = { version = "0.32", features = ["bundled"] }
+# Master-release-key: NFKD + combining-mark strip for the content-hash
+# normalisation, and SHA-256 for its wire form. See src/master_key.rs +
+# schema/master-release-key-design-2026-07-19.md. (Both were already transitive.)
+unicode-normalization = "0.1"
+sha2 = "0.10"
 # Local-library import: walk dirs and read audio tags.
 trash = "5"
 walkdir = "2"
