@@ -2735,12 +2735,39 @@ fn write_catalogue_manifest(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ManifestTrack {
+    /// Source audio file path relative to the release `dir`.
+    pub relpath: String,
+    pub title: Option<String>,
+    /// Track number within its disc, as a string (wire form). None when unknown.
+    pub track: Option<String>,
+    /// Disc number; None (or "1") for single-disc releases.
+    pub disc: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ManifestRelease {
     pub id: i64,
     pub artist: String,
     pub title: String,
     /// Absolute path of the release folder on disk.
     pub dir: String,
+    /// Authoritative NIP-19 `naddr` for this release's kind:31237 event, stored
+    /// at publish time (`last_published_naddr`). Materialises the coordinate so a
+    /// clip's `a`-ref resolves relay -> folder without re-deriving the d-tag.
+    /// None on rows published before the column existed — "Reconcile relays"
+    /// backfills them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub naddr: Option<String>,
+    /// Track-level join data `{relpath,title,track,disc}` for the clip.v1
+    /// reconcile. EMPTY for now: ndisc persists no tracklist (only track COUNTS;
+    /// the Discogs tracklist is fetched transiently) — see `write_published_manifest`
+    /// and clip-mapping-design-2026-07-17.md §2. Populating it needs a source
+    /// decision (walk the release folder at export, or hand off ntree's scan).
+    /// Consumers MUST read an absent/empty `tracks` as "not yet indexed", never
+    /// "zero tracks".
+    pub tracks: Vec<ManifestTrack>,
 }
 
 #[derive(Serialize)]
@@ -2748,6 +2775,11 @@ pub struct ManifestRelease {
 pub struct PublishedManifest {
     pub version: u32,
     pub generated_at: i64,
+    /// Publisher pubkey (hex). Consumers build the release coordinate
+    /// `31237:<ndiscPubkey>:disco-vault:<id>` and filter their own clips with it,
+    /// instead of hard-coding the author key. None when no identity is stored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ndisc_pubkey: Option<String>,
     pub library_root: Option<String>,
     pub releases: Vec<ManifestRelease>,
 }
@@ -2762,14 +2794,25 @@ pub struct ManifestSummary {
     pub without_path: usize,
 }
 
-/// Write the Nostr-published releases that have a folder on disk to the
-/// suite-shared manifest. Read-only against the library.
-#[tauri::command]
-fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, String> {
-    let conn = open(&app)?;
+/// Build + write `published.json` (and refresh the sibling `catalogue.json`) to
+/// the suite-shared dir. Read-only against the library. Extracted from the
+/// #[tauri::command] so the auto-export hooks on publish/unpublish can keep the
+/// manifest in step with publish state without a manual button press.
+fn write_published_manifest(app: &tauri::AppHandle) -> Result<ManifestSummary, String> {
+    let conn = open(app)?;
+
+    // ndiscPubkey — the author key consumers use to build the release coordinate
+    // and to filter their own clips. Best-effort: None when no identity is stored
+    // (a keyless export is still a valid manifest, just without the coordinate key).
+    let ndisc_pubkey = load_nsec()
+        .ok()
+        .flatten()
+        .and_then(|nsec| keys_from_nsec(&nsec).ok())
+        .map(|keys| keys.public_key().to_string());
+
     let mut stmt = conn
         .prepare(
-            "SELECT id, artist, title, file_path
+            "SELECT id, artist, title, file_path, last_published_naddr
                FROM releases
               WHERE publish_state = 'published'
               ORDER BY artist, title",
@@ -2782,6 +2825,7 @@ fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, S
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
             ))
         })
         .map_err(|e| e.to_string())?;
@@ -2789,25 +2833,30 @@ fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, S
     let mut releases = Vec::new();
     let mut without_path = 0usize;
     for row in rows {
-        let (id, artist, title, dir) = row.map_err(|e| e.to_string())?;
+        let (id, artist, title, dir, naddr) = row.map_err(|e| e.to_string())?;
         match dir {
             Some(d) if !d.trim().is_empty() => releases.push(ManifestRelease {
                 id,
                 artist,
                 title,
                 dir: d,
+                naddr,
+                // See the struct doc: ndisc has no per-track data to populate yet.
+                tracks: Vec::new(),
             }),
             _ => without_path += 1,
         }
     }
 
+    let library_root = get_library_root(app.clone()).ok().flatten();
     let manifest = PublishedManifest {
-        version: 1,
+        version: 2,
         generated_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0),
-        library_root: get_library_root(app.clone()).ok().flatten(),
+        ndisc_pubkey,
+        library_root: library_root.clone(),
         releases,
     };
 
@@ -2819,13 +2868,21 @@ fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, S
 
     // Refresh the sibling catalogue export in the same action, so the two suite
     // manifests never drift apart. Consumers: nplay (label filter).
-    write_catalogue_manifest(&conn, &dir, manifest.library_root.clone())?;
+    write_catalogue_manifest(&conn, &dir, library_root)?;
 
     Ok(ManifestSummary {
         path: path.to_string_lossy().to_string(),
         releases: manifest.releases.len(),
         without_path,
     })
+}
+
+/// Write the Nostr-published releases that have a folder on disk to the
+/// suite-shared manifest. Read-only against the library. Thin wrapper over
+/// `write_published_manifest` for the manual "Export published manifest" action.
+#[tauri::command]
+fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, String> {
+    write_published_manifest(&app)
 }
 
 /// Passive library readout for the header: cheap live SQL for
@@ -3683,6 +3740,12 @@ async fn unpublish_release(
             params![release_id],
         )
         .map_err(|e| e.to_string())?;
+    }
+
+    // Best-effort manifest refresh so a retraction drops the release from
+    // published.json without a manual export (never fails the unpublish).
+    if !accepted_by.is_empty() {
+        let _ = write_published_manifest(&app);
     }
 
     Ok(PublishResult {
@@ -4861,6 +4924,12 @@ async fn publish_release(
         .map_err(|e| e.to_string())?;
     }
 
+    // Keep the suite manifest in step with publish state, no manual export
+    // needed. Best-effort — a manifest write must never fail the publish itself.
+    if !accepted_by.is_empty() {
+        let _ = write_published_manifest(&app);
+    }
+
     Ok(PublishResult {
         event_id,
         naddr,
@@ -4941,6 +5010,10 @@ async fn publish_ids(
     }
 
     let _ = client.shutdown().await;
+    // One manifest refresh after the batch if anything actually published.
+    if summary.published > 0 {
+        let _ = write_published_manifest(&app);
+    }
     Ok(summary)
 }
 
@@ -5025,6 +5098,10 @@ async fn unpublish_ids(
     }
 
     let _ = client.shutdown().await;
+    // One manifest refresh after the batch if any retraction landed.
+    if summary.published > 0 {
+        let _ = write_published_manifest(&app);
+    }
     Ok(summary)
 }
 
@@ -9140,6 +9217,79 @@ mod schema_clip_v1 {
             actual, pinned,
             "schema/clip.v1.json drifted from its pin — re-cut it in the same commit: \
              (cd schema && sha256sum clip.v1.json > clip.v1.json.sha256)"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// published.json shape (v2) — the suite-shared manifest ntree/nsmpl reconcile
+// against and nplay/glmps read. Locks the serialized wire keys: camelCase names,
+// `ndiscPubkey` + per-release `naddr` OMITTED when absent (so consumers test
+// presence, not null), and `tracks` always an array (empty = "not yet indexed").
+#[cfg(test)]
+mod published_manifest_shape {
+    use super::*;
+
+    #[test]
+    fn serialises_v2_camelcase_with_optional_omission() {
+        let m = PublishedManifest {
+            version: 2,
+            generated_at: 1_700_000_000,
+            ndisc_pubkey: Some("deadbeef".into()),
+            library_root: Some("/music".into()),
+            releases: vec![
+                ManifestRelease {
+                    id: 7,
+                    artist: "Aphex Twin".into(),
+                    title: "Windowlicker".into(),
+                    dir: "/music/aphex".into(),
+                    naddr: Some("naddr1xyz".into()),
+                    tracks: vec![ManifestTrack {
+                        relpath: "01.flac".into(),
+                        title: Some("Windowlicker".into()),
+                        track: Some("1".into()),
+                        disc: None,
+                    }],
+                },
+                // naddr None must be omitted; tracks empty must serialise as [].
+                ManifestRelease {
+                    id: 8,
+                    artist: "Boards of Canada".into(),
+                    title: "Geogaddi".into(),
+                    dir: "/music/boc".into(),
+                    naddr: None,
+                    tracks: vec![],
+                },
+            ],
+        };
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["version"], 2);
+        assert_eq!(v["ndiscPubkey"], "deadbeef");
+        assert_eq!(v["libraryRoot"], "/music");
+
+        let r0 = &v["releases"][0];
+        assert_eq!(r0["naddr"], "naddr1xyz");
+        assert_eq!(r0["tracks"][0]["relpath"], "01.flac");
+        assert_eq!(r0["tracks"][0]["track"], "1");
+
+        let r1 = &v["releases"][1];
+        assert!(r1.get("naddr").is_none(), "None naddr must be omitted, not null");
+        assert_eq!(r1["tracks"], serde_json::json!([]), "empty tracks must be []");
+    }
+
+    #[test]
+    fn ndisc_pubkey_omitted_when_no_identity() {
+        let m = PublishedManifest {
+            version: 2,
+            generated_at: 0,
+            ndisc_pubkey: None,
+            library_root: None,
+            releases: vec![],
+        };
+        let v = serde_json::to_value(&m).unwrap();
+        assert!(
+            v.get("ndiscPubkey").is_none(),
+            "ndiscPubkey must be omitted when no key is stored"
         );
     }
 }
