@@ -235,4 +235,14 @@ body {
   --c-mauve: 198 198 204;
   --c-digital: 152 152 159;
   --c-auburn: 150 150 156;
+
+  /* Neutral dot token — the source / pairing / track dots when NO specific
+     acquisition source colour applies. Monochrome here on purpose: mono is grey
+     by default, and colour is reserved for a named source (Bandcamp blue,
+     Boomkat amber, …), whose hex is theme-independent and shows through. Note
+     `--c-ok` is deliberately NOT greyed — it stays green because it means
+     lossless/ok, which is real information, not decoration. Brightened a touch
+     (was 170) so the small track dots at 70%/25% alpha don't read too dark;
+     all neutral dots share this one value so small and medium sizes match. */
+  --c-medium: 194 194 200;
 }

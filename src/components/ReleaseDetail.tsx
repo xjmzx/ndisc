@@ -1198,7 +1198,8 @@ function DiscCountField({
           value={value}
           title={`${value} disc${value === 1 ? "" : "s"}`}
           shapeClassName="rounded-[3px]"
-          colorClassName="bg-ok/70 text-bg"
+          // Neutral-dot token — grey in mono, green in the colour themes.
+          colorClassName="bg-medium/70 text-bg"
           size={17}
         />
       ) : (

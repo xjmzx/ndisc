@@ -14,6 +14,7 @@ export interface SourcePlatform {
 
 export const SOURCE_PLATFORMS: SourcePlatform[] = [
   { key: "bandcamp", label: "Bandcamp", domain: "bandcamp.com", color: "#1da0c3" },
+  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#e5a23a" },
   { key: "soundcloud", label: "SoundCloud", domain: "soundcloud.com", color: "#ff5500" },
   { key: "mixcloud", label: "Mixcloud", domain: "mixcloud.com", color: "#5000ff" },
   { key: "wavlake", label: "Wavlake", domain: "wavlake.com", color: "#00c853" },
@@ -181,7 +182,15 @@ export function sourceIsDigital(name: string | null | undefined): boolean {
 // grouping ring and the medium-glyph tint. Prefers the user-assigned
 // `sourceLabel`; falls back to the platform inferred from the URL/receipt; null
 // when neither applies (callers then use the neutral default, e.g. --c-ok).
+// Generic "default" source names that stay MONOCHROME — a "Record Store" is the
+// catch-all physical-purchase bucket, not a branded source with its own hue, so
+// it reads as the neutral dot (grey in mono) regardless of any assigned colour.
+const NEUTRAL_SOURCE_NAMES = new Set(["record store"]);
+
 export function releaseSourceColor(r: Release): string | null {
+  if (NEUTRAL_SOURCE_NAMES.has((r.sourceLabel ?? "").trim().toLowerCase())) {
+    return null;
+  }
   const assigned = sourceColor(r.sourceLabel);
   if (assigned) return assigned;
   const p = sourcePlatform(r);

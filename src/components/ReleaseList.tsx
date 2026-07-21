@@ -1654,7 +1654,9 @@ export function ReleaseList({
                       value={r.discTotal}
                       title={`${r.discTotal} discs`}
                       shapeClassName="rounded-full"
-                      colorClassName="bg-ok/70 text-bg"
+                      // Neutral-dot token like the track dots — grey in mono,
+                      // green in the colour themes. (Squares stay as they were.)
+                      colorClassName="bg-medium/70 text-bg"
                     />
                   )}
                   {/* Audio-visual marker — present when the release folder
@@ -1689,12 +1691,13 @@ export function ReleaseList({
                       // half (a Discogs entry or a physical source) — gets a
                       // translucent FILL behind the state + medium dots. Its
                       // COLOUR encodes the acquisition source (Bandcamp blue,
-                      // Discogs its hue, …); leaf-green --c-ok is the default.
+                      // Boomkat amber, …); the neutral --c-medium dot is the
+                      // default — green in the colour themes, grey in mono.
                       // See isPaired in lib/source.ts.
                       isPaired(r)
                         ? {
                             backgroundColor: colorWithAlpha(
-                              releaseSourceColor(r) ?? "rgb(var(--c-ok))",
+                              releaseSourceColor(r) ?? "rgb(var(--c-medium))",
                               0.5,
                             ),
                           }

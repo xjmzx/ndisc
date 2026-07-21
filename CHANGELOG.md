@@ -17,6 +17,20 @@ wave; an app-only change bumps ndisc alone. See
 
 ## 0.2.0-beta.5 — unreleased
 
+### Monochrome dots in the mono theme, colour reserved for a source
+- The suite's green dots were "green everywhere". Now the neutral source /
+  pairing / track / disc dots share one token (`--c-medium`) that is **grey in
+  the mono theme** (the default) and green in the colour themes — so mono is
+  monochrome by default and colour is reserved for a **named acquisition
+  source**, whose hex shows through in every theme. `--c-ok` stays green
+  throughout: it means lossless/ok, which is information, not decoration.
+- Applied across the list (leaf-dots, disc circles, pairing fill) and the detail
+  panel (disc tile). Brightened the mono value so small dots at 70 %/25 % alpha
+  don't read too dark, and unified on one value so small and medium sizes match.
+- **Boomkat** added to the source palette (warm amber, inferred from
+  `boomkat.com`). **Record Store** is forced neutral — a generic
+  physical-purchase bucket, not a branded source, so it reads as the default dot.
+
 ### Fix a stale orphan count in the header
 - `orphaned` is the one header stat that is a cached snapshot (`lastOrphaned` in
   config), not a live `COUNT(*)` — because recomputing it means stat-ing every

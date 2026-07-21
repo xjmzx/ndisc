@@ -94,9 +94,9 @@ export function LeafDots({
         atMax={shown >= max}
         title={title}
         className={className}
-        // Tracks: solid green rounded tile, dark number on top.
+        // Tracks: solid neutral-dot rounded tile (grey in mono), dark number on top.
         shapeClassName="rounded-[3px]"
-        colorClassName="bg-ok/70 text-bg"
+        colorClassName="bg-medium/70 text-bg"
       />
     );
   }
@@ -119,8 +119,8 @@ export function LeafDots({
           key={i}
           className={cn(
             "w-1 h-1 rounded-full",
-            // solid green = present track; faint (25%) = a missing slot.
-            i < present ? "bg-ok/70" : "bg-ok/25",
+            // present track = solid neutral dot (grey in mono); missing slot = faint 25%.
+            i < present ? "bg-medium/70" : "bg-medium/25",
           )}
         />
       ))}
