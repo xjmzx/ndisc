@@ -2830,6 +2830,23 @@ fn export_published_manifest(app: tauri::AppHandle) -> Result<ManifestSummary, S
 /// releases/tracks/incomplete/videos, plus orphan count + last-scanned time
 /// carried from the last reconcile (so we never re-walk the disk just to
 /// render the summary line).
+/// Decrement the persisted orphan snapshot by one — called when an orphan is
+/// resolved (relocated or deleted) OUTSIDE a full reconcile. `orphaned` is the
+/// one header stat that isn't a live COUNT(*) (recomputing it means stat-ing
+/// every release's folder, which is exactly the per-render filesystem cost we
+/// don't want), so it's a cached snapshot the resolution actions must keep in
+/// step. Clamped at 0; a full reconcile still rewrites the authoritative value.
+#[tauri::command]
+fn decrement_orphaned(app: tauri::AppHandle) -> Result<i64, String> {
+    let cur = read_config(&app)
+        .get("lastOrphaned")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let next = (cur - 1).max(0);
+    write_config_patch(&app, &[("lastOrphaned", serde_json::json!(next))])?;
+    Ok(next)
+}
+
 #[tauri::command]
 fn get_library_summary(app: tauri::AppHandle) -> Result<LibrarySummary, String> {
     let conn = open(&app)?;
@@ -7768,6 +7785,7 @@ pub fn run() {
             get_library_root,
             set_library_root,
             get_library_summary,
+            decrement_orphaned,
             export_published_manifest,
             sync_cover_to_disk,
             update_release_path,

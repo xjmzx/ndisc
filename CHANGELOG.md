@@ -17,6 +17,17 @@ wave; an app-only change bumps ndisc alone. See
 
 ## 0.2.0-beta.5 — unreleased
 
+### Fix a stale orphan count in the header
+- `orphaned` is the one header stat that is a cached snapshot (`lastOrphaned` in
+  config), not a live `COUNT(*)` — because recomputing it means stat-ing every
+  release folder, a per-render filesystem cost we deliberately avoid. But the
+  per-orphan fix actions (`Locate…` / `delete` in the orphan list) only
+  decremented the transient scan strip, never the snapshot — so resolving an
+  orphan that way left the header count stuck until a full rescan.
+- Those actions now call `decrement_orphaned` (a clamped-at-0 single-int config
+  write, no disk walk), so the header tracks reality immediately. A full
+  reconcile still rewrites the authoritative value.
+
 ### Header stats reclaim their horizontal space
 - The eight header stats were eight separate pills, each paying a doubled
   padding boundary plus a gap — that is where the width was going, crowding the

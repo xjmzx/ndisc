@@ -47,6 +47,7 @@ import {
   setLibraryRoot,
   unpublishRelease,
   updateReleasePath,
+  decrementOrphaned,
   type ExtractSummary,
   type ImportProgress,
   type CoverLinkFilter,
@@ -645,6 +646,7 @@ export function ReleaseList({
         }
         return prev;
       });
+      await decrementOrphaned().catch(() => {});
       await reload();
     } catch (err) {
       setError(String(err));
@@ -698,6 +700,7 @@ export function ReleaseList({
         }
         return prev;
       });
+      await decrementOrphaned().catch(() => {});
       await reload();
     } catch (err) {
       setError(String(err));

@@ -999,3 +999,10 @@ export async function deleteReleaseIgnorePath(releaseId: number): Promise<string
 export async function forgetMergedPath(path: string): Promise<void> {
   return invoke("forget_merged_path", { path });
 }
+
+/** Decrement the persisted orphan snapshot by one when an orphan is resolved
+ *  (relocated/deleted) outside a full reconcile, so the header count tracks
+ *  reality without an expensive re-scan. Clamped at 0. Returns the new count. */
+export async function decrementOrphaned(): Promise<number> {
+  return invoke<number>("decrement_orphaned");
+}
