@@ -200,7 +200,8 @@ each app declaring its own stack.
   themes: **fizx.uk** (default) and **upleb.uk** (orange swap). **Reference the
   tokens, never hardcode hexes.** Semantic roles: `bg` / `panel` / `surface` /
   `surfaceHover`, `fg` / `muted`, `accent`, `digital`, `mauve`, `ok` / `warn` /
-  `alert` / `auburn`, and `medium` (leaf-green, the physical/digital mark).
+  `alert` / `auburn`, and `medium` (the **neutral-dot** token — grey in mono,
+  green in the colour themes; see the dot colour model below).
 - **Typography** — Helvetica for UI; **monospace** for numbers, paths, IDs and
   hashes.
 - **Form** — squared 90° corners; filled boxes over outlines.
@@ -208,10 +209,29 @@ each app declaring its own stack.
   2.5 rem `CollapsedStrip` sliver and hands its width to the neighbours via a
   grid template. Shared across `ndisc` / `ntree` / `nsmpl` / `nplay`.
 - **Leaf / foliage vocabulary** — *leaf-dots* show present-vs-expected
-  completeness (solid = present, faint = missing; threshold ~25%); *count
-  badges* show track / disc counts.
+  completeness (present = **full opacity**, missing = faint ~30%); *count
+  badges* show track / disc counts (full-opacity fill).
+- **Dot colour model (mono-first, reference impl = `ndisc` 2026-07-21).** Dots
+  are monochrome by default; **colour is reserved for a named acquisition
+  source**. The model, for other apps to follow:
+  - **Neutral dots** — tracks, disc badges, and the pairing ring of an
+    unknown/generic source — use **`--c-medium`**: *grey in the mono theme,
+    green in the colour themes*. (`--c-medium` was the "leaf-green medium mark";
+    it is now the general neutral-dot token.)
+  - A neutral release's **inner medium dot is white (`--c-fg`)** — a notch
+    brighter than its **`--c-medium` ring**. "Inner bright / ring a shade
+    darker" is the template.
+  - A **named source colours its inner dot with a theme-independent hex**
+    (`lib/source.ts` seed or a user-assigned colour), and its **ring is that hex
+    at 0.5 alpha** — darker by association. The hex shows in every theme, mono
+    included.
+  - **`--c-ok` (green) is never greyed in mono** — it means lossless/ok, which
+    is information, not decoration.
+  - Generic bucket names (e.g. `Record Store`) are forced neutral in
+    `releaseSourceColor`, so they read as the default dot, not a branded source.
 - **Source-platform indicators** — `lib/source.ts` detects and colours
-  bandcamp / soundcloud / mixcloud / wavlake / tidal; kept byte-identical in
+  bandcamp `#1da0c3` / boomkat `#416644` / soundcloud / mixcloud / wavlake /
+  tidal (plus user-assigned sources); kept byte-identical in
   `ndisc` / `nview` / `glmps`.
 - **Genre palette** — 38 active slugs with fixed hue assignments, shared between
   `ndisc` and `glmps` (the `g.*` Tailwind tokens; all slugs are pure peers).
