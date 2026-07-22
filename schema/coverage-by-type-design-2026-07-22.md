@@ -1,8 +1,43 @@
 # Coverage-by-type + playback source-select — design note (2026-07-22)
 
-> **Status: SPEC — not built.** The ntree-side counterpart to nsmpl's three-root
-> switcher. No wire change; a per-app library-view feature over the three suite
-> trees (`music` / `music_clips` / `music_clips_comp`). Design conversation only.
+> **Status: BUILT — Phases 1–3 (ntree, 2026-07-22).** The ntree-side counterpart
+> to nsmpl's three-root switcher. No wire change; a per-app library-view feature
+> over the three suite trees (`music` / `music_clips` / `music_clips_comp`). What
+> shipped is in "Built" below; the sections beneath it are the original spec,
+> kept for the reasoning (the shape settled differently — see Built).
+
+## Built — Phases 1–3 (2026-07-22)
+
+The per-row bar became a **full-track play/navigate timeline**, and the three
+type-views shipped as **playback controls** whose presence doubles as the
+coverage-by-type readout — rather than the "three stacked bars vs triple dot"
+sketched below.
+
+**Phase 1 — the bar is a full-track timeline.** Each track row's `TrackTimeline`
+spans the full source duration; the 10 s sample is a marked region at its true
+offset (~30 s), floored to ≥6% width so a short slice stays visible. Click to
+play / seek the full **source** track (cheap seek while playing) via a reused
+`HTMLAudioElement`; an accent playhead tracks position.
+
+**Phase 2 — source · clip · Opus per row.** Three auditions: the bar (source),
+the ▶ button (10 s FLAC clip, present when sampled), and a `[🌐 opus]` chip (the
+Opus web copy, present when compressed). One shared audio element, so starting
+any stops the others — A/B the FLAC vs its Opus. **Availability *is* the
+coverage-by-type readout** (▶ ⇒ clip on disk · 🌐 ⇒ opus on disk · bar ⇒ source).
+Opus resolves by string-mirror: `compressDest/<sig>.10s.opus`.
+
+**Phase 3 — WaveSurfer source waveform.** Selecting a track shows a read-only
+WaveSurfer waveform of the source in the Sample panel — scrub + play + the 10 s
+region marked; mutually exclusive with the row playback. Parity with nsmpl
+(separate code, same palette); nsmpl untouched. *Deferred: ranged/streamed decode
+— full-FLAC decode is a beat for long tracks.*
+
+**Colour identity.** A stable `--c-opus` blue (survives every theme, like a
+verdict) gives Opus a distinct identity vs the neutral `--c-medium` clip. Every
+coverage/duration bar in **both** apps adopted the shared
+`[--c-medium sample | --c-opus/15 remainder]` scheme.
+
+*Noted follow-up: revisit element appearance + row layout in ntree.*
 
 ## Why this exists (and why the nsmpl switcher can't just be ported)
 
@@ -50,20 +85,24 @@ configured roots (Source · Destination · Compress) + the track's relpath (same
 mirroring the Compress step and nsmpl's switcher already do). A facet with no
 file on disk is simply not offered.
 
-## Open decisions (before building)
+## Decisions — how the open questions resolved
 
-1. **Bar vs segmented indicator** — three stacked bars (richer, taller rows) vs a
-   compact triple dot/segment (denser, less quantitative). Row height budget in
-   the tree is tight; lean compact.
-2. **Where the roots come from** — ntree already has Source/Dest/Compress as
-   per-app config; keep that, or move to the shared roots manifest (the deferred
-   option-1 that nsmpl already reads via `clips_root`/`resolve_source`). The
-   manifest is the long-term convergence point for both apps.
-3. **nsmpl parity** — does nsmpl's browser rows grow the same three-facet
-   indicator? It already shows one coverage bar (clip ÷ source); Opus would be a
-   third. Probably yes, for consistency.
-4. **Playback file resolution** — trivial string-mirror across roots (like the
-   switcher) vs going through `resolve_source`/the manifest.
+1. **Bar vs segmented indicator** → *neither as sketched.* The bar became a
+   full-track timeline; the three types are playback controls whose presence is
+   the coverage readout.
+2. **Where the roots come from** → kept **per-app config** (ntree's
+   Source/Dest/Compress; nsmpl's `lib/roots.ts`). The shared roots manifest stays
+   the long-term convergence point — not adopted yet.
+3. **nsmpl parity** → **yes.** The `--c-opus` blue + `[grey | blue]` bar scheme
+   apply to nsmpl's coverage bars too.
+4. **Playback file resolution** → **string-mirror** across roots (not
+   `resolve_source`/the manifest).
+
+**Still open / deferred:**
+- **Ranged/streamed decode** for the waveform (long-FLAC decode latency).
+- **Shared roots manifest** convergence (both apps still on per-app roots).
+- **Appearance + layout revisit** in ntree — element styling / row layout, a
+  noted next pass.
 
 ## Visual-consistency baseline (harmonized 2026-07-22, so the three read as one)
 
