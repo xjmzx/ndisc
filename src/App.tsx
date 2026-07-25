@@ -404,8 +404,12 @@ export default function App() {
     <ReactionsProvider npub={npub}>
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col
                     pt-6 px-6 pb-2 max-w-[1500px] mx-auto">
-      <header className="mb-4 px-4 shrink-0 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 shrink-0">
+      {/* Suite top-bar grammar (SUITE.md § Top-bar grammar): rounded panel
+          card, three-column grid [identity | focal module | controls]. */}
+      <header className="mb-4 shrink-0 rounded-lg bg-panel shadow-md px-4 py-3
+                         grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+        {/* LEFT — identity: theme-cycling wordmark + version chip. */}
+        <div className="flex items-center gap-3 shrink-0 min-w-0">
           <button
             type="button"
             onClick={() => setTheme((t) => (t === "fizx" ? "upleb" : t === "upleb" ? "mono" : "fizx"))}
@@ -421,22 +425,32 @@ export default function App() {
                        leading-none shrink-0 cursor-pointer transition-opacity
                        hover:opacity-70"
           >
-            n<span className="text-fg">disc</span>
+            n<span className="text-mauve">disc</span>
           </button>
-          {/* Version lives in the footer, not here. In the header it competed
-              with the library stats for the same squeezed row and clipped
-              mid-string ("v0.1.4-beta.…"); it is reference information, not
-              something you act on. */}
+          {/* Version chip — belongs in the header left group per the suite
+              grammar (the footer carries stack + machine values only). The
+              three-column grid gives the centre stats their own track, so the
+              chip no longer competes with them for a squeezed flex row the way
+              it did before. */}
+          {appVersion && (
+            <span
+              className="hidden md:inline-flex items-center px-2.5 py-2
+                         rounded-md bg-surface text-mauve font-mono text-xs
+                         shrink-0"
+            >
+              v{appVersion}
+            </span>
+          )}
         </div>
 
-        {/* Library stats — centred between the title and the toolbar. */}
-        <div className="hidden lg:flex flex-1 items-center justify-center
-                        min-w-0 px-4">
+        {/* CENTRE — the focal module: library stats readout. */}
+        <div className="hidden lg:flex items-center justify-center min-w-0">
           <LibraryStats stats={lib.stats} summary={lib.summary} />
         </div>
 
-        {/* Toolbar: library | db | nostr — three divider-separated groups. */}
-        <div className="flex items-center gap-2 shrink-0 min-w-0">
+        {/* RIGHT — controls: app-work (library | db) | nostr identity |
+            view-switch (always last). Pinned to the right of the 1fr track. */}
+        <div className="flex items-center gap-2 shrink-0 min-w-0 justify-self-end">
           {/* library group — import local / discogs, enrich, export markdown */}
           <LibraryToolbar lib={lib} />
           <EnrichToolbarButton enrich={enrich} />
@@ -649,9 +663,8 @@ export default function App() {
       <footer className="mt-4 shrink-0 flex flex-wrap items-center justify-between
                           gap-x-8 gap-y-1 text-xs text-muted">
         <span className="inline-flex items-center gap-2 min-w-0">
-          {appVersion && (
-            <span className="font-mono text-mauve shrink-0">v{appVersion}</span>
-          )}
+          {/* Version moved to the header chip (suite top-bar grammar); the
+              footer now carries only the stack line + machine values. */}
           <span className="truncate">
             scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite
           </span>

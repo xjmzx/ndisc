@@ -167,6 +167,45 @@ treatment first.
 app's **header title**, which today is plain text. Resolve the theme question
 before acting on it.
 
+### Top-bar grammar (2026-07-25)
+
+Every app's top bar is the **same three-zone frame** so the suite reads as one
+family — only the *contents* of each zone are app-specific. Reference impl:
+`ndisc`. Applies to `ndisc` / `nplay` / `ntree` / `nsmpl`.
+
+**Container.** A rounded panel card: `rounded-lg bg-panel shadow-md px-4 py-3`,
+laid out as a **three-column grid** `grid-cols-[1fr_auto_1fr] items-center
+gap-4`. The `1fr … 1fr` flanks keep the centre module optically centred
+regardless of how wide the left/right zones grow.
+
+**LEFT — identity.** The theme-cycling **wordmark** (`n` in `--c-accent`, the
+app suffix in `--c-mauve` — the suffix repaints orange under upleb, which is
+correct for the wordmark) then a **version/status chip** (`bg-surface
+text-mauve font-mono text-xs`, `hidden md:inline-flex`). An app may fold live
+status into that chip (`ntree`), and may hang one app-scoped affordance off the
+left group (`nplay`'s music-folder path). Version lives **here**, not the
+footer; the footer carries stack + machine values only.
+
+**CENTRE — the one focal module.** Exactly one, and it is the app's primary
+live thing: **master transport** for players (`nplay`, `nsmpl`), the **primary
+readout** for catalogue/scanner apps (`ndisc` library stats, `ntree` scan
+verdict bar). It degrades gracefully (`hidden lg:flex`) at narrow widths.
+
+**RIGHT — controls, in this fixed left→right order**, each group divider-
+separated by `<span class="w-px h-6 bg-surface shrink-0" aria-hidden>`:
+1. **app-work** — the app's own actions (import/enrich/export, Scan, density /
+   decks / edits `Segmented`s);
+2. **Nostr identity** — optional NIP-05 chip + the **forget-identity** button,
+   rendered only when signed in;
+3. **view-switch** — **always last.** `ToolbarIconButton tone="digital"`, icon
+   size 14, **Home first**, active view always lit (it is the single way back).
+   Single-view apps (`nsmpl`) omit this group entirely.
+
+**Shared primitives.** `ToolbarIconButton` (vendored per repo) is the one
+icon-button vocabulary: `tone="digital"` for view-switch, `tone="mauve"` for
+the forget-identity button, `tone="auburn"` for the db group. Don't hand-roll a
+one-off button where one of these fits.
+
 ### Parked for the lab
 
 Three open design questions, all deliberately not guessed at:
