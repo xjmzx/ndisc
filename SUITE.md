@@ -153,19 +153,20 @@ interchangeable:
 | asset | what it is | where it may be used |
 |---|---|---|
 | `n.circle` | the **suite mark** — bold `n` in a ring, monochrome | docs, READMEs, org avatar. No theme risk. |
-| `n.disc` · `n.play` · `n.smpl` · `n.tree` | per-app **horizontal lockups** (mark + wordmark, dot motif in each mark) | **docs only, for now.** Vendored per repo as `docs/<app>-lockup.svg`. |
+| `n.disc` · `n.play` · `n.smpl` · `n.tree` | per-app **horizontal lockups** (mark + wordmark, dot motif in each mark) — now **monochrome** (black/white) | docs / READMEs. Vendored per repo as `docs/<app>-lockup.svg`. |
 | `<app>.svg` / `<app>-sq.svg` | **launcher icons** — the app-icon masters | `icon.svg` in each repo → scalable launcher + Tauri raster set |
 
-**The lockups are not yet cleared for in-app use, and there is a specific reason.**
-They are hardcoded mauve (`#AA43FF`), and **the upleb theme repaints `--c-mauve`
-orange** — the exact collision that forced ndisc's publish state onto a dedicated
-theme-neutral `--c-nostr`. A mauve lockup in a header would clash the moment the
-theme is switched. Adopting them in-app means giving them a theme-neutral
-treatment first.
+**The lockups are now monochrome (2026-07-25).** They used to be hardcoded mauve
+(`#AA43FF`), which **the upleb theme repaints orange** — the exact collision that
+forced ndisc's publish state onto the theme-neutral `--c-nostr`, and the reason
+they were kept out of headers. The masters were re-exported black/white, so the
+vendored `docs/<app>-lockup.svg` are now **theme-neutral** and hold under both
+fizx and upleb. `n.circle` (the suite mark) was already monochrome.
 
-**Design pointer (not built):** the lockups are the intended direction for each
-app's **header title**, which today is plain text. Resolve the theme question
-before acting on it.
+**Design pointer (still not built):** the lockups remain the intended direction
+for each app's **header title**, which today is plain text. The theme blocker is
+resolved now that they're monochrome; adopting them in-app is a separate step,
+not yet taken.
 
 ### Top-bar grammar (2026-07-25)
 
@@ -249,15 +250,12 @@ any height.
 
 ### Parked for the lab
 
-Three open design questions, all deliberately not guessed at:
+Two open design questions, all deliberately not guessed at:
 
-1. **Theme-neutral lockups.** The per-app lockups are hardcoded mauve
-   (`#AA43FF`); the upleb theme repaints `--c-mauve` orange. Needed before they
-   can head an app's header. *What do they look like in orange?*
-2. **The stack strip.** See below. If wanted, it must be a component built from
+1. **The stack strip.** See below. If wanted, it must be a component built from
    real vector logos, with each app declaring its own stack — not one baked
    image.
-3. **nview's Android adaptive icon.** Its three `@capacitor/assets` sources are
+2. **nview's Android adaptive icon.** Its three `@capacitor/assets` sources are
    the same flat artwork, so the *foreground* is full-bleed square art — and
    Android masks the foreground to ~66%, clipping the wordmark at both ends and
    cropping the dark base away entirely. Long-standing, not introduced by the
