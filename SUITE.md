@@ -206,6 +206,47 @@ icon-button vocabulary: `tone="digital"` for view-switch, `tone="mauve"` for
 the forget-identity button, `tone="auburn"` for the db group. Don't hand-roll a
 one-off button where one of these fits.
 
+### Library grammar (2026-07-25)
+
+The scrollable library/collection list — `ndisc` Collection, `nplay` /
+`ntree` LibraryTree, `nsmpl` FileBrowser — shares a row vocabulary so the
+four read as one family. Reference impl: `ntree` (the row + density work is
+most complete there).
+
+**Filled-block rows.** A row is built from **filled blocks over a transparent
+row**, not tinted whole rows: an **accent name/title block** (`bg-accent/10`,
+`group-hover:bg-accent/25`) and a **medium/opus trailing status block**
+(coverage bar · leaf/status dots · count). Hover brightens the fills via the
+row's `group/*`. See also the leaf/foliage vocabulary and the dot-colour model
+above — dots inside these blocks follow those rules.
+
+**One striped, selectable body.** Audio and video rows are one list: **zebra
+striping is continuous** across the audio→video boundary (the video map's index
+continues past `tracks.length`, it does not reset), and **any row is selectable**
+— the selected row is `bg-accent/15` (`hover:bg-accent/20`) and loads into the
+detail/sample panel. A video's audio is legitimate content, so video rows
+select like audio rows; `text-fg/70` is the only "not analysed" signal on their
+own cells.
+
+**Video-file marker.** The uniform mark for "this row/scope holds video" is a
+**muted-mauve `Film` glyph at `text-mauve/60`** (with an optional count), and it
+**lives inside a filled block** (the trailing status strip or the title block) —
+never floating bare in a gap, never full-strength mauve. *One exception:*
+`nplay` tints the per-track marker **`text-digital`** when the video is actually
+picture-playable (mp4/m4v) — a meaningful "this one plays with picture" signal,
+not decoration.
+
+**Density (`super-slim` / `slim` / `wide`).** A shared three-tier control
+(`Segmented`, mirrored as `ntree` "rows" and `nsmpl` "wave") scales the row's
+vertical rhythm. It scales the **height of the colour blocks themselves**, so
+the filled background **extends vertically rather than opening a gap** around a
+fixed-height pill. Track rows carry the fill on the whole row (padding grows the
+bg directly); artist/album rows put the density padding on their inner blocks
+(name pill · chevron box · trailing status block · opus title block) with
+`items-stretch`, so those fills grow with the row. A truncating name gets an
+inner `truncate` span so it still ellipsizes *and* stays vertically centred at
+any height.
+
 ### Parked for the lab
 
 Three open design questions, all deliberately not guessed at:
