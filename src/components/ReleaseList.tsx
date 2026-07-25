@@ -1664,7 +1664,7 @@ export function ReleaseList({
                       the tooltip. */}
                   {r.videoCount != null && r.videoCount > 0 && (
                     <span
-                      className="shrink-0 grid place-items-center text-fg/55"
+                      className="shrink-0 grid place-items-center text-mauve/60"
                       title={`${r.videoCount} video file${r.videoCount === 1 ? "" : "s"}`}
                       aria-label="has video"
                     >
