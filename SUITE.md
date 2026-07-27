@@ -175,9 +175,16 @@ family — only the *contents* of each zone are app-specific. Reference impl:
 `ndisc`. Applies to `ndisc` / `nplay` / `ntree` / `nsmpl`.
 
 **Container.** A rounded panel card: `rounded-lg bg-panel shadow-md px-4 py-3`,
-laid out as a **three-column grid** `grid-cols-[1fr_auto_1fr] items-center
-gap-4`. The `1fr … 1fr` flanks keep the centre module optically centred
-regardless of how wide the left/right zones grow.
+laid out as a **three-column grid** `items-center gap-4`. `1fr_auto_1fr` centres
+the module by splitting slack **evenly** between the flanks — fine when the two
+zones are balanced. But when one zone is content-heavy (ndisc's controls: app-
+work + db + nostr + view-switch), the even split starves it: it gets half the
+slack, needs more, and overflows **leftward** (it's `justify-self-end`) over the
+centre. So the columns are `grid-cols-[auto_minmax(0,1fr)_auto]`: the identity
+and controls zones are **content-sized** (always shown in full), and the centre
+focal module is the flexible track that yields — give it `min-w-0
+overflow-hidden justify-start` so it clips its least-important trailing content
+(e.g. ndisc's Video/Incomplete/Orphaned stats) instead of forcing an overlap.
 
 **LEFT — identity.** The theme-cycling **wordmark** (`n` in `--c-accent`, the
 app suffix in `--c-mauve` — the suffix repaints orange under upleb, which is
@@ -186,6 +193,14 @@ text-mauve font-mono text-xs`, `hidden md:inline-flex`). An app may fold live
 status into that chip (`ntree`), and may hang one app-scoped affordance off the
 left group (`nplay`'s music-folder path). Version lives **here**, not the
 footer; the footer carries stack + machine values only.
+
+**Version format (2026-07-26).** The chip displays **only `major.minor.patch`**
+(`v0.1.2`) — any pre-release/build suffix (`-beta.2`, `+build`) is dropped to
+the chip's `title` tooltip. This keeps the chip a fixed, predictable width as
+releases move from `0.2.0-beta.2` toward `1.3.1`, so the header layout stays
+consistent across the suite. Each app vendors a `shortVersion(v)` helper
+(`v.split(/[-+]/)[0]`) and renders `v{shortVersion(appVersion)}` with
+`title={`v${appVersion}`}`.
 
 **CENTRE — the one focal module.** Exactly one, and it is the app's primary
 live thing: **master transport** for players (`nplay`, `nsmpl`), the **primary

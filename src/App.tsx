@@ -134,6 +134,14 @@ function migrateDamusToFizx(relays: string[]): string[] {
   return relays.map((r) => (r === damus ? fizx : r));
 }
 
+// Suite rule (n-suite headers): the version chip shows only
+// major.minor.patch; any pre-release/build suffix (…-beta.2, +build) drops
+// to the tooltip so the chip keeps a fixed, consistent width as releases
+// move from 0.2.0-beta.2 toward 1.3.1.
+function shortVersion(v: string): string {
+  return v.split(/[-+]/)[0];
+}
+
 export default function App() {
   const [selected, setSelected] = useState<Release | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -405,9 +413,16 @@ export default function App() {
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col
                     pt-6 px-6 pb-2 max-w-[1500px] mx-auto">
       {/* Suite top-bar grammar (SUITE.md § Top-bar grammar): rounded panel
-          card, three-column grid [identity | focal module | controls]. */}
+          card, three-column grid [identity | focal module | controls].
+          Columns are `auto | minmax(0,1fr) | auto`, NOT `1fr auto 1fr`: the
+          identity + controls zones must always show in full, so they are
+          content-sized, and the centre stats bar is the flexible track that
+          yields (and clips its least-important trailing stats) when the header
+          is tighter than all three zones want. A symmetric `1fr auto 1fr`
+          splits slack evenly and starves the heavy controls zone, which then
+          overflows leftward over the centre. */}
       <header className="mb-4 shrink-0 rounded-lg bg-panel shadow-md px-4 py-3
-                         grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+                         grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4">
         {/* LEFT — identity: theme-cycling wordmark + version chip. */}
         <div className="flex items-center gap-3 shrink-0 min-w-0">
           <button
@@ -425,7 +440,7 @@ export default function App() {
                        leading-none shrink-0 cursor-pointer transition-opacity
                        hover:opacity-70"
           >
-            n<span className="text-mauve">disc</span>
+            <span className="text-accent">n</span><span className="text-mauve">disc</span>
           </button>
           {/* Version chip — belongs in the header left group per the suite
               grammar (the footer carries stack + machine values only). The
@@ -437,14 +452,21 @@ export default function App() {
               className="hidden md:inline-flex items-center px-2.5 py-2
                          rounded-md bg-surface text-mauve font-mono text-xs
                          shrink-0"
+              title={`v${appVersion}`}
             >
-              v{appVersion}
+              v{shortVersion(appVersion)}
             </span>
           )}
         </div>
 
-        {/* CENTRE — the focal module: library stats readout. */}
-        <div className="hidden lg:flex items-center justify-center min-w-0">
+        {/* CENTRE — the focal module: library stats readout. `min-w-0` lets the
+            auto track shrink under a tight header, and `overflow-hidden` keeps
+            the inline-flex stat bar clipped INSIDE its track rather than
+            spilling over the right controls (the grid centre lost the old
+            flex-1 centre's squeeze-absorbing behaviour). `justify-start` clips
+            from the right — the least-important trailing stats — instead of
+            eating into the leading Total/Physical counts. */}
+        <div className="hidden lg:flex items-center justify-start min-w-0 overflow-hidden">
           <LibraryStats stats={lib.stats} summary={lib.summary} />
         </div>
 
