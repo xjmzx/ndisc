@@ -21,6 +21,48 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.6 — 2026-07-27
+
+### In-app file-tag editor — first on-disk tag write
+- A new **edit tags** action on the release detail panel writes metadata back to
+  the release's audio files (Album / Artist / Year / Label / Disc # / Disc total)
+  via lofty — already the read dependency, so no new crate. Two-phase: a dry-run
+  **preview** lists the exact per-file deltas, then the write applies them. Only
+  the targeted tag keys are touched, so a rip's other tags (e.g. its `DISCOGS_*`
+  block) are preserved. This is ndisc's first path that mutates audio files on
+  disk. Commands `preview_release_tags` / `write_release_tags`; UI
+  `WriteTagsDialog`. The tags are the portable, cross-app truth every player reads.
+
+### Multi-disc folder collapse — one release across its disc subfolders
+- A release whose folder is a multi-disc parent (`…/Album/CD1`, `…/Album/CD2`) is
+  now treated as **one release** spanning both discs. Import groups disc-sibling
+  folders under the parent; refresh, track/video recount, tag-write and cover
+  lookup all span the disc subfolders; `DISCNUMBER` on tag-write is derived
+  per-disc-folder (CD1 → 1, CD2 → 2); import fills a folder-derived `disc_total`
+  for non-Discogs multi-disc rips. Flat single-folder releases are unaffected.
+- New helpers `is_disc_dir_name` (vendored, kept in step with nsmpl/nplay/ntree),
+  `disc_subdirs`, `release_dir`, `gather_release_audio`, `find_cover_deep`.
+- **No wire change** — the publisher is untouched: a release's `d`-tag stays
+  `disco-vault:{id}` and the `tracks` / `discs` tags read the (now-correct)
+  columns; `release.v2` SHA unchanged. Guarded by a new `mod disc_collapse` test.
+- Migration: an existing multi-disc row is collapsed by re-pointing its folder to
+  the **parent** and refreshing (it recounts across discs); duplicate per-disc
+  rows are removed/merged and future scans dedup on the parent path.
+
+### Suite top-bar grammar + version chip
+- Adopted the shared top-bar grammar (reference impl) and refined it: the header
+  grid moves from `1fr_auto_1fr` to `auto_minmax(0,1fr)_auto` so the
+  content-heavy controls zone always shows in full and the centre stats module is
+  the track that yields (clipping its least-important trailing stats) instead of
+  overflowing. The **version chip** now shows only `major.minor.patch`, with any
+  `-beta.N` / `+build` suffix in the tooltip (`shortVersion`), keeping a fixed
+  chip width across releases.
+
+### Also
+- Figma icon refresh (2026-07-25, two passes); monochrome brand lockup; the video
+  marker muted to the suite muted-mauve convention; Library grammar + the nview
+  platform-icon pipeline recorded in `SUITE.md`.
+
 ## 0.2.0-beta.5 — 2026-07-21
 
 ### Pin `clip.v1` at the authority + a drift-guard conformance test
