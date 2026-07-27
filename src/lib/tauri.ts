@@ -525,6 +525,53 @@ export async function refreshRelease(releaseId: number): Promise<RefreshResult> 
   return invoke<RefreshResult>("refresh_release", { releaseId });
 }
 
+// --- Interop: WRITE tags back to the audio files (folder-level batch) --------
+
+// A batch of tag edits applied to every audio file in a release folder. Each
+// field: omit = leave untouched; present = set (empty string clears the tag).
+// Keys mirror ndisc's read priority so a write round-trips on the next scan.
+export interface TagEdits {
+  album?: string;
+  artist?: string;
+  year?: string;
+  label?: string;
+  discNumber?: string;
+  discTotal?: string;
+}
+
+// One field delta on one file, for the dry-run preview.
+export interface FileChange {
+  relpath: string;
+  field: string;
+  old: string | null;
+  new: string | null;
+}
+
+export interface WriteTagsSummary {
+  filesWritten: number;
+  filesUnchanged: number;
+  filesFailed: number;
+  errors: string[];
+  refresh: RefreshResult;
+}
+
+// Dry-run: the exact per-file changes `writeReleaseTags` would make. No writes.
+export async function previewReleaseTags(
+  releaseId: number,
+  edits: TagEdits,
+): Promise<FileChange[]> {
+  return invoke<FileChange[]>("preview_release_tags", { releaseId, edits });
+}
+
+// Write `edits` to every audio file in the release folder, then re-scan so the
+// DB row reflects the new tags. DESTRUCTIVE — always preview + confirm first.
+export async function writeReleaseTags(
+  releaseId: number,
+  edits: TagEdits,
+): Promise<WriteTagsSummary> {
+  return invoke<WriteTagsSummary>("write_release_tags", { releaseId, edits });
+}
+
 export async function updateReleasePath(
   releaseId: number,
   newPath: string,

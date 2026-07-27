@@ -29,6 +29,7 @@ import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
 import { MergeConfirm, hasLiveEvent } from "./MergeConfirm";
 import { DeleteDialog, fmtBytes } from "./DeleteDialog";
+import { WriteTagsDialog } from "./WriteTagsDialog";
 import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
@@ -63,6 +64,7 @@ import {
   type RelayError,
   type Release,
   type ResolveSummary,
+  type WriteTagsSummary,
 } from "../lib/tauri";
 import {
   sourceColor,
@@ -169,6 +171,7 @@ export function ReleaseDetail({
   const [mergeOpen, setMergeOpen] = useState(false);
   const [latestOp, setLatestOp] = useState<LatestOp | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
   // Persistent across non-release-switch ops so the copy/njump.me buttons in
   // the action row stay active after a later cover edit / refresh / sync.
   const [lastPublish, setLastPublish] =
@@ -345,6 +348,33 @@ export function ReleaseDetail({
     } finally {
       setRefreshing(false);
     }
+  }
+
+  // After a file-tag write: the backend already re-scanned the folder into the
+  // DB row, so re-fetch it to reflect the new album/artist/year/label/discs.
+  // Tag edits change the on-wire fields, so publish markers were dropped too.
+  async function onTagsWritten(summary: WriteTagsSummary) {
+    setTagsOpen(false);
+    const fresh =
+      release.id != null ? await getRelease(release.id).catch(() => null) : null;
+    if (fresh) {
+      if (release.lastPublishedAt != null) setLastPublish(null);
+      onChanged(fresh);
+    }
+    const parts = [
+      `${summary.filesWritten} file${summary.filesWritten === 1 ? "" : "s"} written`,
+    ];
+    if (summary.filesUnchanged > 0)
+      parts.push(`${summary.filesUnchanged} unchanged`);
+    if (summary.filesFailed > 0) parts.push(`${summary.filesFailed} failed`);
+    setLatestOp(
+      summary.filesFailed > 0
+        ? {
+            kind: "warn",
+            text: `tags: ${parts.join(", ")}${summary.errors.length ? ` — ${summary.errors[0]}` : ""}`,
+          }
+        : { kind: "info", text: `tags written: ${parts.join(", ")}` },
+    );
   }
 
   // Attach (or re-point) a local folder to this release. Completeness is keyed
@@ -719,6 +749,18 @@ export function ReleaseDetail({
               <ReactionButtons releaseId={release.id} />
             )}
             <button
+              onClick={() => setTagsOpen(true)}
+              disabled={!release.filePath}
+              className={cn(SUBTLE_BUTTON_CLS, "disabled:opacity-40")}
+              title={
+                release.filePath
+                  ? "Edit the metadata tags written into the audio files"
+                  : "No folder on disk to edit"
+              }
+            >
+              <Pencil size={12} /> edit tags
+            </button>
+            <button
               onClick={() => setMergeOpen(true)}
               className={SUBTLE_BUTTON_CLS}
               title="Merge this with another row that's the same release"
@@ -746,6 +788,14 @@ export function ReleaseDetail({
           relays={relays}
           onCancel={() => setMergeOpen(false)}
           onMerged={onMerged}
+        />
+      )}
+
+      {tagsOpen && (
+        <WriteTagsDialog
+          release={release}
+          onCancel={() => setTagsOpen(false)}
+          onDone={onTagsWritten}
         />
       )}
 

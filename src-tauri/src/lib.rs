@@ -7,10 +7,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use keyring::Entry;
-use lofty::config::{ParseOptions, ParsingMode};
+use lofty::config::{ParseOptions, ParsingMode, WriteOptions};
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
-use lofty::tag::ItemKey;
+// NB: `lofty::tag::Tag` is referenced fully-qualified below — importing it here
+// would collide with `nostr_sdk::Tag` used by the publisher.
+use lofty::tag::{ItemKey, TagExt};
 use nostr_sdk::prelude::*;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -1791,20 +1793,35 @@ fn get_release(app: tauri::AppHandle, id: i64) -> Result<Option<Release>, String
 /// Returns (audio_count, video_count), each capped at 99. None if the dir
 /// can't be read.
 fn count_media_in_dir(dir: &str) -> Option<(i64, i64)> {
-    let entries = std::fs::read_dir(dir).ok()?;
+    let base = Path::new(dir);
+    // Count the release folder PLUS any disc subfolders (collapsed multi-disc
+    // release), so track_count/video_count span all discs. A flat release has no
+    // disc subfolders, so this counts exactly the one folder as before.
+    let mut roots: Vec<PathBuf> = vec![base.to_path_buf()];
+    roots.extend(disc_subdirs(base));
     let (mut audio, mut video): (i64, i64) = (0, 0);
-    for e in entries.flatten() {
-        let p = e.path();
-        if !p.is_file() {
+    let mut any_read = false;
+    for r in &roots {
+        let Ok(entries) = std::fs::read_dir(r) else {
             continue;
-        }
-        if is_audio(&p) {
-            if audio < 99 {
-                audio += 1;
+        };
+        any_read = true;
+        for e in entries.flatten() {
+            let p = e.path();
+            if !p.is_file() {
+                continue;
             }
-        } else if is_video(&p) && video < 99 {
-            video += 1;
+            if is_audio(&p) {
+                if audio < 99 {
+                    audio += 1;
+                }
+            } else if is_video(&p) && video < 99 {
+                video += 1;
+            }
         }
+    }
+    if !any_read {
+        return None;
     }
     Some((audio, video))
 }
@@ -2223,13 +2240,9 @@ fn refresh_release_inner(
             .unwrap_or_else(|| PathBuf::from("."))
     };
 
-    let mut audio_files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
-        .filter(|p| p.is_file() && is_audio(p))
-        .collect();
-    audio_files.sort();
+    // Spans disc subfolders for a collapsed multi-disc release (parent file_path);
+    // exactly the folder's own audio for a flat release.
+    let audio_files = gather_release_audio(&dir);
 
     if audio_files.is_empty() {
         return Ok(RefreshResult {
@@ -2273,7 +2286,7 @@ fn refresh_release_inner(
             release.label.clone()
         }
     };
-    let new_cover_path = find_cover(&dir).or_else(|| release.cover_art_path.clone());
+    let new_cover_path = find_cover_deep(&dir).or_else(|| release.cover_art_path.clone());
 
     // notes / source — fill-when-empty in BOTH modes, regardless of
     // `overwrite_label`. We never overwrite a non-empty value, so hand-edited
@@ -2309,14 +2322,11 @@ fn refresh_release_inner(
     // a Refresh (or the bulk Scan-library-changes pass) picks up videos added
     // after the initial recount. Its >0 truth IS published, so a change on a
     // published release trips publish-staleness after the write.
+    // Video count spans disc subfolders too (collapsed multi-disc release).
     let new_video_count: Option<i64> = Some(
-        std::fs::read_dir(&dir)
-            .ok()
-            .into_iter()
-            .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
-            .filter(|p| p.is_file() && is_video(p))
-            .count()
-            .min(99) as i64,
+        count_media_in_dir(&dir.to_string_lossy())
+            .map(|(_, v)| v)
+            .unwrap_or(0),
     );
 
     let mut changes: Vec<String> = Vec::new();
@@ -2406,6 +2416,326 @@ fn refresh_release_inner(
     Ok(RefreshResult {
         status: "ok".into(),
         changes,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Interop: WRITE metadata back to the audio files (folder-level batch edit)
+// ---------------------------------------------------------------------------
+// ndisc otherwise only READS tags (read_dir_tags). This is the one path that
+// mutates the files on disk. It is release-scoped: a value is written to every
+// audio file in the release folder — which is exactly right because one folder
+// is one release (and, for multi-disc rips, one disc), so ALBUM / DISCNUMBER /
+// DISCTOTAL are uniform within it. Only the targeted tag keys are touched; all
+// other items (e.g. a rip's DISCOGS_* block) are preserved. lofty (already the
+// read dependency) provides the write side, so no new crate is pulled in.
+
+// A batch of tag edits. Each field: absent (None) = leave untouched; present =
+// set to that value, where an empty/whitespace string CLEARS the tag. Keys are
+// chosen to mirror read_dir_tags' read priority so a write round-trips on the
+// next scan (label ↔ ContentGroup/GROUPING, year ↔ RecordingDate/DATE).
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagEdits {
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub year: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub disc_number: Option<String>,
+    #[serde(default)]
+    pub disc_total: Option<String>,
+}
+
+// One planned/observed field change on one file, for the dry-run preview.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    pub relpath: String,
+    pub field: String,
+    pub old: Option<String>,
+    pub new: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteTagsSummary {
+    pub files_written: usize,
+    pub files_unchanged: usize,
+    pub files_failed: usize,
+    pub errors: Vec<String>,
+    // Result of the internal re-scan that syncs the DB row to the new tags.
+    pub refresh: RefreshResult,
+}
+
+// Load a single release row by id (shared by the preview/write commands).
+fn load_release(conn: &Connection, release_id: i64) -> Result<Release, String> {
+    let sql = format!("SELECT {} FROM releases WHERE id = ?1", RELEASE_SELECT_COLS);
+    conn.query_row(&sql, params![release_id], row_to_release)
+        .map_err(|e| e.to_string())
+}
+
+// Enumerate the audio files of a release — the folder itself (or the parent for
+// a single-file entry), spanning disc subfolders for a collapsed multi-disc
+// release (see gather_release_audio). Sorted for stable ordering.
+fn release_audio_files(release: &Release) -> Result<Vec<PathBuf>, String> {
+    let file_path = release
+        .file_path
+        .as_deref()
+        .ok_or_else(|| "release has no file path".to_string())?;
+    let path = PathBuf::from(file_path);
+    if !path.exists() {
+        return Err("file path missing on disk".into());
+    }
+    let dir = if path.is_dir() {
+        path
+    } else {
+        path.parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+    let audio = gather_release_audio(&dir);
+    if audio.is_empty() {
+        return Err("no audio files in directory".into());
+    }
+    Ok(audio)
+}
+
+// Whether any tag field is being edited at all — drives the "nothing to do"
+// early-out in preview/write.
+fn has_edits(e: &TagEdits) -> bool {
+    e.album.is_some()
+        || e.artist.is_some()
+        || e.year.is_some()
+        || e.label.is_some()
+        || e.disc_number.is_some()
+        || e.disc_total.is_some()
+}
+
+// The present edits for ONE file, resolved to (field name, tag key, value). Kept
+// per-file (not global) because on a collapsed multi-disc release DISCNUMBER is
+// derived from the file's disc subfolder (CD1 → 1, CD2 → 2); every other field
+// is uniform across the release. Preview and write both call this, so they stay
+// in lockstep.
+fn edit_items_for(edits: &TagEdits, path: &Path) -> Vec<(&'static str, ItemKey, String)> {
+    let mut v = Vec::new();
+    if let Some(x) = &edits.album {
+        v.push(("album", ItemKey::AlbumTitle, x.clone()));
+    }
+    if let Some(x) = &edits.artist {
+        v.push(("artist", ItemKey::AlbumArtist, x.clone()));
+    }
+    if let Some(x) = &edits.year {
+        // DATE (Vorbis) / TDRC (ID3) — the tag these files actually carry.
+        v.push(("year", ItemKey::RecordingDate, x.clone()));
+    }
+    if let Some(x) = &edits.label {
+        // GROUPING/ContentGroup — read_dir_tags' first-choice label key.
+        v.push(("label", ItemKey::ContentGroup, x.clone()));
+    }
+    if let Some(x) = &edits.disc_number {
+        // A file inside a disc subfolder takes that folder's number, so a
+        // collapsed release tags each disc correctly; else the entered value.
+        let dn = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .and_then(disc_no_from_dir_name)
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| x.clone());
+        v.push(("discNumber", ItemKey::DiscNumber, dn));
+    }
+    if let Some(x) = &edits.disc_total {
+        v.push(("discTotal", ItemKey::DiscTotal, x.clone()));
+    }
+    v
+}
+
+// Normalise a raw tag value for comparison: trimmed, empty → None (= cleared).
+fn norm_tag(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+// Apply one field to a mutable tag. Returns whether anything changed (so we can
+// skip an untouched file's rewrite). Empty value removes the key.
+fn set_tag_field(tag: &mut lofty::tag::Tag, key: ItemKey, value: &str) -> bool {
+    let trimmed = value.trim();
+    let current = tag.get_string(&key).map(str::trim);
+    if trimmed.is_empty() {
+        if current.is_some() {
+            tag.remove_key(&key);
+            return true;
+        }
+        return false;
+    }
+    if current == Some(trimmed) {
+        return false;
+    }
+    tag.insert_text(key, trimmed.to_string());
+    true
+}
+
+// Write the resolved edits into one file, preserving every other tag item.
+// Returns true if the file was actually modified and saved.
+fn apply_edits_to_file(
+    path: &Path,
+    items: &[(&'static str, ItemKey, String)],
+) -> Result<bool, String> {
+    let opts = ParseOptions::new().parsing_mode(ParsingMode::Relaxed);
+    let mut tagged = Probe::open(path)
+        .map_err(|e| e.to_string())?
+        .options(opts)
+        .read()
+        .map_err(|e| e.to_string())?;
+    // Ensure there's a primary tag of the file's native type to write into.
+    if tagged.primary_tag().is_none() {
+        let tag_type = tagged.primary_tag_type();
+        tagged.insert_tag(lofty::tag::Tag::new(tag_type));
+    }
+    let changed = {
+        let tag = tagged
+            .primary_tag_mut()
+            .ok_or_else(|| "no writable tag".to_string())?;
+        let mut c = false;
+        for (_field, key, val) in items {
+            c |= set_tag_field(tag, key.clone(), val);
+        }
+        c
+    };
+    if changed {
+        tagged
+            .primary_tag()
+            .ok_or_else(|| "no tag to save".to_string())?
+            .save_to_path(path, WriteOptions::default())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(changed)
+}
+
+// Dry-run: compute the exact per-file field deltas without touching any file.
+// Drives the confirm dialog so a destructive write is always previewed.
+#[tauri::command]
+fn preview_release_tags(
+    app: tauri::AppHandle,
+    release_id: i64,
+    edits: TagEdits,
+) -> Result<Vec<FileChange>, String> {
+    let conn = open(&app)?;
+    let release = load_release(&conn, release_id)?;
+    drop(conn);
+    let files = release_audio_files(&release)?;
+    if !has_edits(&edits) {
+        return Ok(vec![]);
+    }
+    let opts = ParseOptions::new().parsing_mode(ParsingMode::Relaxed);
+    let mut changes = Vec::new();
+    for f in &files {
+        let relpath = f
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let Ok(probe) = Probe::open(f) else { continue };
+        let Ok(tagged) = probe.options(opts).read() else {
+            continue;
+        };
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+        let items = edit_items_for(&edits, f);
+        for (field, key, val) in &items {
+            let old = tag.and_then(|t| t.get_string(key)).and_then(norm_tag);
+            let new = norm_tag(val);
+            if old != new {
+                changes.push(FileChange {
+                    relpath: relpath.clone(),
+                    field: field.to_string(),
+                    old,
+                    new,
+                });
+            }
+        }
+    }
+    Ok(changes)
+}
+
+// Write the edits to every audio file in the release folder, then re-scan so
+// the DB row reflects the new tags. Per-file errors are isolated (one locked or
+// unreadable file doesn't abort the batch) and reported in the summary.
+#[tauri::command]
+fn write_release_tags(
+    app: tauri::AppHandle,
+    release_id: i64,
+    edits: TagEdits,
+) -> Result<WriteTagsSummary, String> {
+    let conn = open(&app)?;
+    let release = load_release(&conn, release_id)?;
+    drop(conn);
+    let files = release_audio_files(&release)?;
+    if !has_edits(&edits) {
+        return Ok(WriteTagsSummary {
+            files_written: 0,
+            files_unchanged: files.len(),
+            files_failed: 0,
+            errors: vec![],
+            refresh: RefreshResult {
+                status: "no_changes".into(),
+                changes: vec![],
+            },
+        });
+    }
+
+    let mut files_written = 0usize;
+    let mut files_unchanged = 0usize;
+    let mut files_failed = 0usize;
+    let mut errors = Vec::new();
+    for f in &files {
+        let items = edit_items_for(&edits, f);
+        match apply_edits_to_file(f, &items) {
+            Ok(true) => files_written += 1,
+            Ok(false) => files_unchanged += 1,
+            Err(e) => {
+                files_failed += 1;
+                let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                errors.push(format!("{name}: {e}"));
+            }
+        }
+    }
+
+    if files_written > 0 {
+        // A tag edit changes the release's on-wire fields (title/discs/…), so
+        // drop publish markers to "needs republish" — same rule the DB-side
+        // metadata setters follow via mark_unpublished.
+        if let Ok(conn) = open(&app) {
+            let _ = mark_unpublished(&conn, release_id);
+        }
+    }
+    // Keep the DB disc-count column coherent with the DISCTOTAL tag we wrote.
+    if let Some(dt) = &edits.disc_total {
+        let parsed = dt.trim().parse::<i64>().ok().filter(|&n| n > 0);
+        let _ = set_release_disc_total(app.clone(), release_id, parsed);
+    }
+    // Re-read the folder into the DB row (title/artist/year/label) — the same
+    // path the manual Refresh button uses (file tags win).
+    let refresh =
+        refresh_release_inner(app, release_id, true).unwrap_or(RefreshResult {
+            status: "refresh_failed".into(),
+            changes: vec![],
+        });
+
+    Ok(WriteTagsSummary {
+        files_written,
+        files_unchanged,
+        files_failed,
+        errors,
+        refresh,
     })
 }
 
@@ -3938,13 +4268,8 @@ fn audit_release_folder(app: tauri::AppHandle, release_id: i64) -> Result<Folder
         return Ok(out);
     }
     out.exists = true;
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&p)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|q| q.is_file() && is_audio(q))
-        .collect();
-    files.sort();
+    // Spans disc subfolders for a collapsed multi-disc release.
+    let files = gather_release_audio(&p);
     for f in &files {
         out.file_count += 1;
         out.total_bytes += std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
@@ -5973,6 +6298,132 @@ fn is_audio(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------------
+// Disc-aware folder helpers (multi-disc release collapse)
+// ---------------------------------------------------------------------------
+// A multi-disc release is laid out as sibling disc subfolders (…/Album/CD1,
+// …/Album/CD2). ndisc treats such a parent as ONE release whose audio is the
+// union of the disc subfolders. `is_disc_dir_name` is kept deliberately in step
+// with the suite reference (nsmpl src-tauri/src/lib.rs, and the nplay/ntree
+// vendored copies).
+
+fn is_disc_dir_name(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    for prefix in ["cd", "disc", "disk"] {
+        if let Some(rest) = n.strip_prefix(prefix) {
+            let rest = rest.trim_start_matches([' ', '-', '_', '.']);
+            if matches!(rest.chars().next(), Some(c) if c.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The disc number encoded in a disc-folder name ("CD2" → 2), for per-disc
+/// DISCNUMBER tagging. None when the name isn't a disc folder.
+fn disc_no_from_dir_name(name: &str) -> Option<i64> {
+    let n = name.trim().to_ascii_lowercase();
+    for prefix in ["cd", "disc", "disk"] {
+        if let Some(rest) = n.strip_prefix(prefix) {
+            let digits: String = rest
+                .trim_start_matches([' ', '-', '_', '.'])
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            return digits.parse::<i64>().ok().filter(|&n| n > 0);
+        }
+    }
+    None
+}
+
+/// Immediate subdirectories of `dir` that are disc-named, sorted.
+fn disc_subdirs(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
+        .filter(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(is_disc_dir_name)
+                    .unwrap_or(false)
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// The release directory for an import bucket. When `dir` is a disc subfolder
+/// AND every immediate subdirectory of its parent is disc-named, the release is
+/// the PARENT (so the discs collapse into one release). Otherwise `dir` itself.
+/// The "all siblings are discs" guard avoids collapsing a stray `CDx` sitting
+/// among normal album folders.
+fn release_dir(dir: &Path) -> PathBuf {
+    let is_disc = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(is_disc_dir_name)
+        .unwrap_or(false);
+    if is_disc {
+        if let Some(parent) = dir.parent() {
+            let subdirs: Vec<PathBuf> = std::fs::read_dir(parent)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
+                .filter(|p| p.is_dir())
+                .collect();
+            if !subdirs.is_empty()
+                && subdirs.iter().all(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(is_disc_dir_name)
+                        .unwrap_or(false)
+                })
+            {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    dir.to_path_buf()
+}
+
+/// Audio files of a release folder, spanning disc subfolders: audio directly in
+/// `dir` PLUS audio in each immediate disc subfolder (one level), sorted. For a
+/// flat release (no disc subfolders) this is exactly the folder's own audio, so
+/// single-folder releases are unaffected.
+fn gather_release_audio(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
+        .filter(|p| p.is_file() && is_audio(p))
+        .collect();
+    for sub in disc_subdirs(dir) {
+        if let Ok(entries) = std::fs::read_dir(&sub) {
+            for e in entries.filter_map(|e| e.ok()) {
+                let p = e.path();
+                if p.is_file() && is_audio(&p) {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// Like `find_cover`, but for a collapsed multi-disc release: try the release
+/// (parent) folder first, then each disc subfolder — a multi-disc rip often
+/// keeps its front art inside the disc folders.
+fn find_cover_deep(dir: &Path) -> Option<String> {
+    if let Some(c) = find_cover(dir) {
+        return Some(c);
+    }
+    disc_subdirs(dir).iter().find_map(|sub| find_cover(sub))
+}
+
 fn find_cover(dir: &Path) -> Option<String> {
     let dir_name = dir
         .file_name()
@@ -6355,6 +6806,17 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
         }
     }
 
+    // Collapse multi-disc sibling folders (…/Album/CD1, …/Album/CD2) into one
+    // release keyed on the parent, unioning their audio. A flat release maps to
+    // itself via release_dir, so single-folder imports are unchanged.
+    let by_dir: BTreeMap<PathBuf, Vec<PathBuf>> = {
+        let mut collapsed: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+        for (dir, files) in by_dir {
+            collapsed.entry(release_dir(&dir)).or_default().extend(files);
+        }
+        collapsed
+    };
+
     let total = by_dir.len();
     let mut summary = ImportSummary {
         scanned: total,
@@ -6437,13 +6899,19 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
             }
         });
         let format = build_format_string(&info);
-        let cover = find_cover(&dir);
+        let cover = find_cover_deep(&dir);
+        // Folder-derived disc count for a collapsed multi-disc release (>1 disc
+        // subfolder). Fresh imports carry no Discogs link, so this never clobbers
+        // a curated value; flat/single-folder releases leave it NULL.
+        let disc_count = disc_subdirs(&dir).len() as i64;
+        let disc_total = if disc_count > 1 { Some(disc_count) } else { None };
 
         match tx.execute(
             "INSERT INTO releases
              (artist, title, year, medium, format, label, notes, source,
-              file_path, cover_art_path, release_type, track_count, track_total)
-             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music', ?10, ?11)",
+              file_path, cover_art_path, release_type, track_count, track_total,
+              disc_total)
+             VALUES (?1, ?2, ?3, 'digital', ?4, ?5, ?6, ?7, ?8, ?9, 'music', ?10, ?11, ?12)",
             params![
                 artist,
                 title,
@@ -6457,6 +6925,7 @@ fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary
                 (files.len() as i64).min(99),
                 // expected = TRACKTOTAL tag, else the present file count.
                 info.track_total.unwrap_or(files.len() as i64).min(99),
+                disc_total,
             ],
         ) {
             Ok(_) => summary.imported += 1,
@@ -7824,6 +8293,8 @@ pub fn run() {
             set_release_catalog_number,
             set_release_discogs_id,
             set_release_disc_total,
+            preview_release_tags,
+            write_release_tags,
             set_release_genres,
             list_distinct_labels,
             list_distinct_sources,
@@ -7938,6 +8409,115 @@ mod comment_url {
 // Pins `release_event`'s output to the frozen v1 wire contract shared with the
 // glmps viewers. A failure here means the emitted event format drifted: that
 // is a coordinated v2 bump (add schema/release.v2.json), never a test edit.
+#[cfg(test)]
+mod disc_collapse {
+    use super::*;
+
+    // Build a throwaway multi-disc + flat fixture under the temp dir. Files are
+    // empty — is_audio / is_image_ext key on extension only, which is all the
+    // collapse logic reads. `tag` makes each test's dir unique (parallel-safe).
+    fn fixture(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir()
+            .join(format!("ndisc_collapse_{}_{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&root);
+        let mk = |rel: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"").unwrap();
+        };
+        // Multi-disc: Artist/Album/{CD1: 2 flac, CD2: 1 flac + cover.jpg}
+        mk("Artist/Album/CD1/01 - a.flac");
+        mk("Artist/Album/CD1/02 - b.flac");
+        mk("Artist/Album/CD2/01 - c.flac");
+        mk("Artist/Album/CD2/cover.jpg");
+        // Flat: Artist/Flat (2020)/{2 flac}
+        mk("Artist/Flat (2020)/01 - x.flac");
+        mk("Artist/Flat (2020)/02 - y.flac");
+        root
+    }
+
+    #[test]
+    fn helpers_span_discs_but_leave_flat_alone() {
+        let root = fixture("helpers");
+        let album = root.join("Artist/Album");
+        let flat = root.join("Artist/Flat (2020)");
+
+        // release_dir: disc folders collapse to the album; flat stays itself.
+        assert_eq!(release_dir(&album.join("CD1")), album);
+        assert_eq!(release_dir(&album.join("CD2")), album);
+        assert_eq!(release_dir(&flat), flat);
+
+        // Union audio across discs; flat unchanged.
+        assert_eq!(gather_release_audio(&album).len(), 3);
+        assert_eq!(gather_release_audio(&flat).len(), 2);
+
+        // Disc-aware media count (audio, video).
+        assert_eq!(count_media_in_dir(&album.to_string_lossy()), Some((3, 0)));
+        assert_eq!(count_media_in_dir(&flat.to_string_lossy()), Some((2, 0)));
+
+        // Cover found inside a disc subfolder.
+        assert!(find_cover_deep(&album).is_some());
+
+        assert_eq!(disc_subdirs(&album).len(), 2);
+        assert_eq!(disc_subdirs(&flat).len(), 0);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_grouping_collapses_and_flat_untouched() {
+        // Reproduce import_directory's grouping + collapse re-key and assert the
+        // resulting release buckets.
+        let root = fixture("grouping");
+        let mut by_dir: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+        for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() && is_audio(entry.path()) {
+                if let Some(parent) = entry.path().parent() {
+                    by_dir
+                        .entry(parent.to_path_buf())
+                        .or_default()
+                        .push(entry.into_path());
+                }
+            }
+        }
+        let mut collapsed: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+        for (dir, files) in by_dir {
+            collapsed.entry(release_dir(&dir)).or_default().extend(files);
+        }
+        let album = root.join("Artist/Album");
+        let flat = root.join("Artist/Flat (2020)");
+        assert_eq!(collapsed.get(&album).map(|v| v.len()), Some(3));
+        assert_eq!(collapsed.get(&flat).map(|v| v.len()), Some(2));
+        assert!(!collapsed.contains_key(&album.join("CD1")));
+        assert!(!collapsed.contains_key(&album.join("CD2")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn write_derives_discnumber_per_disc_folder() {
+        let root = fixture("discnum");
+        let album = root.join("Artist/Album");
+        // Blanket disc_number "9" must be overridden by the per-disc folder.
+        let edits = TagEdits {
+            album: None,
+            artist: None,
+            year: None,
+            label: None,
+            disc_number: Some("9".into()),
+            disc_total: Some("2".into()),
+        };
+        let dn = |items: &[(&'static str, ItemKey, String)]| {
+            items
+                .iter()
+                .find(|(f, _, _)| *f == "discNumber")
+                .map(|(_, _, v)| v.clone())
+        };
+        assert_eq!(dn(&edit_items_for(&edits, &album.join("CD1/01 - a.flac"))), Some("1".into()));
+        assert_eq!(dn(&edit_items_for(&edits, &album.join("CD2/01 - c.flac"))), Some("2".into()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
 #[cfg(test)]
 mod schema_v1 {
     use super::*;
