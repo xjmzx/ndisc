@@ -23,6 +23,7 @@ design language, and the roadmap. Each app also ships its own
 | **nsmpl** | Sample tool (two-track) + publisher | Tauri 2 · React | Publishes NIP-94 samples + reactions; reads feed |
 | **nview** | Mobile viewer (read + react) | Capacitor · React | Reads releases/labels/feed; reacts via NIP-46 |
 | **nping** | Nostr relay connectivity tester | Tauri 2 · React | No keys — tests relays |
+| **nchat** | Private direct messages | Tauri 2 · React | NIP-17 gift-wrapped DMs; whitelist-only |
 
 `ndisc` is the authoritative publisher; everything else reads from and/or reacts
 to the data it emits.
@@ -71,17 +72,24 @@ so it must never roam between machines. Every app implements this as
 `suite_shared_dir()` / `suite_config_dir()`; changing it is a coordinated wave,
 not a local edit.
 
+`nchat` does not participate. It shares no library view and keeps no database
+at all; its `nchat.json` — public keys, petnames, relays, never a secret —
+lives in its own app config dir.
+
 - **Desktop = Tauri 2** (React + Vite + TypeScript front end, Rust backend over
   IPC). **Mobile = Capacitor** (`nview` only).
 - **SQLite** (`rusqlite`, bundled) where a local library index is needed
   (`ndisc`, `nplay`). Sampling/scanning apps (`ntree`, `nsmpl`) work against the
-  filesystem live and don't keep a DB.
+  filesystem live and don't keep a DB. `nchat` keeps no local store either — a
+  sent message survives a restart only because every send is wrapped twice, the
+  second copy addressed back to the sender.
 - **Native audio via `rodio`** in `nplay` — WebKit2GTK on the target Linux stack
   can't play media from any app URL scheme, so playback lives in Rust, not the
   webview. (Web Audio is also muted on this stack; short clips elsewhere use an
   `HTMLMediaElement`.)
 - **Signing key** in the OS keyring for local-signer apps (`ndisc`, `ntree`,
-  `nsmpl`); **NIP-46 remote bunker** for `nview`; none for `nplay`/`nping`.
+  `nsmpl`, `nchat`); **NIP-46 remote bunker** for `nview`; none for
+  `nplay`/`nping`.
 - **Dev/install isolation** via `cfg(debug_assertions)` — debug builds use
   `*-dev` DB/config filenames and a distinct keyring service, so `make dev`
   never touches installed state.
@@ -105,6 +113,16 @@ The shared data spine. `ndisc` publishes it; the others read and/or react.
 | **4550** | NIP-72 | Per-note sign-off / approval | ndisc | — |
 | **7** | NIP-25 | Reactions / ratings (shared `lib/rating.ts`, uniform aggregation) | ndisc, ntree, nsmpl, nview | all |
 | **1063** | `clip.v1` | NIP-94 file metadata for a clip/sample, with an `a`-ref to its release + a `track`/`disc` locator (schema/clip.v1.json) | ntree (clips), nsmpl (samples) | *(planned:* ntree/nsmpl, ndisc, glmps*)* |
+
+**Messaging (outside the spine).** `nchat` speaks kinds **1059 / 13 / 14**
+(NIP-17 gift wrap) and reads legacy **4** (NIP-04, never written). These are
+not part of the catalogue contract — nothing publishes them for another app to
+consume, and a `release.v2` / `feed.v1` wave never touches them. They are
+recorded here so the suite's Nostr surface is documented in one place. The one
+rule the wrap imposes on any reader: **sort by the inner rumor's `created_at`**,
+because the wrap's own timestamp is randomised *backwards* by up to two days by
+design. A relay or explorer will therefore report a message as up to 48h older
+than it is, and there is no relay-authoritative time to fall back on.
 
 **Contract governance.** Two frozen, SHA-pinned contracts — `release.v2` and
 `feed.v1` — live in [`schema/`](schema/). A contract change is a **coordinated
@@ -134,12 +152,18 @@ without per-user relay lists. NIP-65 / outbox (each user advertising their own
 relays — the real "a relay each" model) is the eventual vision but **deferred**;
 relays stay manually configured for now.
 
-**Signing paths.** Local `nsec` in the OS keyring → `ndisc`, `ntree`, `nsmpl`.
+**Signing paths.** Local `nsec` in the OS keyring → `ndisc`, `ntree`, `nsmpl`,
+`nchat`.
 Remote NIP-46 bunker → `nview`. No keys (read-only / connectivity only) →
 `nplay`, `nping`. **One key per person (decided 2026-07-19):** the desktop tools
 sign with the **same** `nsec` (one person = one `npub`) so "my clips/samples"
 reconciles under a single author pubkey. Pasting in / switching between multiple
-accounts is a noted future *want*, not planned.
+accounts is a noted future *want*, not planned. **`nchat` is the deliberate
+exception**, not a lapse: it holds several identities at once because a
+correspondent list mixes people with bots, and keeping the key that signs an
+alert separate from the one that signs a personal message is the point of the
+app. The rule is about reconciling *authored catalogue data* under one pubkey —
+which `nchat` publishes none of.
 
 ---
 
