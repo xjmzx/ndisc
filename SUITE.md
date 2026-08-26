@@ -117,8 +117,12 @@ lives in its own app config dir.
   nothing to merge, and the same file had to be dropped by hand twice during
   the Windows port of `gtrack`. Adding it is a **no-op** wherever every blob is
   already LF — verify with `git add --renormalize .`, which should stage
-  nothing but the new file. Landed in `ndisc`, `nplay`, `nsmpl`, `ntree` and
-  `gtrack` (2026-08-26); `nview`, `nping` and `nchat` still need it.
+  nothing but the new file. A working tree checked out *before* the file
+  existed keeps its old endings until each file is next written — harmless,
+  because the clean filter makes git see them as unchanged; in a clean tree,
+  `git rm --cached -r . && git reset --hard` forces the conversion if you want
+  it uniform. Landed in `ndisc`, `nplay`, `nsmpl`, `ntree` and `gtrack`
+  (2026-08-26); `nview`, `nping` and `nchat` still need it.
 
 ---
 
