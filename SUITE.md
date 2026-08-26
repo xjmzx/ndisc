@@ -26,7 +26,9 @@ design language, and the roadmap. Each app also ships its own
 | **nchat** | Private direct messages | Tauri 2 · React | NIP-17 gift-wrapped DMs; whitelist-only |
 
 `ndisc` is the authoritative publisher; everything else reads from and/or reacts
-to the data it emits.
+to the data it emits. `nchat` is in the suite because it is where the suite's
+own alerts land — the cert and domain expiry bots DM their operator — not
+because it touches a release.
 
 ---
 
@@ -92,10 +94,16 @@ lives in its own app config dir.
   `nplay`/`nping`.
 - **Dev/install isolation** via `cfg(debug_assertions)` — debug builds use
   `*-dev` DB/config filenames and a distinct keyring service, so `make dev`
-  never touches installed state.
+  never touches installed state. In `nchat` this is load-bearing rather than
+  tidy: removing an identity deletes the only copy of its key, no IPC command
+  can export one, and there is no local message store — so a dev run reaching
+  release state would take the key *and* every conversation it could decrypt.
 - **Build**: `make dev` / `make install` for the Tauri apps (release path is
   `tauri build`, which runs Vite — never `cargo build --release`, which skips
-  it). `nview` uses the Capacitor/Gradle toolchain. App icons derive from Figma
+  it). `nview` uses the Capacitor/Gradle toolchain. On **macOS** `nchat`
+  installs via `./install.sh`, not `make install`: it must be a real `.app`,
+  because the Keychain keys access on the caller's code identity and a
+  bundle-less binary is a *different app* to the OS. App icons derive from Figma
   masters.
 
 ---
@@ -123,6 +131,13 @@ rule the wrap imposes on any reader: **sort by the inner rumor's `created_at`**,
 because the wrap's own timestamp is randomised *backwards* by up to two days by
 design. A relay or explorer will therefore report a message as up to 48h older
 than it is, and there is no relay-authoritative time to fall back on.
+
+The second wrap property is operational: every 1059 is signed by a **fresh
+throwaway key**, so wraps cannot be filtered by sender and cannot pass a
+pubkey allowlist. `relay.fizx.uk` runs `restricted_writes` (nostr-rs-relay
+whitelists by author pubkey), and therefore **can never carry nchat traffic** —
+not a misconfiguration but a structural incompatibility, worth knowing before
+anyone points the suite's own hub at the messenger.
 
 **Contract governance.** Two frozen, SHA-pinned contracts — `release.v2` and
 `feed.v1` — live in [`schema/`](schema/). A contract change is a **coordinated
