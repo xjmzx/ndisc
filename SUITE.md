@@ -123,6 +123,27 @@ lives in its own app config dir.
   `git rm --cached -r . && git reset --hard` forces the conversion if you want
   it uniform. Landed in `ndisc`, `nplay`, `nsmpl`, `ntree` and `gtrack`
   (2026-08-26); `nview`, `nping` and `nchat` still need it.
+- **File modes: a tree-wide `100644 → 100755` is the Linux twin of the CRLF
+  trap above.** A checkout copied through a filesystem that carries no POSIX
+  permissions — FAT/exFAT/NTFS, a Windows-side copy, a cloud-sync folder —
+  comes back with the executable bit set on *every* file. With
+  `core.fileMode=true` (the default off Windows) git then reports the whole
+  tree as modified, permanently, while `git diff --stat` reads `0 insertions(+),
+  0 deletions(-)` and `git diff --raw` shows the **same blob hash on both
+  sides**. Same shape as the line-ending case, and the same lesson: **`git
+  status` alone cannot tell you whether a tree holds work.** Separate the noise
+  from the content before believing any dirty count — `git diff --numstat | awk
+  '$1=="0"&&$2=="0"'` lists the mode-only entries, and the complementary test
+  lists the real ones. Two traps in that check: **binary files report `-`, not
+  `0`**, in `numstat`, so they read as changed and will inflate the "real" list
+  — compare against the committed blob (`git show HEAD:<path> | md5sum`) to
+  settle one; and **`.gitattributes` does not cover this**, because a mode is
+  not content, so the fix above does nothing here. Where a tree is otherwise
+  clean, `git config core.fileMode false` is the per-repo answer; never
+  blanket-`checkout` a tree that also holds real edits. Found 2026-08-26 on the
+  Linux box across the orphaned clones under `~/sites` and `~/code`, and in
+  `macos-node/run-lnd-on-macos`, where it inflated a dirty count of 128 files
+  that held nothing whatsoever.
 
 ---
 
