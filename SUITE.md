@@ -105,6 +105,20 @@ lives in its own app config dir.
   because the Keychain keys access on the caller's code identity and a
   bundle-less binary is a *different app* to the OS. App icons derive from Figma
   masters.
+- **Line endings: `* text=auto eol=lf`**, from a `.gitattributes` in every repo
+  (plus explicit `binary` for `*.png`, `*.ico`, `*.icns`). LF in the repository
+  *and* in every working tree, on all three platforms. Git for Windows defaults
+  to `core.autocrlf=true`, so without the file the answer is **per-clone**: a
+  Windows tree reports unchanged files as modified, and a CRLF blob can land in
+  a file the Linux and macOS boxes hold as LF. `eol=lf` rather than a bare
+  `text=auto`, because normalising only the repository still leaves Windows
+  checkouts CRLF — which is where the phantom-modified files come from. Not
+  hypothetical: a CRLF-only `Cargo.toml` blocked a fast-forward pull that had
+  nothing to merge, and the same file had to be dropped by hand twice during
+  the Windows port of `gtrack`. Adding it is a **no-op** wherever every blob is
+  already LF — verify with `git add --renormalize .`, which should stage
+  nothing but the new file. Landed in `ndisc`, `nplay`, `nsmpl`, `ntree` and
+  `gtrack` (2026-08-26); `nview`, `nping` and `nchat` still need it.
 
 ---
 
