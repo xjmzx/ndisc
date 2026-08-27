@@ -20,7 +20,7 @@ const FIELDS: {
   blankInit?: boolean;
 }[] = [
   { key: "album", label: "Album" },
-  { key: "artist", label: "Artist" },
+  { key: "artist", label: "Album Artist" },
   { key: "year", label: "Year" },
   { key: "label", label: "Label" },
   { key: "discNumber", label: "Disc #", numeric: true, blankInit: true },
@@ -29,7 +29,7 @@ const FIELDS: {
 
 const FIELD_LABEL: Record<string, string> = {
   album: "Album",
-  artist: "Artist",
+  artist: "Album Artist",
   year: "Year",
   label: "Label",
   discNumber: "Disc #",
