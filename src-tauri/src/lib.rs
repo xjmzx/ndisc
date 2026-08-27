@@ -3411,6 +3411,248 @@ fn ext_for_content_type(content_type: Option<&str>, url: &str) -> &'static str {
     "jpg"
 }
 
+/// Download `cover_url` into `dir` as `cover.<ext>` and return the written path
+/// plus its byte length. The single place the suite turns a published image URL
+/// into an on-disk `cover.*` — shared by the per-release `sync_cover_to_disk`
+/// and the bulk `reconcile_published_covers` sweep, so both name and place the
+/// file identically.
+///
+/// Before writing it collapses any prior `cover.<other-ext>` in the dir to a
+/// single canonical file: the release-front score treats *every* `cover.*` as a
+/// top (100) match, so a stale `cover.png` left beside a fresh `cover.jpg` makes
+/// the winner fall to `read_dir` order — nplay, ndisc and glmps could then
+/// disagree on which image is the cover. Removing the siblings guarantees one
+/// `cover.*` per release (which every consumer's scan then picks up as a normal
+/// file change). Scoped to a stem of exactly `cover`, so `cover-extracted.*`,
+/// `folder.*`, booklet scans and the like are left untouched.
+async fn download_cover_into_dir(
+    cover_url: &str,
+    dir: &Path,
+) -> Result<(PathBuf, u64), String> {
+    let response = reqwest::get(cover_url)
+        .await
+        .map_err(|e| format!("fetch {}: {}", cover_url, e))?;
+    let ct = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
+    let ext = ext_for_content_type(ct.as_deref(), cover_url);
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| format!("read body: {}", e))?;
+    let out = dir.join(format!("cover.{}", ext));
+
+    // Remove any other `cover.<image-ext>` first (never the file we're about to
+    // write — that one `fs::write` overwrites in place). Best-effort: a cover we
+    // couldn't unlink is not worth failing the sync over.
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for p in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
+            let stem_is_cover = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("cover"))
+                .unwrap_or(false);
+            if p != out && p.is_file() && stem_is_cover && is_image_ext(&p) {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+
+    std::fs::write(&out, &body)
+        .map_err(|e| format!("write {}: {}", out.display(), e))?;
+    Ok((out, body.len() as u64))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedCoverGap {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    /// The release folder we checked (resolved from `file_path`).
+    pub dir: String,
+    /// The published image tag (kind:31237 `image`) that isn't on disk.
+    pub cover_art_url: String,
+    /// Fix outcome when the sweep ran with `fix = true`: "ok" on success, else
+    /// the error string. None in flag-only (dry-run) mode.
+    pub fixed: Option<String>,
+    pub bytes: Option<u64>,
+    /// Absolute path written, when fixed.
+    pub written: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedCoverReconcile {
+    /// Published releases examined (published + an image URL + a folder).
+    pub considered: usize,
+    /// Of those, how many already carry on-disk folder art (nothing to do).
+    pub on_disk: usize,
+    /// The gaps — published, art online, nothing on disk. Ordered artist/year.
+    pub gaps: Vec<PublishedCoverGap>,
+    /// Gaps materialized this run (0 in flag-only mode).
+    pub fixed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Reconcile each *published* release's canonical art against what's on disk,
+/// and (optionally) close the gaps.
+///
+/// A release published to the relays carries its cover as `cover_art_url` (the
+/// kind:31237 `image` tag). But the suite's local players — nplay, the nview
+/// mobile viewer, the glmps web reader, a plain file manager — only ever see
+/// art that is a real file inside the release folder. So a release can be live
+/// on relays with its cover visible everywhere online yet blank in nplay, until
+/// the art is materialized to disk. `sync_cover_to_disk` does that one release
+/// at a time; this sweeps the whole catalogue.
+///
+/// It flags every published release whose `cover_art_url` is set but whose
+/// folder yields no cover under the *same* finder nplay uses (`find_cover_deep`:
+/// scored name match → disc subfolders → lone image). With `fix = false` it only
+/// reports the gaps — a dry run to review. With `fix = true` it downloads each
+/// gap's `cover_art_url` into the release root as `cover.<ext>` and records the
+/// new path on the row, closing the gap for every on-disk consumer at once.
+#[tauri::command]
+async fn reconcile_published_covers(
+    app: tauri::AppHandle,
+    fix: bool,
+) -> Result<PublishedCoverReconcile, String> {
+    // 1. Read candidates, then DROP the connection before any await: the fix
+    //    path awaits on the network and a rusqlite Connection is not Send, so it
+    //    must never be held across an await. Writes go in a fresh tx at the end.
+    let candidates: Vec<(i64, String, String, String, String)> = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, artist, title, file_path, cover_art_url
+                   FROM releases
+                  WHERE publish_state = 'published'
+                    AND cover_art_url IS NOT NULL AND TRIM(cover_art_url) <> ''
+                    AND file_path     IS NOT NULL AND TRIM(file_path)     <> ''
+                  ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let considered = candidates.len();
+    let mut on_disk = 0usize;
+    let mut gaps: Vec<PublishedCoverGap> = Vec::new();
+
+    // 2. Partition — pure filesystem, no network, no DB. `file_path` is the
+    //    release folder (or a file whose parent is). A folder that already
+    //    yields a scored cover is materialized; everything else is a gap.
+    for (id, artist, title, file_path, cover_art_url) in candidates {
+        let path = PathBuf::from(&file_path);
+        let dir = if path.is_file() {
+            path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
+        } else {
+            path
+        };
+        if find_cover_deep(&dir).is_some() {
+            on_disk += 1;
+        } else {
+            gaps.push(PublishedCoverGap {
+                id,
+                artist,
+                title,
+                dir: dir.to_string_lossy().into_owned(),
+                cover_art_url,
+                fixed: None,
+                bytes: None,
+                written: None,
+            });
+        }
+    }
+
+    // 3. Flag-only: report and stop. Nothing written.
+    if !fix {
+        return Ok(PublishedCoverReconcile {
+            considered,
+            on_disk,
+            gaps,
+            fixed: 0,
+            errors: Vec::new(),
+        });
+    }
+
+    // 4. Fix: materialize each gap. Sequential on purpose — network-bound and
+    //    gentle on the host image origin. No DB handle is held across the awaits.
+    let total = gaps.len();
+    let _ = app.emit("cover-reconcile:started", total);
+    let mut updates: Vec<(i64, String)> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut fixed = 0usize;
+
+    for (i, gap) in gaps.iter_mut().enumerate() {
+        let _ = app.emit(
+            "cover-reconcile:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: gap.dir.clone(),
+            },
+        );
+        let dir = PathBuf::from(&gap.dir);
+        match download_cover_into_dir(&gap.cover_art_url, &dir).await {
+            Ok((out, bytes)) => {
+                let out_str = out.to_string_lossy().into_owned();
+                updates.push((gap.id, out_str.clone()));
+                gap.fixed = Some("ok".into());
+                gap.bytes = Some(bytes);
+                gap.written = Some(out_str);
+                fixed += 1;
+            }
+            Err(e) => {
+                gap.fixed = Some(e.clone());
+                errors.push(format!("release {}: {}", gap.id, e));
+            }
+        }
+    }
+
+    // 5. Persist the new cover paths in one transaction.
+    if !updates.is_empty() {
+        let mut conn = open(&app)?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "UPDATE releases
+                        SET cover_art_path = ?1, updated_at = strftime('%s','now')
+                      WHERE id = ?2",
+                )
+                .map_err(|e| e.to_string())?;
+            for (id, path) in &updates {
+                if let Err(e) = stmt.execute(params![path, id]) {
+                    errors.push(format!("release {}: DB update: {}", id, e));
+                }
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+
+    Ok(PublishedCoverReconcile {
+        considered,
+        on_disk,
+        gaps,
+        fixed,
+        errors,
+    })
+}
+
 #[tauri::command]
 async fn sync_cover_to_disk(
     app: tauri::AppHandle,
@@ -3463,25 +3705,7 @@ async fn sync_cover_to_disk(
         });
     }
 
-    let response = reqwest::get(&cover_url)
-        .await
-        .map_err(|e| format!("fetch {}: {}", cover_url, e))?;
-    let ct = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
-    let ext = ext_for_content_type(ct.as_deref(), &cover_url);
-    let body = response
-        .bytes()
-        .await
-        .map_err(|e| format!("read body: {}", e))?;
-
-    let out = dir.join(format!("cover.{}", ext));
-    std::fs::write(&out, &body).map_err(|e| {
-        format!("write {}: {}", out.display(), e)
-    })?;
-
+    let (out, bytes) = download_cover_into_dir(&cover_url, &dir).await?;
     let out_str = out.to_string_lossy().into_owned();
     let conn = open(&app)?;
     conn.execute(
@@ -3495,7 +3719,7 @@ async fn sync_cover_to_disk(
     Ok(CoverSyncResult {
         status: "ok".into(),
         written: Some(out_str),
-        bytes: Some(body.len() as u64),
+        bytes: Some(bytes),
     })
 }
 
@@ -8338,6 +8562,7 @@ pub fn run() {
             decrement_orphaned,
             export_published_manifest,
             sync_cover_to_disk,
+            reconcile_published_covers,
             update_release_path,
             inspect_release_path,
             clear_release_path,

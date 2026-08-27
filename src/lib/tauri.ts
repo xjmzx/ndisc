@@ -770,6 +770,39 @@ export async function syncCoverToDisk(
   return invoke<CoverSyncResult>("sync_cover_to_disk", { releaseId });
 }
 
+// A published release whose canonical art (cover_art_url, the kind:31237 `image`
+// tag) has no on-disk file in its folder — so nplay/nview/glmps show it blank.
+export interface PublishedCoverGap {
+  id: number;
+  artist: string;
+  title: string;
+  dir: string;
+  coverArtUrl: string;
+  // Fix outcome when the sweep ran with fix=true ("ok" or an error); null in
+  // flag-only mode.
+  fixed: string | null;
+  bytes: number | null;
+  written: string | null;
+}
+
+export interface PublishedCoverReconcile {
+  considered: number;
+  onDisk: number;
+  gaps: PublishedCoverGap[];
+  fixed: number;
+  errors: string[];
+}
+
+// Sweep every published release for art that's live on relays but not on disk.
+// fix=false flags the gaps (dry run); fix=true downloads each into the release
+// root as cover.<ext>. Emits `cover-reconcile:started` / `cover-reconcile:progress`
+// (ImportProgress) while fixing.
+export async function reconcilePublishedCovers(
+  fix: boolean,
+): Promise<PublishedCoverReconcile> {
+  return invoke<PublishedCoverReconcile>("reconcile_published_covers", { fix });
+}
+
 // --- Nostr identity ----------------------------------------------------------
 
 export interface Keypair {

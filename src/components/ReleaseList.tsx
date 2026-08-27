@@ -9,6 +9,7 @@ import {
   FolderCog,
   FolderSearch,
   FolderSync,
+  ImageDown,
   ImageOff,
   Link2,
   Music,
@@ -41,6 +42,7 @@ import {
   purgeRelayEvents,
   reconcileLibrary,
   reconcilePublished,
+  reconcilePublishedCovers,
   rescanLocalCovers,
   scanLibraryChanges,
   setCoverArtUrl,
@@ -60,6 +62,7 @@ import {
   type OrphanInfo,
   type PublishState,
   type ManifestSummary,
+  type PublishedCoverReconcile,
   type PurgeSummary,
   type ReconcileSummary,
   type RelayAudit,
@@ -225,7 +228,8 @@ export function ReleaseList({
     | "audit"
     | "purge"
     | "republish"
-    | "manifest";
+    | "manifest"
+    | "coverGap";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   const [opSummary, setOpSummary] = useState<
@@ -237,6 +241,7 @@ export function ReleaseList({
     | { kind: "audit"; data: RelayAudit }
     | { kind: "purge"; data: PurgeSummary }
     | { kind: "manifest"; data: ManifestSummary }
+    | { kind: "coverGap"; data: PublishedCoverReconcile }
     | null
   >(null);
 
@@ -356,6 +361,53 @@ export function ReleaseList({
     }
   }
 
+  // Materialize the published covers the flag pass turned up — downloads each
+  // release's published image into its folder as cover.jpg. Writes to disk, so
+  // it's an explicit opt-in step separate from the read-only flag pass (which
+  // runBackgroundOp("coverGap") ran to produce this summary).
+  async function runCoverGapFix(reconcile: PublishedCoverReconcile) {
+    if (activeOp !== null || reconcile.gaps.length === 0) return;
+    const n = reconcile.gaps.length;
+    const yes = await ask(
+      `Download published cover art for ${n.toLocaleString()} release${n === 1 ? "" : "s"} and write it into each folder?\n\n` +
+        "These are releases published to the relays whose cover isn't a file " +
+        "on disk yet — so the local players (nplay, nview) and the web reader " +
+        "show them blank. For each, the published image is fetched and saved " +
+        "as cover.jpg in the release folder (replacing any stray cover.* so " +
+        "there's exactly one). Nothing on the relays changes.",
+      { title: "Materialize published covers", kind: "info" },
+    );
+    if (!yes) return;
+
+    setActiveOp("coverGap");
+    setOpSummary(null);
+    setOpProgress({ current: 0, total: n, currentDir: "" });
+    setError(null);
+
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<number>("cover-reconcile:started", (e) => {
+          setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+        }),
+      );
+      unlisteners.push(
+        await listen<ImportProgress>("cover-reconcile:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const data = await reconcilePublishedCovers(true);
+      setOpSummary({ kind: "coverGap", data });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
+
   async function runBackgroundOp(kind: OpKind) {
     if (activeOp !== null) return;
 
@@ -425,6 +477,26 @@ export function ReleaseList({
         const data = await reconcilePublished(relays);
         setOpSummary({ kind: "reconcile", data });
         await reload();
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
+
+    // Published-cover reconcile — FLAG pass. Read-only, no network: scans
+    // published releases for ones whose canonical art (cover_art_url) has no
+    // file on disk under the same finder nplay uses. The summary panel then
+    // offers to materialize them (runCoverGapFix).
+    if (kind === "coverGap") {
+      setActiveOp("coverGap");
+      setOpSummary(null);
+      setOpProgress(null);
+      setError(null);
+      try {
+        const data = await reconcilePublishedCovers(false);
+        setOpSummary({ kind: "coverGap", data });
       } catch (e) {
         setError(String(e));
       } finally {
@@ -1064,6 +1136,17 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<ImageDown size={14} />}
+                label="Reconcile published covers"
+                detail="Find published art missing on disk, then write it"
+                active={activeOp === "coverGap"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("coverGap");
+                }}
+              />
+              <MaintMenuItem
                 icon={<FolderSync size={14} />}
                 label="Rescan library folder"
                 detail="Find new folders + refresh existing"
@@ -1172,7 +1255,9 @@ export function ReleaseList({
                     ? "reconciling library folder"
                     : activeOp === "purge"
                       ? "retracting stray events from relays"
-                      : "scanning library for changes"}{" "}
+                      : activeOp === "coverGap"
+                        ? "materializing published covers"
+                        : "scanning library for changes"}{" "}
               <span className="font-mono text-fg">
                 {opProgress.current.toLocaleString()}/
                 {(opProgress.total || 0).toLocaleString()}
@@ -1205,6 +1290,14 @@ export function ReleaseList({
                         text-muted flex items-center gap-2">
           <SatelliteDish size={12} className="animate-pulse text-accent" />
           contacting relays — fetching published releases…
+        </div>
+      )}
+
+      {activeOp === "coverGap" && !opProgress && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs
+                        text-muted flex items-center gap-2">
+          <ImageDown size={12} className="animate-pulse text-accent" />
+          checking published releases for cover art missing on disk…
         </div>
       )}
 
@@ -1319,6 +1412,50 @@ export function ReleaseList({
                     <span className="font-mono">{opSummary.data.orphaned}</span>
                   </span>
                 )}
+              </>
+            )}
+            {opSummary.kind === "coverGap" && (
+              <>
+                {opSummary.data.fixed > 0 && (
+                  <span className="text-ok">
+                    materialized{" "}
+                    <span className="font-mono">{opSummary.data.fixed}</span>
+                  </span>
+                )}
+                <span
+                  className={
+                    opSummary.data.gaps.some((g) => g.fixed === null) &&
+                    opSummary.data.gaps.length > 0
+                      ? "text-warn"
+                      : "text-muted"
+                  }
+                >
+                  missing on disk{" "}
+                  <span className="font-mono">
+                    {opSummary.data.gaps.filter((g) => g.fixed !== "ok").length}
+                  </span>
+                </span>
+                <span className="text-muted">
+                  already on disk{" "}
+                  <span className="font-mono">{opSummary.data.onDisk}</span>
+                </span>
+                <span className="text-muted">
+                  published{" "}
+                  <span className="font-mono">{opSummary.data.considered}</span>
+                </span>
+                {opSummary.data.gaps.length > 0 &&
+                  opSummary.data.gaps.some((g) => g.fixed === null) && (
+                    <button
+                      onClick={() => runCoverGapFix(opSummary.data)}
+                      className="px-2 py-0.5 rounded bg-mauve/15 text-mauve
+                                 hover:bg-mauve hover:text-bg text-[10px]
+                                 font-medium transition-colors"
+                      title="Download each published cover into its release folder"
+                    >
+                      Materialize {opSummary.data.gaps.length} cover
+                      {opSummary.data.gaps.length === 1 ? "" : "s"}
+                    </button>
+                  )}
               </>
             )}
             {opSummary.kind === "reconcile" && (
@@ -1461,6 +1598,48 @@ export function ReleaseList({
           </ul>
         </details>
       )}
+
+      {!activeOp &&
+        opSummary?.kind === "coverGap" &&
+        opSummary.data.gaps.length > 0 && (
+          <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+            <summary className="text-warn cursor-pointer text-xs">
+              {opSummary.data.gaps.length} published release
+              {opSummary.data.gaps.length === 1 ? "" : "s"} — cover art missing
+              on disk
+            </summary>
+            <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+              {opSummary.data.gaps.map((g) => (
+                <li
+                  key={g.id}
+                  className="px-2 py-1 rounded bg-bg/50 flex items-start gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-fg">
+                      {g.artist} <span className="text-muted">·</span> {g.title}
+                    </div>
+                    <div className="text-muted font-mono break-all">
+                      {g.dir}
+                    </div>
+                  </div>
+                  {g.fixed && (
+                    <span
+                      className={cn(
+                        "shrink-0 font-mono",
+                        g.fixed === "ok" ? "text-ok" : "text-alert",
+                      )}
+                      title={
+                        g.fixed === "ok" ? (g.written ?? "written") : g.fixed
+                      }
+                    >
+                      {g.fixed === "ok" ? "✓" : "✗"}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
 
       {!activeOp &&
         opSummary?.kind === "reconcile" &&
