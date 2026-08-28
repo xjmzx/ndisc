@@ -206,6 +206,34 @@ without per-user relay lists. NIP-65 / outbox (each user advertising their own
 relays — the real "a relay each" model) is the eventual vision but **deferred**;
 relays stay manually configured for now.
 
+**`CLAUDE.md` lives in three tiers, and only one of them is publishable.**
+Every repo here is public or may become public, so the split is a safety
+property rather than a filing preference.
+
+| Tier | Where | Holds | Travels by |
+|---|---|---|---|
+| Per-repo | `<repo>/CLAUDE.md` | build commands, contracts, traps specific to that code | git — same on every machine |
+| Machine-local | `~/code_gh/CLAUDE.md` | server addresses, SSH, per-box ops, what lives where on *this* box | nothing; each machine keeps its own |
+| Personal | `~/.claude/` | memory index, settings, allow-rules | nothing |
+
+**Never in a repo, on any machine:** host addresses and ports, SSH users, key
+paths, `nsec` values or their file locations, webroot and `/etc` paths,
+relay whitelists, anything under `~/.claude/`. A per-repo `CLAUDE.md` that
+needs to refer to one of those names it — "the deploy host", "the relay owner
+key" — and stops. `~/code_gh` is deliberately **not a git repo** so the
+machine-local file has nowhere to be committed to; keep it that way.
+
+Every per-repo `CLAUDE.md` ends with a `## Not here` section stating the rule
+and naming the repo as public. That footer is the mechanism: it is what makes
+the next session put a server address in the right file instead of the
+convenient one. A repo whose `CLAUDE.md` lacks it has not adopted the pattern.
+
+**Direction of travel when in doubt: down, not up.** A fact that is true of the
+code goes in the repo. A fact that is true of a machine goes in that machine's
+file. A fact that is true of the code but *reveals* a machine — a deploy
+command with a real host in it — is machine-local, because the sensitive half
+decides.
+
 **Signing paths.** Local `nsec` in the OS keyring → `ndisc`, `ntree`, `nsmpl`,
 `nchat`.
 Remote NIP-46 bunker → `nview`. No keys (read-only / connectivity only) →
