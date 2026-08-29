@@ -154,13 +154,16 @@ lives in its own app config dir.
   names an `IdentityFile` and can only ever be one account — with
   `IdentitiesOnly yes` in `~/.ssh/config`, so ssh cannot fall through to another
   loaded key.
-- **The alias is the account name alone** — `xjmzx`, `adjmx`, `macos-node` — not
-  `github-<account>`. The `Host` block already sets `HostName github.com`, so a
-  `github-` prefix only restates what the block says, and the bare name is what
-  the remotes on every box actually carry. Each block also needs **`User git`**:
-  GitHub accepts no other SSH user, and a block naming the account instead works
-  only while the URL happens to spell out `git@` — write the alias bare and it
-  fails to authenticate.
+- **The alias *name* is per-machine, deliberately.** `github-xjmzx` on one box
+  is `xjmzx` on another; both pin equally well, because what pins is the
+  `IdentityFile` in the `Host` block, never the spelling of the name. Do not
+  standardise it across boxes and do not let any tool match on a specific alias
+  — classification checks the *shape* of the URL (does it name an identity?),
+  which is why gtrack works unchanged on all three. Each block does need
+  **`User git`**, and that part *is* machine-independent: GitHub accepts no
+  other SSH user, and a block naming the account instead works only while the
+  URL happens to spell out `git@` — write the alias bare and it fails to
+  authenticate.
 - **The trap is that converting `https://` to `git@github.com:` looks like the
   fix and is not**: it clears the old `https remote` warning while leaving the
   same exposure. `git remote get-url` is no help either — it *applies*
@@ -176,10 +179,9 @@ lives in its own app config dir.
   account. That audit found two faults *inside the config meant to prevent this*,
   both fixed the same day — the blocks set `User <account>` where GitHub requires
   `User git`, and `adjmx.github.io` was misspelt `adjmz.github.io`, so that host
-  fell through to the unpinned fallback block. **Windows and macOS have not been
-  re-checked against the bare form** and may still carry `github-<account>`
-  aliases; both spellings pin correctly, so that is a naming convention to
-  converge, not an exposure.
+  fell through to the unpinned fallback block. Windows and macOS were converted
+  and checked in the same 2026-08-26 run; their alias names differ from this
+  box's by design and need no reconciling.
 
 ---
 
