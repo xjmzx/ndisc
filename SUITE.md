@@ -150,19 +150,36 @@ lives in its own app config dir.
   `https://` remote resolves through whatever the credential helper hands over;
   a bare `git@github.com:` resolves through whichever key `ssh-agent` offers
   first. **Both can push as the wrong identity, and neither says so until the
-  commit is on the wrong profile.** A host alias (`github-<account>:owner/repo.git`)
+  commit is on the wrong profile.** A host alias (`git@<account>:owner/repo.git`)
   names an `IdentityFile` and can only ever be one account — with
-  `IdentitiesOnly yes` in `~/.ssh/config`, so ssh cannot fall through to
-  another loaded key. **The trap is that converting `https://` to
-  `git@github.com:` looks like the fix and is not**: it clears the old
-  `https remote` warning while leaving the same exposure. `git remote get-url`
-  is no help either — it *applies* `url.*.insteadOf` rewrites, so it will show
-  an alias for a remote still stored as HTTPS; audit
-  `git config --get remote.origin.url`. gtrack ≥0.1.8 flags this correctly as
-  **`unpinned`** rather than by protocol; a repo with no remote counts as
-  pinned, being an archive. All 16 checkouts on the Windows box were converted
-  2026-08-26; the Linux box's 23 were moved the same day and should be checked
-  for the bare-SSH half of this.
+  `IdentitiesOnly yes` in `~/.ssh/config`, so ssh cannot fall through to another
+  loaded key.
+- **The alias is the account name alone** — `xjmzx`, `adjmx`, `macos-node` — not
+  `github-<account>`. The `Host` block already sets `HostName github.com`, so a
+  `github-` prefix only restates what the block says, and the bare name is what
+  the remotes on every box actually carry. Each block also needs **`User git`**:
+  GitHub accepts no other SSH user, and a block naming the account instead works
+  only while the URL happens to spell out `git@` — write the alias bare and it
+  fails to authenticate.
+- **The trap is that converting `https://` to `git@github.com:` looks like the
+  fix and is not**: it clears the old `https remote` warning while leaving the
+  same exposure. `git remote get-url` is no help either — it *applies*
+  `url.*.insteadOf` rewrites, so it will show an alias for a remote still stored
+  as HTTPS; audit `git config --get remote.origin.url`. gtrack ≥0.1.8 flags this
+  correctly as **`unpinned`** rather than by protocol; a repo with no remote
+  counts as pinned, being an archive.
+- **State of the three boxes.** All 16 checkouts on the Windows box were
+  converted 2026-08-26; the Linux box's 23 were moved the same day. The **Linux
+  box was audited 2026-08-29 and is clean**: 52 of 53 remotes on the bare alias
+  form, one archive with no remote, no HTTPS and no bare-SSH survivors, all
+  three aliases carrying `IdentitiesOnly yes` and authenticating as the right
+  account. That audit found two faults *inside the config meant to prevent this*,
+  both fixed the same day — the blocks set `User <account>` where GitHub requires
+  `User git`, and `adjmx.github.io` was misspelt `adjmz.github.io`, so that host
+  fell through to the unpinned fallback block. **Windows and macOS have not been
+  re-checked against the bare form** and may still carry `github-<account>`
+  aliases; both spellings pin correctly, so that is a naming convention to
+  converge, not an exposure.
 
 ---
 
