@@ -144,6 +144,25 @@ lives in its own app config dir.
   Linux box across the orphaned clones under `~/sites` and `~/code`, and in
   `macos-node/run-lnd-on-macos`, where it inflated a dirty count of 128 files
   that held nothing whatsoever.
+- **Remotes must pin the account they authenticate as — an SSH *host alias*,
+  not bare `git@github.com:`.** Three GitHub identities are in play (`xjmzx`,
+  `adjmx`, `macos-node`) and the property that matters is not the protocol. An
+  `https://` remote resolves through whatever the credential helper hands over;
+  a bare `git@github.com:` resolves through whichever key `ssh-agent` offers
+  first. **Both can push as the wrong identity, and neither says so until the
+  commit is on the wrong profile.** A host alias (`github-<account>:owner/repo.git`)
+  names an `IdentityFile` and can only ever be one account — with
+  `IdentitiesOnly yes` in `~/.ssh/config`, so ssh cannot fall through to
+  another loaded key. **The trap is that converting `https://` to
+  `git@github.com:` looks like the fix and is not**: it clears the old
+  `https remote` warning while leaving the same exposure. `git remote get-url`
+  is no help either — it *applies* `url.*.insteadOf` rewrites, so it will show
+  an alias for a remote still stored as HTTPS; audit
+  `git config --get remote.origin.url`. gtrack ≥0.1.8 flags this correctly as
+  **`unpinned`** rather than by protocol; a repo with no remote counts as
+  pinned, being an archive. All 16 checkouts on the Windows box were converted
+  2026-08-26; the Linux box's 23 were moved the same day and should be checked
+  for the bare-SSH half of this.
 
 ---
 
