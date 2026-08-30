@@ -181,7 +181,22 @@ lives in its own app config dir.
   `User git`, and `adjmx.github.io` was misspelt `adjmz.github.io`, so that host
   fell through to the unpinned fallback block. Windows and macOS were converted
   and checked in the same 2026-08-26 run; their alias names differ from this
-  box's by design and need no reconciling.
+  box's by design and need no reconciling. The **macOS box was audited
+  2026-08-30 and is clean**: all 59 checkouts in gtrack's roots on the alias
+  form, all three aliases carrying `User git` and `IdentitiesOnly yes` and
+  authenticating as the right account, and no `insteadOf` rewrite anywhere —
+  neither Linux fault was present here.
+- **A clean gtrack report is only as wide as its roots, and that is where the
+  macOS audit actually found something.** Five owned repos sat on `https://`
+  remotes while the tool called the machine clean: three under `~/code`, which
+  is no root at all, and two under `~/code_vibe/macos/`, which is a root but one
+  level deeper than the scan goes. All five were converted 2026-08-30. The
+  lesson generalises to every box — **`unpinned` counts what was scanned, so an
+  audit has to sweep the filesystem, not the tool's own view of it**, and the
+  raw `git config --get remote.origin.url` sweep above is what does that. It
+  also turned up an orphan the old HTTPS remote had been hiding in plain sight:
+  `adjmx/sveltekit-gh-pages` no longer exists, which only became legible once
+  the remote named an account and the error stopped being a generic 404.
 
 ---
 
