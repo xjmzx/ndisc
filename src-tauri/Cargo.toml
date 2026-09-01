@@ -44,3 +44,11 @@ tokio = { version = "1", features = ["time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # OS keychain (libsecret on Linux via secret-service).
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows needs its own keyring backend named explicitly. Without one the crate
+# does not fail — it silently falls back to its in-memory `mock` store, which
+# accepts a key, returns it for the rest of the process, and loses it on restart
+# with no error at any point. A vanished signing key, reported as success. See
+# SUITE.md, "Shared architecture conventions".
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
