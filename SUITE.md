@@ -78,6 +78,25 @@ not a local edit.
 at all; its `nchat.json` — public keys, petnames, relays, never a secret —
 lives in its own app config dir.
 
+**Where the library lives is recorded two different ways, and only one of them
+can be re-pointed.** `nplay` keeps an explicit **`musicRoot`** in its own app
+config — one editable value. `ndisc` keeps **no root setting at all**: every
+release row stores an absolute `file_path`, with `cover_art_path` and
+`merged_paths` alongside it, all pinned to wherever the library stood when the
+release was catalogued. Both apps therefore agree on the library today by
+coincidence of history rather than by a shared setting, and there is nothing
+that would tell you if they stopped agreeing.
+
+The consequence is asymmetric and only surfaces on the day the library moves,
+or a machine is rebuilt, or a drive letter changes: **`nplay` needs one config
+edit; `ndisc` needs every stored path rewritten** — on the Windows box that is
+214 rows across two columns for 118 releases. Nothing in either app rewrites
+them, and nothing warns that a path has gone stale; a moved library simply
+reads as missing files.
+
+Worth knowing before either app grows a "change library location" feature: for
+`nplay` that is a settings field, for `ndisc` it is a migration.
+
 - **Desktop = Tauri 2** (React + Vite + TypeScript front end, Rust backend over
   IPC). **Mobile = Capacitor** (`nview` only).
 - **SQLite** (`rusqlite`, bundled) where a local library index is needed
