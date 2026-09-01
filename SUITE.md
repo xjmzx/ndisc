@@ -144,6 +144,26 @@ lives in its own app config dir.
   Linux box across the orphaned clones under `~/sites` and `~/code`, and in
   `macos-node/run-lnd-on-macos`, where it inflated a dirty count of 128 files
   that held nothing whatsoever.
+- **`keyring` needs a backend feature named per platform, or it silently uses a
+  mock store.** The local-signer apps (`ndisc`, `ntree`, `nsmpl`, `nchat`) take
+  `keyring` with `default-features = false`, so the backend comes only from the
+  features asked for. Ask for none on a given platform and the crate **does not
+  fail to build and does not error at runtime** — `keyring/src/lib.rs` reads
+  `#[cfg(all(target_os = "windows", not(feature = "windows-native")))] pub use
+  mock as default;`, and the same shape guards macOS. The mock store is
+  in-memory and per-process: it accepts a key, returns it for the rest of that
+  run, and loses it on restart, reporting success at every step. **A signing key
+  that vanishes, with no error anywhere** — the worst of the traps recorded here,
+  because the other two only make a clean tree look dirty.
+  Each platform needs its own: `windows-native`, `apple-native`,
+  `sync-secret-service` + `crypto-rust`. `radio-scan` had all three; `ndisc`,
+  `nsmpl` and `ntree` carried the Linux features unconditionally and so were on
+  the mock store on Windows — fixed 2026-09-01 by adding a
+  `cfg(target_os = "windows")` block to each. **macOS is still unguarded in all
+  three**: no `apple-native` anywhere, so a Mac running any of them gets the mock
+  store too. Not yet observed, plausibly because the Mac builds `nview` and the
+  `glmps` readers rather than these — but it is the same defect and wants the
+  same three lines.
 - **Remotes must pin the account they authenticate as — an SSH *host alias*,
   not bare `git@github.com:`.** Three GitHub identities are in play (`xjmzx`,
   `adjmx`, `macos-node`) and the property that matters is not the protocol. An
