@@ -159,7 +159,12 @@ lives in its own app config dir.
   `sync-secret-service` + `crypto-rust`. `radio-scan` had all three; `ndisc`,
   `nsmpl` and `ntree` carried the Linux features unconditionally and so were on
   the mock store on Windows — fixed 2026-09-01 by adding a
-  `cfg(target_os = "windows")` block to each. **macOS is still unguarded in all
+  `cfg(target_os = "windows")` block to each. `ndisc` and `nsmpl` were
+  compile-verified on Windows; **`ntree` could not be, because it does not build
+  on Windows at all** — `mirror_library` uses `std::os::unix::fs::MetadataExt`
+  unconditionally (`uid`/`gid`/`mode`, src/lib.rs:1269), which is a separate
+  portability question from this one. Its guard is committed anyway so the three
+  carry the same shape. **macOS is still unguarded in all
   three**: no `apple-native` anywhere, so a Mac running any of them gets the mock
   store too. Not yet observed, plausibly because the Mac builds `nview` and the
   `glmps` readers rather than these — but it is the same defect and wants the
