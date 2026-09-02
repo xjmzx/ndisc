@@ -21,6 +21,27 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.7 — 2026-09-02
+
+### macOS builds
+
+- The release workflow now builds a **macOS arm64 `.dmg`** alongside the Linux
+  `.deb`/`.AppImage` and the Windows NSIS installer. The macOS job runs after the Linux one and only
+  appends its asset, so the Linux job stays the single owner of the release
+  name and notes.
+- Unsigned and un-notarised, like the rest of the suite. Gatekeeper blocks the
+  first launch until the app is opened from the context menu, or cleared with
+  `xattr -dr com.apple.quarantine /Applications/ndisc.app`.
+- **This dmg is untested.** It is known to build; it is not known to run. No
+  macOS build of this app has been launched.
+
+### Fixed
+
+- `workflow_dispatch` checked out the default branch while publishing to the
+  tag it was handed, so a manual run uploaded main-built artifacts to an older
+  tag's release. Checkout now pins `ref` to the tag being released. Tag pushes
+  were never affected.
+
 ## 0.2.0-beta.6 — 2026-07-27
 
 ### In-app file-tag editor — first on-disk tag write
