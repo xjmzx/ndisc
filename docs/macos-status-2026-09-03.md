@@ -27,13 +27,14 @@ prompt — that only applies to a downloaded `.dmg`.
 
 ## TEST THESE — none of it has been exercised
 
-### 0. Install the missing tool first
-```
-brew install aubio
-```
-`aubio` is **not installed** on this machine, so BPM detection in `nplay` and
-`nsmpl` will correctly report it missing until this is run. ffmpeg/ffprobe are
-present at `/opt/homebrew/bin`.
+### 0. External tools — all present as of 2026-09-03
+`aubio` **0.4.9_4 installed** (`brew install aubio`, done 2026-09-03), alongside
+ffmpeg/ffprobe. All three are in `/opt/homebrew/bin`, which **is** in the macOS
+`EXTRA_DIRS` list in `tools.rs`, so the resolver should find them.
+
+That is a static path check, not a run: BPM detection has still never actually
+been invoked. If it reports a tool missing, the resolver is the bug, not the
+install.
 
 ### 1. External tools resolve from a Finder launch (nplay, nsmpl, ntree)
 The whole point of `src-tauri/src/tools.rs`. An app launched from Finder inherits
