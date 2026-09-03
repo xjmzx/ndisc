@@ -570,6 +570,12 @@ each app declaring its own stack.
   design `schema/clip-mapping-design-2026-07-17.md`): an `a`-ref + track locator,
   reconciled off the relays.
 
+- **macOS: all 8 Tauri apps now build, install and launch** (2026-09-03) — but
+  only *launch* is confirmed. External-tool resolution, `nplay` playback on
+  WKWebView, and `ntree`'s new privilege prompt are all untested. Open items and
+  the traps hit on the way:
+  [`docs/macos-status-2026-09-03.md`](docs/macos-status-2026-09-03.md).
+
 **Mid / long-term**
 - Media edits — destructive *and* non-destructive.
 - **BPM on the wire (decided 2026-07-19):** carry BPM as an **additive optional
