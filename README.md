@@ -426,4 +426,4 @@ specific item you chose to share.
 
 - [`bpm-tapper`](https://github.com/xjmzx/bpm-tapper)
 - [`audio-flac-quality-check`](https://github.com/xjmzx/audio-flac-quality-check)
-- [`smpl-tool`](https://github.com/xjmzx/smpl-tool)
+- [`nsmpl`](https://github.com/xjmzx/nsmpl)

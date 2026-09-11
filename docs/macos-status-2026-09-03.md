@@ -19,6 +19,11 @@ macOS builds. Pick-up note — the open items are the point of this file.*
 Two bundles are **not** named after their repo (`smpl-tool`, `ndisc-tree`) — they
 take the Tauri `productName`. Spotlight will not find them under "nsmpl"/"ntree".
 
+**Update 2026-09-12: fixed.** Both apps now build as `nsmpl.app` / `ntree.app`
+(nsmpl `01bc482`, ntree `ec15b68`), and `./install.sh` removes the old bundle.
+The bundle identifiers and keychain services are unchanged, so saved data and
+Keychain entries carry over; expect the usual Keychain prompt after the rebuild.
+
 Install locally with `./install.sh` in any repo (or `npm run install:app`). A
 locally built `.app` carries **no quarantine attribute**, so Gatekeeper does not
 prompt — that only applies to a downloaded `.dmg`.
