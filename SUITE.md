@@ -357,40 +357,41 @@ interchangeable:
 |---|---|---|
 | `n.circle` | the **suite mark** — bold `n` in a ring, monochrome | docs, READMEs, org avatar. No theme risk. |
 | `n.disc` · `n.play` · `n.smpl` · `n.tree` | per-app **horizontal lockups** (mark + wordmark, dot motif in each mark) — now **monochrome** (black/white) | docs / READMEs. Vendored per repo as `docs/<app>-lockup.svg`. |
-| `<app>-x2` / `<app>-sq-x2` (.svg 1024 + .png 2048) | **launcher icons** — the app-icon masters, rounded and full-bleed square | see *Which launcher variant goes where* below |
+| `<app>` / `<app>-sq` (.svg 1024 + .png 2048) | **launcher icons** — the app-icon masters, both on Apple's grid since 2026-09-12 | see *Which launcher variant goes where* below |
 
-**Which launcher variant goes where (2026-09-11).** Every app is exported twice:
-`<app>-x2` has rounded corners with transparent surround, and `<app>-sq-x2` is
-opaque full-bleed square. The old `-sq` masters had near-transparent corners,
-so the rule that used them does not carry over.
+**Which launcher variant goes where (rewritten 2026-09-12).** The 2026-09-12
+export redrew the artwork and moved **every variant onto Apple's icon grid**:
+art in an 824 square centred in a 1024 canvas — a 100px transparent margin on
+every side — with a corner radius of ~185 on that square (~22%). Measured, not
+assumed: the shipped exports carry a 9.7% margin, art at 81% of the canvas, and
+transparent canvas corners.
 
-- **Desktop → rounded `-x2`.** This covers `icon.svg`, `public/icon.svg` and the
-  Tauri `src-tauri/icons` set (.ico/png), plus the pong, ncover, utc-clock
-  and bpm-tapper icons. macOS does not mask `.icns`, so a square icon
-  shows hard corners in the Dock.
-- **macOS `.icns` → `<app>-mac-x2` (decided 2026-09-12).** The rounded master is
-  full-bleed: measured on the shipped icons, the art touches all four edges and
-  the corner radius is ~8% of the canvas. Apple's grid puts the art in **824×824
-  of a 1024 canvas** — a 100px transparent margin on every side — with a
-  **squircle radius of ~185px on that 824 square (~22%)**. Ours therefore render
-  visibly larger and boxier than every native icon beside them in the Dock and in
-  Finder, which is what gave the suite its odd "oversized" look. Padding alone
-  fixes the size and not the shape, so this is a **separate Figma export** rather
-  than a build step: same artwork, drawn to Apple's geometry, 1024 SVG + 2048 PNG.
-  Windows and Linux keep the full-bleed `-x2` — their shells expect it, and a
-  10% margin there would make the icons look small instead.
-- **iOS / Android → square `-sq-x2`.** Those launchers apply their own mask.
-  In practice this only means nview's native sets and its maskable PWA icon.
-  nview's web and PWA icons stay rounded.
-- **Which apps need `-mac-x2`:** the ones with a macOS bundle — counting, gtrack,
-  nchat, ndisc, nping, nplay, nsmpl, ntree, ntune and the five ledgers, plus
-  `pong-dash` (Pong Dash.app, whose `.icns` the Makefile builds from
-  `icon-dash.svg`). Not ncover, bpm-tapper or utc-clock, which ship no macOS
-  bundle, and not nview, which is mobile.
-- **Rasterise from the 2048px PNG**, e.g. `tauri icon <app>-x2.png`. The
-  SVGs have outlined lettering, so `make icons` is safe via rsvg-convert, but
-  its ImageMagick fallback does not render Figma masks faithfully. The ledger apps'
-  rounded and square variants use different colours (pink vs mint).
+- **One master per app, every platform.** `<app>.svg` (1024) is the source;
+  rasterise it at 2048 and feed that to `tauri icon`. It covers the macOS
+  `.icns`, the Windows `.ico`, the Linux hicolor set, `icon.svg` and
+  `public/icon.svg` alike, plus the pong, ncover, utc-clock and bpm-tapper
+  icons. A separate `<app>-mac-x2` was exported first and then dropped: once the
+  base moved to the same geometry, two masters that agree are one master plus a
+  way to get them out of sync.
+- **Why the grid, for the record.** The previous masters were full-bleed — art
+  edge to edge, radius ~8% of the canvas — which rendered visibly larger and
+  boxier than every native icon beside them in the Dock and in Finder. Windows
+  and Linux were expected to want the full-bleed form, but a 10% margin reads
+  correctly on both, and one master is worth more than the difference.
+- **iOS / Android still need a genuine full-bleed square, and it does not
+  currently exist.** The `-sq` variants moved onto the grid too, so every one of
+  them is now inset with rounded, fully transparent corners. iOS rejects an
+  AppIcon with an alpha channel and Android's adaptive `_foreground` /
+  `_background` layers are full-bleed by design, so **nview's native sets were
+  deliberately left on the old artwork** (`nview` commit `af19dd2`); its web and
+  PWA icons took the new export. They stay behind until a square master is
+  exported that is opaque to all four edges.
+- **Rasterise from 2048**, never from the 1024 SVG directly: every repo's
+  `make icons` target rendered at 1024 until 2026-09-12 and handed `tauri icon`
+  half the detail it could have had. The SVGs have outlined lettering, so
+  rsvg-convert is faithful; the ImageMagick fallback does not render Figma masks
+  reliably. The ledger apps' rounded and square variants use different colours
+  (pink vs mint).
 
 **The lockups are now monochrome (2026-07-25).** They used to be hardcoded mauve
 (`#AA43FF`), which **the upleb theme repaints orange** — the exact collision that
