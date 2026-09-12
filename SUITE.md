@@ -365,12 +365,28 @@ opaque full-bleed square. The old `-sq` masters had near-transparent corners,
 so the rule that used them does not carry over.
 
 - **Desktop → rounded `-x2`.** This covers `icon.svg`, `public/icon.svg` and the
-  Tauri `src-tauri/icons` set (.icns/.ico/png), plus the pong, ncover, utc-clock
+  Tauri `src-tauri/icons` set (.ico/png), plus the pong, ncover, utc-clock
   and bpm-tapper icons. macOS does not mask `.icns`, so a square icon
   shows hard corners in the Dock.
+- **macOS `.icns` → `<app>-mac-x2` (decided 2026-09-12).** The rounded master is
+  full-bleed: measured on the shipped icons, the art touches all four edges and
+  the corner radius is ~8% of the canvas. Apple's grid puts the art in **824×824
+  of a 1024 canvas** — a 100px transparent margin on every side — with a
+  **squircle radius of ~185px on that 824 square (~22%)**. Ours therefore render
+  visibly larger and boxier than every native icon beside them in the Dock and in
+  Finder, which is what gave the suite its odd "oversized" look. Padding alone
+  fixes the size and not the shape, so this is a **separate Figma export** rather
+  than a build step: same artwork, drawn to Apple's geometry, 1024 SVG + 2048 PNG.
+  Windows and Linux keep the full-bleed `-x2` — their shells expect it, and a
+  10% margin there would make the icons look small instead.
 - **iOS / Android → square `-sq-x2`.** Those launchers apply their own mask.
   In practice this only means nview's native sets and its maskable PWA icon.
   nview's web and PWA icons stay rounded.
+- **Which apps need `-mac-x2`:** the ones with a macOS bundle — counting, gtrack,
+  nchat, ndisc, nping, nplay, nsmpl, ntree, ntune and the five ledgers, plus
+  `pong-dash` (Pong Dash.app, whose `.icns` the Makefile builds from
+  `icon-dash.svg`). Not ncover, bpm-tapper or utc-clock, which ship no macOS
+  bundle, and not nview, which is mobile.
 - **Rasterise from the 2048px PNG**, e.g. `tauri icon <app>-x2.png`. The
   SVGs have outlined lettering, so `make icons` is safe via rsvg-convert, but
   its ImageMagick fallback does not render Figma masks faithfully. The ledger apps'
