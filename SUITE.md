@@ -373,11 +373,25 @@ transparent canvas corners.
   icons. A separate `<app>-mac-x2` was exported first and then dropped: once the
   base moved to the same geometry, two masters that agree are one master plus a
   way to get them out of sync.
+- **Linux crops the grid margin (2026-09-18).** Apple's margin is an Apple
+  convention, and on Linux it makes the suite read small: measured across ~210
+  installed apps on the Ubuntu box, every Yaru icon — GNOME's own Files,
+  Terminal, Settings, Calculator — fills **89%** of its canvas, and Chrome,
+  Signal and Mullvad are circles at 100%, against **80.5%** for a grid master.
+  No re-export: the 1024 master already holds the 824 art, so every Linux output
+  is rendered from the **cropped viewBox `49 49 926 926`**, which puts the same
+  art at 89%. Each Makefile carries it as `LINUX_VIEWBOX` and uses it twice — the
+  `install` step that writes `hicolor/scalable/apps/<app>.svg`, and the step in
+  `icons:` that re-renders the Tauri PNGs (`32x32`, `64x64`, `128x128`,
+  `128x128@2x`, `icon.png`) that the `.deb` and AppImage install and Linux uses
+  as the window icon. **The `.icns`, the `.ico` and the mobile sets keep the full
+  canvas**, as do `icon.svg` and `public/icon.svg` — the master and the in-app
+  UI. ncover and uchar are Linux-only, so their whole raster set is cropped.
 - **Why the grid, for the record.** The previous masters were full-bleed — art
   edge to edge, radius ~8% of the canvas — which rendered visibly larger and
   boxier than every native icon beside them in the Dock and in Finder. Windows
-  and Linux were expected to want the full-bleed form, but a 10% margin reads
-  correctly on both, and one master is worth more than the difference.
+  and Linux were expected to want the full-bleed form; Windows does read
+  correctly with the 10% margin, Linux did not — see the crop below.
 - **iOS / Android still need a genuine full-bleed square, and it does not
   currently exist.** The `-sq` variants moved onto the grid too, so every one of
   them is now inset with rounded, fully transparent corners. iOS rejects an
