@@ -13,6 +13,39 @@ design language, and the roadmap. Each app also ships its own
 
 ---
 
+## Who this document governs (2026-09-18)
+
+The name says which rules apply. Two kinds of app read this document:
+
+- **`n*` apps are the suite** (ndisc, nplay, ntree, nsmpl, nview, nping,
+  nchat…). *Shared design language* below applies to them **strictly**: the
+  palette, the top-bar and library grammars, squared corners and the other
+  form rules. A departure is a change to this document first, not a local
+  exception.
+- **An app that starts from an n-suite app's design and takes another letter**
+  (gtrack is the first: `g`) uses that design as a **starting reference**. It
+  may derive its own, and departing from a design rule is a decision that
+  app's own `CLAUDE.md` records, not a fault. gtrack's margin bars, cut at 45°
+  where a group starts and ends, are the first such departure.
+
+**What binds everyone, whatever the letter:** the platform facts and the
+icon pipeline. The constraints under *Shared architecture conventions*
+(WebKit2GTK, Keychain code identity, line endings, `make version`…) describe
+how the platforms behave rather than how things should look, so a derived app
+hits them just as hard. *Brand marks* (the grid, the per-platform framing,
+`make icons`) covers every app with a Figma master, whatever its letter. And
+the Nostr wire contract binds any app that speaks it.
+
+**Where notes live, and how they reach each box.** This file travels by git
+and is the one each app's `CLAUDE.md` points to, so it is what every box and
+every client actually reads — suite-wide rules belong here. The icon masters'
+own `ICONS.md` travels by Proton Drive, which the Linux box only has as a
+manual copy, so a rule that exists only there can silently miss a box. An
+assistant's memory stays on the machine and session that wrote it; treat it
+as a convenience, never the record.
+
+---
+
 ## The apps at a glance
 
 | App | Role | Stack | Nostr role |
@@ -350,8 +383,13 @@ which `nchat` publishes none of.
 
 ### Brand marks (2026-07-14)
 
-Masters live in `~/ProtonDrive/Figma-Icons`. Three tiers, and they are not
-interchangeable:
+Masters live in the **`Figma/` folder on Proton Drive**, organised since
+2026-09-18 into `svg/<app>.svg` (the 1024 master, **the source**), `png/<app>.png`
+(1024) and `png-x2/<app>-x2.png` (2048, what the raster pipelines take; named
+`-2.png` before that round), with `<app>-sq.*` beside each. Its `ICONS.md` holds
+the per-box log and where the folder sits on each machine — synced on macOS and
+Windows, a manual copy on Linux, which has no Proton Drive client. Three tiers,
+and they are not interchangeable:
 
 | asset | what it is | where it may be used |
 |---|---|---|
