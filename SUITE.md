@@ -373,25 +373,39 @@ transparent canvas corners.
   icons. A separate `<app>-mac-x2` was exported first and then dropped: once the
   base moved to the same geometry, two masters that agree are one master plus a
   way to get them out of sync.
-- **Linux crops the grid margin (2026-09-18).** Apple's margin is an Apple
-  convention, and on Linux it makes the suite read small: measured across ~210
-  installed apps on the Ubuntu box, every Yaru icon — GNOME's own Files,
-  Terminal, Settings, Calculator — fills **89%** of its canvas, and Chrome,
-  Signal and Mullvad are circles at 100%, against **80.5%** for a grid master.
-  No re-export: the 1024 master already holds the 824 art, so every Linux output
-  is rendered from the **cropped viewBox `49 49 926 926`**, which puts the same
-  art at 89%. Each Makefile carries it as `LINUX_VIEWBOX` and uses it twice — the
-  `install` step that writes `hicolor/scalable/apps/<app>.svg`, and the step in
-  `icons:` that re-renders the Tauri PNGs (`32x32`, `64x64`, `128x128`,
-  `128x128@2x`, `icon.png`) that the `.deb` and AppImage install and Linux uses
-  as the window icon. **The `.icns`, the `.ico` and the mobile sets keep the full
-  canvas**, as do `icon.svg` and `public/icon.svg` — the master and the in-app
-  UI. ncover and uchar are Linux-only, so their whole raster set is cropped.
+- **Each platform frames the art differently (2026-09-18).** One master, three
+  framings, all rendered by `make icons` with no re-export. Measured on the
+  committed outputs (share of the tile the art spans at the largest size):
+
+  | platform | output | framing | art fill | why |
+  |---|---|---|---|---|
+  | macOS | `icon.icns` | Apple's grid, full 1024 canvas | **80.5%** | the grid *is* the native macOS size; full-bleed read boxy in the Dock |
+  | Linux | `32x32` · `64x64` · `128x128` · `128x128@2x` · `icon.png`, and hicolor `scalable/apps/<app>.svg` | cropped viewBox `49 49 926 926` (`LINUX_VIEWBOX`) | **89%** | every Yaru icon fills 89% (~210 apps measured on the Ubuntu box) |
+  | Windows | `icon.ico` (256/64/48/32/24/16) | same crop as Linux | **89%** | native median fill is ~100%, three quarters above 95% (157 programs measured on the Windows box) |
+  | iOS / Android | `ios/` · `android/` | as `tauri icon` writes them | unchanged | see the full-bleed square note below |
+  | in-app / web | `icon.svg` · `public/icon.svg` | the master, uncropped | 80.5% | the source of truth; never cropped in the repo |
+
+  **Only the `.icns` and the mobile sets keep the grid margin.** A change to one
+  platform's framing must not move another's: the Linux crop and the Windows
+  `.ico` are written *after* `tauri icon` in the same target, from a separate
+  `app-icon-linux.png`, so the `.icns` and mobile sets stay exactly as
+  `tauri icon` wrote them from the uncropped render.
+- **Why Linux and Windows crop.** Apple's margin is an Apple convention. Against
+  Yaru's 89% and Chrome/Signal/Mullvad circles at 100%, a grid master at 80.5%
+  read small in the Ubuntu dock; on Windows it read small on the taskbar beside
+  Explorer, Notepad and Signal. 89% is taken for Windows too, rather than
+  Windows' ~100%, so both platforms share one crop and one `LINUX_VIEWBOX`, and
+  because a rounded tile at full bleed reads heavier than the native glyphs,
+  which are unplated shapes. `LINUX_VIEWBOX` is used twice per Makefile: the
+  `install` step that writes the hicolor svg, and the `icons:` step for the PNGs
+  and the `.ico`. pong's hand-built `packaging/windows/icon.ico` (from
+  `icon-dash`) takes the same 89%. ncover and uchar are Linux-only, so their
+  whole raster set is cropped.
 - **Why the grid, for the record.** The previous masters were full-bleed — art
   edge to edge, radius ~8% of the canvas — which rendered visibly larger and
   boxier than every native icon beside them in the Dock and in Finder. Windows
-  and Linux were expected to want the full-bleed form; Windows does read
-  correctly with the 10% margin, Linux did not — see the crop below.
+  and Linux were expected to want the full-bleed form, then briefly thought to
+  read correctly with the 10% margin; neither did — see the crop above.
 - **iOS / Android still need a genuine full-bleed square, and it does not
   currently exist.** The `-sq` variants moved onto the grid too, so every one of
   them is now inset with rounded, fully transparent corners. iOS rejects an
