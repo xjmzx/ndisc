@@ -23,7 +23,8 @@ The name says which rules apply. Two kinds of app read this document:
   form rules. A departure is a change to this document first, not a local
   exception.
 - **An app that starts from an n-suite app's design and takes another letter**
-  (gtrack is the first: `g`) uses that design as a **starting reference**. It
+  (gtrack `g`, psync `p`, uchar `u`) uses that design as a **starting
+  reference**. It
   may derive its own, and departing from a design rule is a decision that
   app's own `CLAUDE.md` records, not a fault. gtrack's margin bars, cut at 45°
   where a group starts and ends, are the first such departure.
