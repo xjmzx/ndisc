@@ -23,11 +23,38 @@ The name says which rules apply. Two kinds of app read this document:
   form rules. A departure is a change to this document first, not a local
   exception.
 - **An app that starts from an n-suite app's design and takes another letter**
-  (gtrack `g`, psync `p`, uchar `u`) uses that design as a **starting
-  reference**. It
-  may derive its own, and departing from a design rule is a decision that
-  app's own `CLAUDE.md` records, not a fault. gtrack's margin bars, cut at 45°
-  where a group starts and ends, are the first such departure.
+  (gtrack `g`, psync `p`, uchar `u`) is a **co-developed tool**, and uses that
+  design as a **starting reference**. It may derive its own, and departing
+  from a design rule is a decision that app's own `CLAUDE.md` records, not a
+  fault. gtrack's margin bars, cut at 45° where a group starts and ends, are
+  the first such departure.
+
+**Tools are achromatic (2026-09-19).** What sets a co-developed tool apart
+from a project at a glance is its chrome: **neutral grey, with colour spent
+only on syntax** — a colour that means something in that app (a state, a
+warning, a banner), never on decoration. Ground, surfaces, text, the
+wordmark, chips that say nothing and the primary button are grey or white.
+The `n*` apps keep the suite palette; a tool does not.
+
+- **Keep the token names**, change the values. The `--c-*` triples stay, so
+  Tailwind's `/opacity` modifiers and code shared with the suite keep working;
+  only the neutrals (`bg`, `panel`, `surface`, `surface-hover`, `fg`, `muted`)
+  become greys. The semantic tones (`ok`, `warn`, `alert`, `mauve`, `digital`)
+  keep their hues, used only where they carry meaning.
+- **Match the luma of the navy scheme** for the ground (gtrack: 12 / 17 / 28 /
+  43), but set `muted` **brighter** than its navy original (gtrack: 140 against
+  ~120). A grey has no hue to part it from the ground, so it needs contrast
+  instead. Faint text that read on navy (30–50% alpha) is too faint on grey.
+- **Wordmark in grey** — two tones of grey where it had two colours. A
+  wordmark in a state colour makes that colour mean two things.
+- **A new colour in a tool's chrome is a regression.** A new state takes one
+  of the existing tones.
+
+| tool | status |
+|---|---|
+| gtrack | achromatic since v0.1.15 (`src/index.css` has the reasoning) |
+| uchar | achromatic from the start — pure greys, `alert` its only hue |
+| psync | **not yet** — still the navy fizx scheme, with `accent` / `mauve` / `digital` used decoratively in `App.tsx` and `FolderRow.tsx` |
 
 **What binds everyone, whatever the letter:** the platform facts and the
 icon pipeline. The constraints under *Shared architecture conventions*
