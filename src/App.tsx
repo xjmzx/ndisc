@@ -649,6 +649,7 @@ export default function App() {
                 filterContext={filterContext}
                 npub={npub}
                 onIdentityChanged={onIdentityChanged}
+                keyringStore={keyringStore}
                 roomy={detailCollapsed}
               />
               <LabelviewPanel

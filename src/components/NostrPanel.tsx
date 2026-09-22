@@ -33,6 +33,12 @@ interface NostrPanelProps {
   filterContext: FilterContext;
   npub: string | null;
   onIdentityChanged: (next: string | null) => void;
+  // The keyring backend this build actually compiled in, from keyring_backend().
+  // Passed in rather than named here: this panel used to hardcode "libsecret on
+  // Linux" on every platform, which is the exact bug keyring_backend() was added
+  // to end (see its doc comment in lib.rs). Shares the one value App.tsx already
+  // fetches for the footer, so the two cannot drift apart again.
+  keyringStore: string;
   // True when the detail card is collapsed and this column has spare height.
   // The panel then spends that height on richer relay rows (a liveness dot +
   // round-trip readout) instead of stretching whitespace. Deliberately additive
@@ -95,6 +101,7 @@ export function NostrPanel({
   filterContext,
   npub,
   onIdentityChanged,
+  keyringStore,
   roomy = false,
 }: NostrPanelProps) {
   const [newRelay, setNewRelay] = useState("");
@@ -274,7 +281,7 @@ export function NostrPanel({
           <p className="text-xs text-muted">
             ndisc uses a Nostr keypair to sign your published releases.
             Generate a new identity or paste an existing nsec — your secret
-            key is stored in the OS keychain (libsecret on Linux), never in
+            key is stored in the OS keychain ({keyringStore}), never in
             plain files.
           </p>
 
