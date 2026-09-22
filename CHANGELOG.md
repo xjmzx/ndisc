@@ -21,6 +21,34 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.3.1 — 2026-09-22
+
+### Fixed
+
+- **A new icon set now rebuilds the binary.** The `$(TAURI_BIN)` prerequisites
+  listed `src`, `src-tauri/src` and the three config files, but not
+  `src-tauri/icons`. So an icon export changed 50 PNGs and make still
+  considered the binary current: `make install` re-copied a stale build in
+  under a second and reported success.
+
+  The launcher `.svg` was refreshed either way — install `sed`s it from
+  `icon.svg` on every run — so the desktop entry showed the new artwork while
+  the window and taskbar icons embedded in the binary stayed on the old set.
+  Half-updated, with the half you would check first looking correct.
+
+  Found after the 2026-09-22 export, where seven n-suite apps each reported a
+  clean install in 0s. The same fix went into twelve other repos in the suite.
+
+### Docs
+
+- Windows status recorded: **v0.3.0 builds and launches, and that is the whole
+  claim.** Nothing in the release was exercised there.
+
+**Why this is a version and not just a commit.** It changes what `make install`
+produces, and with the same source now checked out on Linux, Windows and macOS,
+a version number is the cheapest way to say which build a machine is actually
+running. `v0.3.0` on Windows and `v0.3.0` here were not the same install.
+
 ## 0.3.0 — 2026-09-22
 
 **Versioning changed with this release.** ndisc leaves the `-beta.N` train and
