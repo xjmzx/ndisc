@@ -700,6 +700,24 @@ catalogue work and of each other.
   step is the one with real consequences: in `nchat` removing an identity
   destroys the only copy of its key.
 
+- **Suite-wide verification tooling.** Every real defect found during the
+  2026-09-22 Windows pass came from checking an app's claim against an
+  independent source, never from the app's own summary: the UI reported 12
+  releases published while the relays held 14, and blamed a timeout on the
+  healthy relay while the failing one was rejecting every event. A script that
+  drives the UI would have caught none of it. What is wanted is an **oracle**
+  outside the apps — keychain backend actually linked, `publish_state` against
+  what each relay serves, served-event tags against what the catalogue would
+  emit, local paths resolving, and each relay's NIP-11 (`restricted_writes` is
+  visible *before* a publish, not after). Suite-level rather than per-app:
+  ndisc, ntree and nsmpl share the keyring pattern and the wire contract.
+  Two design rules, both learned the hard way. **Discover, never store** —
+  DB path, relay list and library root come from the app's config, and the
+  pubkey decodes out of any stored `naddr`, so no machine-specific value ever
+  enters the repo and there is nothing to redact. **Assert invariants, not
+  values** — "published count equals each relay's live count for this pubkey"
+  survives; "118 releases" rots within the week.
+
 
 **Near-term — tighten suite integration**
 - Bring `ndisc`'s tree-dots + track/disc-count styling into `nplay`.
@@ -720,6 +738,14 @@ catalogue work and of each other.
   WKWebView, and `ntree`'s new privilege prompt are all untested. Open items and
   the traps hit on the way:
   [`docs/macos-status-2026-09-03.md`](docs/macos-status-2026-09-03.md).
+
+- **Windows: ndisc v0.3.1 builds, keychains and publishes** (2026-09-22) — the
+  Credential Manager path is verified end to end and the whole catalogue is
+  live on both relays, but the library-maintenance commands passed only on
+  their trivial branch: nothing to discover, nothing drifted, no candidates.
+  Nothing has yet been shown to *detect* anything. That, the publish failure
+  whose error named the wrong relay, and the traps met on the way:
+  [`docs/windows-status-2026-09-22.md`](docs/windows-status-2026-09-22.md).
 
 **Mid / long-term**
 - Media edits — destructive *and* non-destructive.
