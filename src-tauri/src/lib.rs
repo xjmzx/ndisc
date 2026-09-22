@@ -2453,14 +2453,14 @@ fn refresh_release_inner(
     // codec never overwrites something that is not a codec.
     let new_format_str = match (info.codec.is_some(), release.format.as_deref()) {
         (true, Some(cur)) if !looks_like_codec(cur) && !cur.trim().is_empty() => {
-            // A pressing string. Keep it, and report the disagreement instead.
-            if !trust_files {
-                drift.push(FieldDrift {
-                    field: "format".into(),
-                    current: cur.to_string(),
-                    on_disk: build_format_string(&info),
-                });
-            }
+            // A pressing string. Keep it — and say NOTHING.
+            //
+            // beta.11 reported this as drift, which pushed the scan's drift
+            // count from 10 to 318: a physical release's folder always holds a
+            // rip, so its codec always differs from the pressing, forever. That
+            // is the intended state, not a disagreement, and a count that can
+            // never reach zero stops carrying information — the same reason
+            // dismissals exist for title drift.
             release.format.clone()
         }
         (true, _) => Some(build_format_string(&info)),
@@ -8503,17 +8503,28 @@ fn apply_enrichment(
         Option<String>, // catalog_number
         Option<String>, // country
         Option<i64>,    // last_published_at
+        Option<String>, // medium
     );
-    let (old_tt, old_dt, old_format, old_cat, old_label, old_catno, old_country, published): Row =
-        conn.query_row(
+    let (
+        old_tt,
+        old_dt,
+        old_format,
+        old_cat,
+        old_label,
+        old_catno,
+        old_country,
+        published,
+        medium,
+    ): Row = conn
+        .query_row(
             "SELECT track_total, disc_total, format, category, label, catalog_number,
-                    country, last_published_at
+                    country, last_published_at, medium
              FROM releases WHERE id = ?1",
             params![release_id],
             |r| {
                 Ok((
                     r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
-                    r.get(6)?, r.get(7)?,
+                    r.get(6)?, r.get(7)?, r.get(8)?,
                 ))
             },
         )
@@ -8545,7 +8556,14 @@ fn apply_enrichment(
     let (format, c_fmt) = match enr.format.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(full) => {
             let cur = old_format.as_deref().map(str::trim).unwrap_or("");
-            if cur.is_empty() || format_is_abbrev_of(cur, full) {
+            // A codec on a PHYSICAL release is not a curated format — it is the
+            // rip's codec written over the pressing by a pre-0.2.0-beta.11 scan.
+            // Without this the "structurally different, leave it be" branch
+            // protects the damage and the repair silently does nothing, which
+            // is exactly what happened on the first attempt.
+            let stale_codec =
+                medium.as_deref() == Some("physical") && looks_like_codec(cur);
+            if cur.is_empty() || stale_codec || format_is_abbrev_of(cur, full) {
                 let changed = cur != full;
                 (Some(full.to_string()), changed)
             } else {

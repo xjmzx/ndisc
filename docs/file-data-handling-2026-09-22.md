@@ -127,10 +127,19 @@ carry a `*.bandcamp.com` source URL; none carries a receipt id, so that import
 has never been run against this database. Discogs is the only enrichment
 source ndisc has.
 
-**Caution on bulk enrich.** `enrich_discogs_library(force: true)` rewrites
-`format`, `category`, **`label`**, `catalog_number`, `country` and the track /
-disc counts on every linked release. It does *not* touch `title`, `artist` or
-`year`. Because it rewrites `label`, a force pass would revert local label
-styling to Discogs' spelling — `Planet μ` back to `Planet Mu`. Prefer the
-targeted path (*Maintenance → Repair pressing strings*, or
-`enrich_discogs_library` with an explicit id list).
+**What bulk enrich actually does.** `enrich_discogs_library(force: true)`
+touches `format`, `category`, `label`, `catalog_number`, `country` and the
+track / disc counts on every linked release, and never `title`, `artist` or
+`year`.
+
+It is less destructive than it looks, and an earlier draft of this note
+overstated the risk. `category`, `label`, `catalog_number` and `country` are
+**fill-empty-only** — `fill()` never clobbers a value already there, so a force
+pass cannot revert local label styling. `format` has its own rule: the stored
+value is replaced only when it is empty, is a recognisable abbreviation of the
+Discogs string (the CSV clips `Green`→`Gre`), or — since 0.2.0-beta.13 — is a
+codec sitting on a *physical* release, which is damage rather than curation.
+
+That last clause exists because without it the "structurally different, leave
+it be" branch protected the damage: the first repair run reported
+`checked 38 · repaired 38` and changed nothing at all.

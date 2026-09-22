@@ -21,6 +21,38 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.13 — 2026-09-22
+
+### Fixed — the pressing repair silently did nothing
+
+beta.12's *Repair pressing strings* reported `checked 38 · repaired 38` and
+changed **not one row**. Enrich only replaces a stored `format` when it is
+empty or is a recognisable abbreviation of the Discogs string; anything else is
+treated as "hand-curated, structurally different — leave it be". A codec is
+structurally different from a pressing, so the guard that protects curated
+formats was protecting the damage.
+
+A codec on a **physical** release is now recognised as replaceable: it is the
+rip's codec written over the pressing by a pre-beta.11 scan, not a curated
+value. Digital releases are untouched by the clause.
+
+### Fixed — format drift flooded the scan report
+
+beta.11 reported a kept pressing string as `format` drift. A physical release's
+folder always holds a rip, so its codec always differs from the pressing —
+**forever**. That pushed a library scan's drift count from 10 to **318**, and a
+count that can never reach zero stops carrying information, which is the whole
+reason title drift has dismissals. The pressing is now kept silently.
+
+### Corrected — an overstated warning about bulk enrich
+
+beta.12's notes said a `force` enrich would revert local label styling to
+Discogs' spelling. **It would not.** `category`, `label`, `catalog_number` and
+`country` are fill-empty-only: `fill()` never clobbers a value already present.
+Only `format` has a replacing rule, and only under the conditions above.
+`title`, `artist` and `year` are never touched. Corrected in
+`docs/file-data-handling-2026-09-22.md`.
+
 ## 0.2.0-beta.12 — 2026-09-22
 
 ### Added — targeted re-enrich
