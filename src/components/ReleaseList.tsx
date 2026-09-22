@@ -43,6 +43,8 @@ import {
   purgeRelayEvents,
   reconcileLibrary,
   reconcilePublished,
+  enrichDiscogsLibrary,
+  physicalReleasesMissingPressing,
   auditPublishedContent,
   reconcilePublishedCovers,
   rescanLocalCovers,
@@ -68,6 +70,7 @@ import {
   type PurgeSummary,
   type ReconcileSummary,
   type ContentAudit,
+  type EnrichSummary,
   type RelayAudit,
   type Release,
   type RescanSummary,
@@ -233,6 +236,7 @@ export function ReleaseList({
     | "reconcile"
     | "reconcileDisk"
     | "contentAudit"
+    | "repressing"
     | "audit"
     | "purge"
     | "republish"
@@ -254,6 +258,7 @@ export function ReleaseList({
     | { kind: "reconcile"; data: ReconcileSummary }
     | { kind: "reconcileDisk"; data: LibraryReconcileSummary }
     | { kind: "contentAudit"; data: ContentAudit }
+    | { kind: "enrich"; data: EnrichSummary }
     | { kind: "audit"; data: RelayAudit }
     | { kind: "purge"; data: PurgeSummary }
     | { kind: "manifest"; data: ManifestSummary }
@@ -453,6 +458,49 @@ export function ReleaseList({
       setError(null);
       try {
         setOpSummary({ kind: "manifest", data: await exportPublishedManifest() });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
+
+    // Repair the pressing strings a pre-beta.11 scan overwrote with a codec.
+    // Targeted rather than a `force` pass over every Discogs-linked release:
+    // force would also rewrite `label` everywhere, reverting local label
+    // styling to whatever Discogs spells it.
+    if (kind === "repressing") {
+      let ids: number[] = [];
+      try {
+        ids = await physicalReleasesMissingPressing();
+      } catch (e) {
+        setError(String(e));
+        return;
+      }
+      if (ids.length === 0) {
+        setError("No physical release is missing its pressing string.");
+        return;
+      }
+      const yes = await ask(
+        `${ids.length} physical release(s) carry a codec where a pressing ` +
+          "string belongs. Re-fetch those from Discogs?\n\n" +
+          "Only these are touched — not the whole library. Discogs is " +
+          "canonical for format, category, label, catalogue number and " +
+          "country, so a local label spelling may be replaced by the " +
+          "Discogs one.",
+        { title: "Repair pressing strings", kind: "info" },
+      );
+      if (!yes) return;
+      setActiveOp("repressing");
+      setOpSummary(null);
+      setError(null);
+      try {
+        setOpSummary({
+          kind: "enrich",
+          data: await enrichDiscogsLibrary(false, ids),
+        });
+        await reload();
       } catch (e) {
         setError(String(e));
       } finally {
@@ -1227,6 +1275,17 @@ export function ReleaseList({
                 onClick={setLibraryFolder}
               />
               <MaintMenuItem
+                icon={<Disc3 size={14} />}
+                label="Repair pressing strings"
+                detail="Re-fetch format from Discogs where a codec overwrote it"
+                active={activeOp === "repressing"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("repressing");
+                }}
+              />
+              <MaintMenuItem
                 icon={<FileWarning size={14} />}
                 label="Audit published content"
                 detail="Compare live events with the catalogue, tag by tag"
@@ -1529,6 +1588,32 @@ export function ReleaseList({
                   <span className="text-muted">
                     no audio{" "}
                     <span className="font-mono">{opSummary.data.noAudio}</span>
+                  </span>
+                )}
+              </>
+            )}
+            {opSummary.kind === "enrich" && (
+              <>
+                <span className="text-muted">
+                  checked{" "}
+                  <span className="font-mono">{opSummary.data.scanned}</span>
+                </span>
+                <span className="text-ok">
+                  repaired{" "}
+                  <span className="font-mono">{opSummary.data.enriched}</span>
+                </span>
+                {opSummary.data.skipped > 0 && (
+                  <span className="text-muted">
+                    skipped{" "}
+                    <span className="font-mono">{opSummary.data.skipped}</span>
+                  </span>
+                )}
+                {opSummary.data.errors.length > 0 && (
+                  <span className="text-alert">
+                    errors{" "}
+                    <span className="font-mono">
+                      {opSummary.data.errors.length}
+                    </span>
                   </span>
                 )}
               </>

@@ -153,13 +153,56 @@ multi-database switcher in the header.
 
 ### Refresh from disk
 
-- Per-release action that re-reads audio tags and re-resolves the
-  cover from the local directory, writing any changes back into the
-  DB. Useful after editing files in another music tool. Reports
-  precisely which fields changed; no-ops when nothing differs.
-- **Reconcile library** (`reconcile_library`) does this across the whole
-  music root in one pass: discovers newly-added folders *and* refreshes
-  existing releases, tracking orphaned/last-scanned rows.
+Two modes, and the difference matters — see `trust_files` in
+`refresh_release_inner`.
+
+- **Per-release Refresh** is an explicit "read the tags" action: the user
+  pointed at this release and asked, so the file wins on every field,
+  including the curated ones. Reports precisely which fields changed;
+  no-ops when nothing differs.
+- **Batch scan** — *Scan library for changes*, and *Rescan library folder*
+  (`reconcile_library`, which also discovers new folders) — **never
+  overwrites curated metadata**. `title`, `artist` and `year` are compared
+  and kept; the disagreement is reported as **drift** for review, applied
+  only if the operator chooses. A codec never overwrites a `format` that is
+  not a codec, so a physical release's pressing string survives a rip
+  sitting in its folder. `label`, `notes` and `source` are fill-empty-only,
+  and `track_total` defers to Discogs.
+- Disk-derived facts — cover path, present track count, video count — always
+  update, because they describe the files rather than the catalogue.
+- Any of those writes that touches an **emitted** tag (`artist`, `title`,
+  `year`, `format`, `label`, `tracks`, `video`) drops a published release to
+  `stale`, so the wire cannot silently fall out of step.
+
+### Content audit
+
+*Maintenance → Audit published content.* Fetches every published release from
+the configured relays and compares the served event, tag by tag, with what the
+catalogue would emit today. Read-only.
+
+This is the only check that reads the served event's **content**.
+`publish_state` is a flag set by whoever last touched the row, and the relay
+audit checks existence and timestamps — so a field mutated without
+`mark_unpublished` leaves a release reading `published`, its event newer than
+the last publish, and its content wrong. The audit derives the expected wire
+form from `release_wire_form`, the same function `release_event` signs, so it
+cannot drift from the emitter.
+
+*Maintenance → Repair pressing strings* re-fetches `format` from Discogs for
+exactly the physical releases carrying a codec, rather than a `force` pass over
+every linked release (which would also rewrite `label` everywhere).
+
+### Naming conventions
+
+Artist and title styling — Greek mu, dropped Discogs disambiguators, format and
+edition suffixes, when a suffix is load-bearing, `EP` over `E.P.`, spaced
+solidus between two names, and the original-release year rule with its Discogs
+margin — is recorded in
+[`schema/title-styling-2026-09-22.md`](schema/title-styling-2026-09-22.md).
+
+Most of it is mechanically checkable, and the collision rule is *decidable*: a
+suffix must stay exactly when the stripped title already exists for that
+artist, so the exceptions derive from the catalogue rather than an allowlist.
 
 ### UI niceties
 

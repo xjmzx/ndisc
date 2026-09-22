@@ -13,9 +13,17 @@ originates here.
   country / genre) backed by a local SQLite index of `/data/music`.
 - **Reconciles the index with disk** — "Rescan library folder" discovers new
   album folders and refreshes existing ones in one pass; a header readout shows
-  tracks / videos / incomplete / orphaned counts and the last-scanned time.
-- Enriches from **Discogs** (CSV + per-release lookup) and folds in **Bandcamp**
-  collection purchases (Windows handoff → canonical Linux DB).
+  tracks / videos / incomplete / orphaned counts and the last-scanned time. A
+  batch scan never overwrites curated metadata: disagreements with the file
+  tags are reported as *drift* for review, not applied.
+- **Audits what it published** — compares every live `kind:31237` against the
+  catalogue tag by tag, the one check that reads the served event's content
+  rather than its existence or timestamp.
+- Enriches from **Discogs** (CSV + per-release lookup): format, category,
+  label, catalogue number, country, track and disc counts. Discogs is the only
+  metadata source — **Bandcamp contributes purchase provenance, not metadata**
+  (a CSV import of the collection records a receipt id and a store URL; there
+  is no Bandcamp metadata API in play).
 - Batch-edit table view (sortable, inline label/comment editing) alongside the
   main list; per-release detail with cover art, completeness leaf-dots, and
   source-platform indicators.

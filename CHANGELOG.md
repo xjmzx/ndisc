@@ -21,6 +21,39 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.12 — 2026-09-22
+
+### Added — targeted re-enrich
+
+*Maintenance → Repair pressing strings.* Finds the physical, Discogs-linked
+releases whose `format` holds a codec rather than a pressing — the casualties
+of the pre-beta.11 clobber — and re-fetches only those.
+
+`enrich_discogs_library` gains an optional `ids` list, so a specific set can be
+repaired without a `force` pass over every linked release. That matters:
+enrich rewrites `format`, `category`, **`label`**, `catalog_number`, `country`
+and the track/disc counts, so a blanket force would revert local label styling
+to Discogs' spelling (`Planet μ` back to `Planet Mu`). It does not touch
+`title`, `artist` or `year`.
+
+38 releases qualify here — those whose pressing was lost locally *and* on the
+wire, so the relay could not supply it.
+
+### Docs
+
+- `README.md` — **Refresh from disk** rewritten: it described the old
+  behaviour, where a batch scan wrote tag values into the DB. It now states
+  the two modes, what a batch scan refuses to overwrite, and which writes mark
+  a published release stale. Adds **Content audit** and **Naming conventions**.
+- `ndisc-introduction.md` — corrects the Bandcamp claim. Bandcamp contributes
+  **purchase provenance, not metadata**: `bandcamp_id` is a receipt and the CSV
+  import records a store URL. Discogs is the only enrichment source.
+- `docs/file-data-handling-2026-09-22.md` — new survey: which suite apps read
+  and write tags (two write, not one — **nplay's per-track editor is a second
+  mutation path and is governed by no styling rule, and no check sees a track
+  title**), per-app normalisation, enrichment coverage, and an explicit list of
+  cross-platform behaviours that are *unverified* with a test for each.
+
 ## 0.2.0-beta.11 — 2026-09-22
 
 ### Fixed — a codec could overwrite a pressing

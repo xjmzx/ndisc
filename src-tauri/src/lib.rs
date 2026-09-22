@@ -8768,17 +8768,66 @@ async fn enrich_discogs_release(
 // Batch pass over every Discogs-sourced release that's still missing a count
 // (or all of them, when `force`). Throttled to stay under Discogs' rate limit
 // and emits enrich:* events for a progress bar; stops early on a 429.
+/// Physical releases whose `format` holds a codec rather than a pressing.
+///
+/// These are the casualties of the pre-beta.11 clobber: the scan wrote the rip's
+/// codec over a Discogs pressing string. Discogs-linked only, because that is
+/// the only set a re-enrich can actually repair.
+#[tauri::command]
+fn physical_releases_missing_pressing(app: tauri::AppHandle) -> Result<Vec<i64>, String> {
+    let conn = open(&app)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, format FROM releases
+             WHERE medium = 'physical' AND discogs_id IS NOT NULL
+               AND format IS NOT NULL AND trim(format) <> ''
+             ORDER BY id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, fmt) = row.map_err(|e| e.to_string())?;
+        if looks_like_codec(&fmt) {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 async fn enrich_discogs_library(
     app: tauri::AppHandle,
     force: Option<bool>,
+    ids: Option<Vec<i64>>,
 ) -> Result<EnrichSummary, String> {
     let force = force.unwrap_or(false);
     let token = load_discogs_token()?;
 
+    // Three modes. `ids` is the targeted one, added so a specific set can be
+    // re-enriched without a `force` pass over the whole library — the content
+    // audit can identify, say, the physical releases whose pressing string was
+    // clobbered, and only those need refetching. A blanket force would also
+    // rewrite `label` on every linked release, reverting local label styling
+    // to whatever Discogs spells it (`Planet μ` back to `Planet Mu`).
+    let id_filter = ids.as_ref().filter(|v| !v.is_empty()).map(|v| {
+        v.iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    let targeted_sql;
     let targets: Vec<(i64, i64, String, String)> = {
         let conn = open(&app)?;
-        let sql = if force {
+        let sql = if let Some(list) = &id_filter {
+            targeted_sql = format!(
+                "SELECT id, discogs_id, artist, title FROM releases
+                 WHERE discogs_id IS NOT NULL AND id IN ({list}) ORDER BY id"
+            );
+            targeted_sql.as_str()
+        } else if force {
             "SELECT id, discogs_id, artist, title FROM releases
              WHERE discogs_id IS NOT NULL ORDER BY id"
         } else {
@@ -9042,6 +9091,7 @@ pub fn run() {
             clear_discogs_token,
             enrich_discogs_release,
             enrich_discogs_library,
+            physical_releases_missing_pressing,
             extract_embedded_covers,
             rescan_local_covers,
             refresh_release,

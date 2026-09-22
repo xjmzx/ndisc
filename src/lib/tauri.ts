@@ -484,8 +484,16 @@ export async function enrichDiscogsRelease(
 // `force`). Emits enrich:started / enrich:progress / enrich:done events.
 export async function enrichDiscogsLibrary(
   force = false,
+  ids?: number[],
 ): Promise<EnrichSummary> {
-  return invoke<EnrichSummary>("enrich_discogs_library", { force });
+  return invoke<EnrichSummary>("enrich_discogs_library", { force, ids });
+}
+
+// Physical releases whose `format` holds a codec instead of a pressing —
+// casualties of the pre-0.2.0-beta.11 clobber. Discogs-linked only, since that
+// is the only set a re-enrich can repair.
+export async function physicalReleasesMissingPressing(): Promise<number[]> {
+  return invoke<number[]>("physical_releases_missing_pressing");
 }
 
 // --- Embedded cover-art extraction ------------------------------------------
