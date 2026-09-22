@@ -519,6 +519,23 @@ export async function rescanLocalCovers(): Promise<RescanSummary> {
 export interface RefreshResult {
   status: string;
   changes: string[];
+  // Curated fields the batch scan found disagreeing with the file tags and
+  // deliberately did NOT apply. Always empty for a per-release Refresh.
+  drift: FieldDrift[];
+}
+
+// One curated field where the DB and the file tag disagree.
+export interface FieldDrift {
+  field: "title" | "artist" | "year" | string;
+  current: string; // the curated DB value (kept)
+  onDisk: string; // what the file says (not applied)
+}
+
+export interface ReleaseDrift {
+  id: number;
+  artist: string;
+  title: string;
+  fields: FieldDrift[];
 }
 
 export async function refreshRelease(releaseId: number): Promise<RefreshResult> {
@@ -597,6 +614,8 @@ export interface OrphanInfo {
 export interface LibraryScanSummary {
   scanned: number;
   refreshed: number;
+  drifted: number;
+  drifts: ReleaseDrift[];
   noChanges: number;
   orphaned: number;
   noAudio: number;
@@ -617,6 +636,8 @@ export interface LibraryReconcileSummary {
   imported: number;
   skipped: number;
   refreshed: number;
+  drifted: number;
+  drifts: ReleaseDrift[];
   noChanges: number;
   orphaned: number;
   noAudio: number;

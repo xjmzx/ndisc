@@ -21,6 +21,83 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.8 — 2026-09-22
+
+### Fixed — a library scan could silently overwrite curated metadata
+
+A **library scan / reconcile took the file tags as truth for `title`, `artist`
+and `year`**, with none of the guards the other curated fields already had
+(`notes`, `source` and `label` are all fill-empty-only on a batch pass, and
+`track_total` defers to Discogs). A curated title therefore reverted to the
+retail string from the file on the next scan.
+
+Worse, it reverted **silently**. `mark_unpublished` is documented as being
+called by "every setter that mutates data carried in the kind:31237 event", but
+the refresh path exempted itself and fired only on a `video` change. So a
+published release could have its title rewritten, keep reading `published`,
+and diverge from the live event with nothing in the UI to show for it.
+
+Observed on the maintainer's library: ten titles reverted, all ten confirmed
+diverged from the events served by `relay.fizx.uk`, `nos.lol` and
+`relay.primal.net`. Restored from the pre-scan values, which the signed relay
+events independently corroborated — no republish was needed.
+
+- A **batch scan no longer writes `title` / `artist` / `year`**. It compares,
+  keeps your value, and reports the disagreement as **drift**.
+- A **per-release Refresh still trusts the file** — that is an explicit,
+  user-initiated action. The internal flag is renamed `overwrite_label` →
+  `trust_files` to say what it actually governs.
+- A year the DB simply lacks is still backfilled from the tag; that is a gap
+  fill, not an overwrite.
+- **Publish staleness now honours its own invariant**: the refresh path marks a
+  published release stale when it changes *any* emitted tag (`artist`, `title`,
+  `year`, `format`, `label`, `tracks`), not just `video`.
+
+- The guard is **pinned by tests**. The compare-and-decide step is extracted
+  into pure functions (`resolve_curated_str`, `resolve_curated_year`,
+  `refresh_marks_stale`) so it can be tested without an `AppHandle`, and
+  `mod refresh_guard` covers both halves: a scan keeps the curated value and
+  reports the disagreement, and every emitted tag marks a published release
+  stale. Verified by mutation — reintroducing either bug fails the suite.
+
+### Added — drift review
+
+- The scan / reconcile banner gains a **`drift N`** chip when files disagree
+  with your curated fields. Nothing was changed; the chip is a prompt, not a
+  report of work done.
+- Clicking it opens **Drift review**: per release, each field side by side as
+  *yours (kept)* vs *on disk*, with two outcomes —
+  - **use file** — runs the ordinary per-release Refresh, so it is a
+    whole-release "trust the file" action (other disk-derived fields move too,
+    and a published release drops to stale);
+  - **keep mine** — remembered against *that file value*, so a later genuine
+    retag surfaces again instead of being permanently suppressed.
+- **Rescan library folder** now shows its `no audio` count. It always had the
+  number — the underlying scan reports it and the reconcile summary carries it
+  — but the banner dropped it, so two releases with unreadable folders were
+  visible under **Scan library for changes** and invisible under **Rescan
+  library folder**. Same omission as the drift chip, same fix.
+- The `drift N` chip counts what is **still unreviewed**, not the raw
+  disk-vs-DB total. Dismissals are frontend-only (as `ndisc.dupDismissed` is),
+  so the backend count cannot know about them; the chip and the dialog now
+  read the same filtered list. Without this the chip could never reach zero
+  and would stop carrying information.
+- Scan buckets now partition: `refreshed + drifted + no_changes + orphaned +
+  no_audio + no_path == scanned`. A drifted release is no longer also counted
+  as unchanged.
+
+### Design notes
+
+- `schema/identity-normalisation-design-2026-09-22.md` — **proposed, not
+  implemented.** A two-tier string-identity model (NFC at ingest; a mild NFKC +
+  dash-fold + casefold match key for grouping, dedupe and search) sitting below
+  the pinned master key. Written after a lookalike artist name — `µ-Ziq`
+  (U+00B5 micro sign) vs `μ‐Ziq` (U+03BC Greek mu) — split one artist into two
+  in both ndisc and nplay, and ndisc's own duplicate finder missed the pair.
+  The note's governing rule is the one this release implements: ndisc does not
+  write tags to the user's files, and does not silently replace a curated
+  value. Nothing in it ships here.
+
 ## 0.2.0-beta.7 — 2026-09-02
 
 ### macOS builds

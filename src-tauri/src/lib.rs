@@ -2182,11 +2182,26 @@ fn bucket_format(format: &str) -> &'static str {
 // Interop: refresh metadata from disk; sync published cover URL to local file
 // ---------------------------------------------------------------------------
 
+/// One curated field whose DB value disagrees with the file tag, observed on a
+/// library scan and deliberately NOT applied. Scan reports; the user decides.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldDrift {
+    pub field: String,   // "title" | "artist" | "year"
+    pub current: String, // the curated DB value (kept)
+    pub on_disk: String, // what the file tag says (not applied)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshResult {
     pub status: String, // "ok" | "no_changes" | "missing_path" | "no_path" | "no_audio"
     pub changes: Vec<String>,
+    /// Curated fields left untouched because this was a batch scan
+    /// (`trust_files = false`) and the file disagrees. Always empty for an
+    /// explicit per-release Refresh, which trusts the file by definition.
+    #[serde(default)]
+    pub drift: Vec<FieldDrift>,
 }
 
 #[tauri::command]
@@ -2194,18 +2209,105 @@ fn refresh_release(
     app: tauri::AppHandle,
     release_id: i64,
 ) -> Result<RefreshResult, String> {
-    // Per-release Refresh is an explicit "trust the file" action — so it
-    // overwrites label with whatever the tag now says (or clears it if the
-    // tag is gone). Batch scan callers go through refresh_release_inner with
-    // overwrite_label = false to keep curated Discogs labels and bulk-set
-    // values safe from accidental rewrites.
+    // Per-release Refresh is an explicit "trust the file" action — the user
+    // pointed at this release and asked for the tags, so the file wins on
+    // every field, including the curated ones (title/artist/year/label).
+    // Batch scan callers pass trust_files = false: they never overwrite a
+    // curated value, they only REPORT the disagreement as drift.
     refresh_release_inner(app, release_id, true)
 }
 
+/// Outcome of resolving one curated field against the file tags: the value to
+/// store, plus the disagreement to report when the file lost.
+pub struct Resolved<T> {
+    pub value: T,
+    pub drift: Option<FieldDrift>,
+}
+
+/// Resolve a curated **string** field (`title`, `artist`) for a refresh.
+///
+/// `trust_files` — the user explicitly asked for the tags, so the file wins.
+/// Otherwise the DB value is kept and a disagreement is recorded rather than
+/// applied. This is the guard: a background library scan must never silently
+/// replace metadata the user curated. See CHANGELOG 0.2.0-beta.8.
+pub fn resolve_curated_str(
+    field: &str,
+    db: &str,
+    file: Option<&str>,
+    trust_files: bool,
+) -> Resolved<String> {
+    if trust_files {
+        return Resolved {
+            value: file.unwrap_or(db).to_string(),
+            drift: None,
+        };
+    }
+    let drift = file.filter(|f| *f != db).map(|f| FieldDrift {
+        field: field.to_string(),
+        current: db.to_string(),
+        on_disk: f.to_string(),
+    });
+    Resolved {
+        value: db.to_string(),
+        drift,
+    }
+}
+
+/// Resolve `year`. Same guard, with one asymmetry: a year the DB simply does
+/// not have is still backfilled from the tag, because filling a gap is not
+/// overwriting a curated value.
+pub fn resolve_curated_year(
+    db: Option<i32>,
+    file: Option<i32>,
+    trust_files: bool,
+) -> Resolved<Option<i32>> {
+    if trust_files {
+        return Resolved {
+            value: file.or(db),
+            drift: None,
+        };
+    }
+    let drift = match (db, file) {
+        (Some(d), Some(f)) if d != f => Some(FieldDrift {
+            field: "year".to_string(),
+            current: d.to_string(),
+            on_disk: f.to_string(),
+        }),
+        _ => None,
+    };
+    Resolved {
+        value: db.or(file),
+        drift,
+    }
+}
+
+/// Fields this refresh wrote that are ALSO carried in the kind:31237 event.
+/// Any of them changing makes a published release's live event stale — the
+/// invariant `mark_unpublished` documents. The refresh path used to exempt
+/// itself and check only `video`, which let a disk-sync rewrite a published
+/// title while the row still read "published".
+const EMITTED_TAGS: [&str; 6] = ["artist", "title", "year", "format", "label", "tracks"];
+
+/// Whether a refresh's `changes` should drop a published release to stale.
+/// `video_emit_changed` is passed separately because only the >0 truth of the
+/// video count is emitted, not the count itself.
+pub fn refresh_marks_stale(changes: &[String], video_emit_changed: bool) -> bool {
+    changes
+        .iter()
+        .any(|c| EMITTED_TAGS.contains(&c.as_str()))
+        || (changes.iter().any(|c| c == "video") && video_emit_changed)
+}
+
+/// `trust_files`: an explicit, user-initiated "read the tags" action (the
+/// per-release Refresh button, or the re-read after ndisc itself wrote tags).
+/// The file then wins on the curated fields. The batch library scan passes
+/// `false` — it must never silently overwrite curated metadata, because the
+/// DB value is frequently the deliberate one and the file tag is the retail
+/// string. Disagreements come back as `RefreshResult::drift` for review.
 fn refresh_release_inner(
     app: tauri::AppHandle,
     release_id: i64,
-    overwrite_label: bool,
+    trust_files: bool,
 ) -> Result<RefreshResult, String> {
     let conn = open(&app)?;
     let sql = format!(
@@ -2220,6 +2322,7 @@ fn refresh_release_inner(
         return Ok(RefreshResult {
             status: "no_path".into(),
             changes: vec![],
+            drift: vec![],
         });
     };
     let path = PathBuf::from(file_path);
@@ -2227,6 +2330,7 @@ fn refresh_release_inner(
         return Ok(RefreshResult {
             status: "missing_path".into(),
             changes: vec![],
+            drift: vec![],
         });
     }
 
@@ -2248,30 +2352,48 @@ fn refresh_release_inner(
         return Ok(RefreshResult {
             status: "no_audio".into(),
             changes: vec![],
+            drift: vec![],
         });
     }
 
     let info = read_dir_tags(&audio_files);
 
-    let new_artist = info.artist.clone().unwrap_or_else(|| release.artist.clone());
-    let new_title = info.title.clone().unwrap_or_else(|| release.title.clone());
-    let new_year = info.year.or(release.year);
+    // Curated identity fields. On an explicit Refresh the file wins; on a
+    // batch scan the DB value is kept and the disagreement is recorded instead.
+    // These three are emitted tags AND the fields a user is most likely to have
+    // deliberately edited (stripping a "(Deluxe Version)" suffix, fixing an
+    // artist's spelling, setting the original year on a reissue), so a
+    // background disk-sync overwriting them is data loss, not a sync.
+    let mut drift: Vec<FieldDrift> = Vec::new();
+
+    let r = resolve_curated_str("artist", &release.artist, info.artist.as_deref(), trust_files);
+    let new_artist = r.value;
+    drift.extend(r.drift);
+
+    let r = resolve_curated_str("title", &release.title, info.title.as_deref(), trust_files);
+    let new_title = r.value;
+    drift.extend(r.drift);
+
+    let r = resolve_curated_year(release.year, info.year, trust_files);
+    let new_year = r.value;
+    drift.extend(r.drift);
+
     let new_format_str = if info.codec.is_some() {
         Some(build_format_string(&info))
     } else {
         release.format.clone()
     };
     // Two modes for label:
-    //   overwrite_label = true  (per-release Refresh) — file tag wins, so
+    //   trust_files = true  (per-release Refresh) — file tag wins, so
     //     editing the GROUPING tag and hitting Refresh propagates the change.
     //     A now-empty tag clears the DB value too.
-    //   overwrite_label = false (batch Scan library) — only fill when the DB
+    //   trust_files = false (batch Scan library) — only fill when the DB
     //     value is empty. Protects curated Discogs labels and prior backfills
     //     from getting clobbered by drift in local tags.
     // A Discogs-linked release forces fill-empty even in per-release Refresh:
     // Discogs owns the label (it's enrich-filled), so a local tag must never
     // overwrite/clear it — same "Discogs = canonical" rule as track/disc_total.
-    let overwrite_label = overwrite_label && release.discogs_id.is_none();
+    let overwrite_label = trust_files && release.discogs_id.is_none();
     let new_label = if overwrite_label {
         info.label.clone()
     } else {
@@ -2365,9 +2487,12 @@ fn refresh_release_inner(
     }
 
     if changes.is_empty() {
+        // Nothing written — but drift may still be non-empty, which is the
+        // whole point of the scan mode: report the disagreement, apply nothing.
         return Ok(RefreshResult {
-            status: "no_changes".into(),
+            status: if drift.is_empty() { "no_changes" } else { "drift" }.into(),
             changes,
+            drift,
         });
     }
 
@@ -2403,12 +2528,20 @@ fn refresh_release_inner(
     )
     .map_err(|e| e.to_string())?;
 
-    // The `video` tag's emitted value changing on a *published* release makes
-    // its kind:31237 event stale — drop it to "needs republish" so the new tag
-    // goes out. Other refreshed fields are a disk-sync and don't touch publish
-    // state here (consistent with prior behaviour).
+    // Any field this function writes that is ALSO carried in the kind:31237
+    // event makes a published release's live event stale — same invariant the
+    // DB-side setters follow via mark_unpublished (see its doc comment). This
+    // path used to exempt itself and check only `video`, so a disk-sync that
+    // rewrote title/artist/year/format/label left the row reading "published"
+    // while the relay served the old value — silent divergence with nothing in
+    // the UI to show for it.
+    //
+    // `cover_art_path` / `track_total` are deliberately absent: neither is an
+    // emitted tag (the event carries `image` = cover_art_url, and `tracks` =
+    // track_count).
+    let video_emit_changed = video_emit(release.video_count) != video_emit(new_video_count);
     if release.last_published_naddr.is_some()
-        && video_emit(release.video_count) != video_emit(new_video_count)
+        && refresh_marks_stale(&changes, video_emit_changed)
     {
         mark_unpublished(&conn, release_id)?;
     }
@@ -2416,6 +2549,7 @@ fn refresh_release_inner(
     Ok(RefreshResult {
         status: "ok".into(),
         changes,
+        drift,
     })
 }
 
@@ -2688,6 +2822,7 @@ fn write_release_tags(
             refresh: RefreshResult {
                 status: "no_changes".into(),
                 changes: vec![],
+                drift: vec![],
             },
         });
     }
@@ -2728,6 +2863,7 @@ fn write_release_tags(
         refresh_release_inner(app, release_id, true).unwrap_or(RefreshResult {
             status: "refresh_failed".into(),
             changes: vec![],
+            drift: vec![],
         });
 
     Ok(WriteTagsSummary {
@@ -2748,11 +2884,26 @@ pub struct OrphanInfo {
     pub file_path: String,
 }
 
+/// A release whose curated fields disagree with its files. Surfaced by the
+/// batch scan, never applied by it.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseDrift {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    pub fields: Vec<FieldDrift>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryScanSummary {
     pub scanned: usize,
     pub refreshed: usize,
+    /// Releases where a curated field disagrees with the file tag. Nothing was
+    /// written for these — they are for the user to review and apply.
+    pub drifted: usize,
+    pub drifts: Vec<ReleaseDrift>,
     pub no_changes: usize,
     pub orphaned: usize,
     pub no_audio: usize,
@@ -2796,6 +2947,8 @@ fn scan_library_changes(
     let mut summary = LibraryScanSummary {
         scanned: total,
         refreshed: 0,
+        drifted: 0,
+        drifts: Vec::new(),
         no_changes: 0,
         orphaned: 0,
         no_audio: 0,
@@ -2816,8 +2969,24 @@ fn scan_library_changes(
         );
 
         match refresh_release_inner(app.clone(), *release_id, false) {
-            Ok(result) => match result.status.as_str() {
+            Ok(result) => {
+                if !result.drift.is_empty() {
+                    summary.drifted += 1;
+                    summary.drifts.push(ReleaseDrift {
+                        id: *release_id,
+                        artist: artist.clone(),
+                        title: title.clone(),
+                        fields: result.drift.clone(),
+                    });
+                }
+                match result.status.as_str() {
                 "ok" => summary.refreshed += 1,
+                // Drift-only: nothing was written, so it is not a refresh —
+                // but it is not "unchanged" either, because there IS something
+                // for the user to look at. Counted only in `drifted`, so the
+                // buckets partition: refreshed + drifted + no_changes +
+                // orphaned + no_audio + no_path == scanned.
+                "drift" => {}
                 "no_changes" => summary.no_changes += 1,
                 "missing_path" => {
                     summary.orphaned += 1;
@@ -2831,7 +3000,8 @@ fn scan_library_changes(
                 "no_audio" => summary.no_audio += 1,
                 "no_path" => summary.no_path += 1,
                 _ => {}
-            },
+                }
+            }
             Err(e) => summary
                 .errors
                 .push(format!("release {}: {}", release_id, e)),
@@ -2851,6 +3021,9 @@ pub struct LibraryReconcileSummary {
     pub skipped: usize,
     // Refresh phase (scan_library_changes) — existing releases re-read.
     pub refreshed: usize,
+    /// Curated fields disagreeing with disk. Reported, never applied.
+    pub drifted: usize,
+    pub drifts: Vec<ReleaseDrift>,
     pub no_changes: usize,
     pub orphaned: usize,
     pub no_audio: usize,
@@ -2904,6 +3077,8 @@ fn reconcile_library(
         imported: import.imported,
         skipped: import.skipped,
         refreshed: scan.refreshed,
+        drifted: scan.drifted,
+        drifts: scan.drifts,
         no_changes: scan.no_changes,
         orphaned: scan.orphaned,
         no_audio: scan.no_audio,
@@ -10096,5 +10271,152 @@ mod published_manifest_shape {
             v.get("ndiscPubkey").is_none(),
             "ndiscPubkey must be omitted when no key is stored"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The refresh guard. THE REGRESSION THIS PINS (2026-09-22, ndisc 0.2.0-beta.8):
+//
+// A library scan took the file tags as truth for title/artist/year and
+// overwrote ten curated titles — 'Solo Piano' became 'Solo Piano (Deluxe
+// Version)' and so on — while `publish_state` stayed 'published', so the DB
+// silently diverged from the live kind:31237 events on three relays. Both
+// halves are covered here: the scan must KEEP the curated value and REPORT
+// the disagreement, and any emitted tag it does write must mark the release
+// stale. If either of these tests fails, that bug is back.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod refresh_guard {
+    use super::*;
+
+    fn ch(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    // ---- scan mode (trust_files = false): keep mine, report theirs --------
+
+    #[test]
+    fn scan_keeps_curated_title_and_reports_drift() {
+        let r = resolve_curated_str(
+            "title",
+            "Solo Piano",
+            Some("Solo Piano (Deluxe Version)"),
+            false,
+        );
+        assert_eq!(r.value, "Solo Piano", "the curated title must survive a scan");
+        let d = r.drift.expect("the disagreement must be reported");
+        assert_eq!(d.field, "title");
+        assert_eq!(d.current, "Solo Piano");
+        assert_eq!(d.on_disk, "Solo Piano (Deluxe Version)");
+    }
+
+    #[test]
+    fn scan_keeps_curated_artist_and_reports_drift() {
+        // The lookalike that started it: U+00B5 MICRO SIGN vs U+03BC GREEK MU.
+        let r = resolve_curated_str("artist", "\u{00b5}-Ziq", Some("\u{03bc}\u{2010}Ziq"), false);
+        assert_eq!(r.value, "\u{00b5}-Ziq");
+        assert_eq!(r.drift.expect("drift").on_disk, "\u{03bc}\u{2010}Ziq");
+    }
+
+    #[test]
+    fn scan_reports_nothing_when_they_agree() {
+        let r = resolve_curated_str("title", "Grush", Some("Grush"), false);
+        assert_eq!(r.value, "Grush");
+        assert!(r.drift.is_none());
+    }
+
+    #[test]
+    fn scan_reports_nothing_when_the_file_has_no_tag() {
+        let r = resolve_curated_str("title", "Grush", None, false);
+        assert_eq!(r.value, "Grush");
+        assert!(r.drift.is_none(), "an absent tag is not a disagreement");
+    }
+
+    // ---- explicit Refresh (trust_files = true): the file wins -------------
+
+    #[test]
+    fn explicit_refresh_takes_the_file_value() {
+        let r = resolve_curated_str(
+            "title",
+            "Solo Piano",
+            Some("Solo Piano (Deluxe Version)"),
+            true,
+        );
+        assert_eq!(r.value, "Solo Piano (Deluxe Version)");
+        assert!(r.drift.is_none(), "an applied change is not drift");
+    }
+
+    #[test]
+    fn explicit_refresh_keeps_db_when_the_file_has_no_tag() {
+        let r = resolve_curated_str("title", "Grush", None, true);
+        assert_eq!(r.value, "Grush");
+    }
+
+    // ---- year: same guard, but a gap is still filled ----------------------
+
+    #[test]
+    fn scan_keeps_curated_year_and_reports_drift() {
+        // Curated original-release year vs a reissue's DATE tag.
+        let r = resolve_curated_year(Some(1994), Some(2011), false);
+        assert_eq!(r.value, Some(1994));
+        let d = r.drift.expect("drift");
+        assert_eq!((d.current.as_str(), d.on_disk.as_str()), ("1994", "2011"));
+    }
+
+    #[test]
+    fn scan_backfills_a_missing_year_without_calling_it_drift() {
+        let r = resolve_curated_year(None, Some(1994), false);
+        assert_eq!(r.value, Some(1994), "filling a gap is not overwriting");
+        assert!(r.drift.is_none());
+    }
+
+    #[test]
+    fn scan_year_absent_on_both_sides() {
+        let r = resolve_curated_year(None, None, false);
+        assert_eq!(r.value, None);
+        assert!(r.drift.is_none());
+    }
+
+    #[test]
+    fn explicit_refresh_takes_the_file_year() {
+        let r = resolve_curated_year(Some(1994), Some(2011), true);
+        assert_eq!(r.value, Some(2011));
+        assert!(r.drift.is_none());
+    }
+
+    // ---- the stale invariant ---------------------------------------------
+
+    #[test]
+    fn every_emitted_tag_marks_a_published_release_stale() {
+        for f in ["artist", "title", "year", "format", "label", "tracks"] {
+            assert!(
+                refresh_marks_stale(&ch(&[f]), false),
+                "changing the emitted tag `{f}` must mark the release stale"
+            );
+        }
+    }
+
+    #[test]
+    fn video_marks_stale_only_when_its_emitted_truth_flips() {
+        // Only the >0 truth of the video count is published, so 2 -> 3 is not
+        // a wire change, but 0 -> 1 is.
+        assert!(!refresh_marks_stale(&ch(&["video"]), false));
+        assert!(refresh_marks_stale(&ch(&["video"]), true));
+    }
+
+    #[test]
+    fn local_only_fields_do_not_mark_stale() {
+        // Neither is an emitted tag: the event carries `image`
+        // (= cover_art_url) and `tracks` (= track_count).
+        assert!(!refresh_marks_stale(
+            &ch(&["cover_art_path", "track_total", "notes", "source"]),
+            false
+        ));
+        assert!(!refresh_marks_stale(&[], false));
+    }
+
+    #[test]
+    fn a_mixed_change_set_still_marks_stale() {
+        assert!(refresh_marks_stale(&ch(&["cover_art_path", "title"]), false));
     }
 }

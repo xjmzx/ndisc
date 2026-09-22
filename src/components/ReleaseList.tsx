@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -72,7 +72,10 @@ import {
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
 import { getDismissedDupKeys } from "../lib/dupDismiss";
+import type { ReleaseDrift } from "../lib/tauri";
+import { withoutDismissed } from "../lib/driftDismiss";
 import { DuplicatesDialog } from "./DuplicatesDialog";
+import { DriftDialog } from "./DriftDialog";
 import {
   SOURCE_PLATFORMS,
   releaseSourceColor,
@@ -232,6 +235,11 @@ export function ReleaseList({
     | "coverGap";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
+  // Rows for the drift review dialog, captured from the last scan summary.
+  // null = dialog closed.
+  const [driftRows, setDriftRows] = useState<ReleaseDrift[] | null>(null);
+  // Bumped whenever a dismissal is written, so the banner re-counts.
+  const [driftTick, setDriftTick] = useState(0);
   const [opSummary, setOpSummary] = useState<
     | { kind: "extract"; data: ExtractSummary }
     | { kind: "rescan"; data: RescanSummary }
@@ -365,6 +373,22 @@ export function ReleaseList({
   // release's published image into its folder as cover.jpg. Writes to disk, so
   // it's an explicit opt-in step separate from the read-only flag pass (which
   // runBackgroundOp("coverGap") ran to produce this summary).
+  // The backend's `drifted` is the raw disk-vs-DB count; it cannot know what
+  // the user has already judged, because dismissals are frontend-only (same
+  // as `ndisc.dupDismissed`). The chip must show the UNDISMISSED count, or it
+  // never reaches zero and stops meaning anything.
+  const pendingDrifts = useMemo<ReleaseDrift[]>(() => {
+    if (
+      opSummary?.kind !== "scan" &&
+      opSummary?.kind !== "reconcileDisk"
+    ) {
+      return [];
+    }
+    return withoutDismissed(opSummary.data.drifts);
+    // driftTick re-runs this after a dismissal is written.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opSummary, driftTick]);
+
   async function runCoverGapFix(reconcile: PublishedCoverReconcile) {
     if (activeOp !== null || reconcile.gaps.length === 0) return;
     const n = reconcile.gaps.length;
@@ -1239,6 +1263,15 @@ export function ReleaseList({
         />
       )}
 
+      {driftRows && (
+        <DriftDialog
+          drifts={driftRows}
+          onClose={() => setDriftRows(null)}
+          onApplied={() => reload()}
+          onChanged={() => setDriftTick((t) => t + 1)}
+        />
+      )}
+
       {error && (
         <p className="mt-2 text-xs text-alert font-mono break-all">{error}</p>
       )}
@@ -1378,6 +1411,20 @@ export function ReleaseList({
                   unchanged{" "}
                   <span className="font-mono">{opSummary.data.noChanges}</span>
                 </span>
+                {pendingDrifts.length > 0 && (
+                  <button
+                    onClick={() => setDriftRows(pendingDrifts)}
+                    className="text-warn underline decoration-dotted underline-offset-2
+                      cursor-pointer hover:text-fg hover:decoration-solid"
+                    title={
+                      "Files disagree with your curated title/artist/year. " +
+                      "Nothing was changed — click to review."
+                    }
+                  >
+                    drift{" "}
+                    <span className="font-mono">{pendingDrifts.length}</span>
+                  </button>
+                )}
                 {opSummary.data.orphaned > 0 && (
                   <span className="text-warn">
                     orphaned{" "}
@@ -1406,10 +1453,30 @@ export function ReleaseList({
                   unchanged{" "}
                   <span className="font-mono">{opSummary.data.noChanges}</span>
                 </span>
+                {pendingDrifts.length > 0 && (
+                  <button
+                    onClick={() => setDriftRows(pendingDrifts)}
+                    className="text-warn underline decoration-dotted underline-offset-2
+                      cursor-pointer hover:text-fg hover:decoration-solid"
+                    title={
+                      "Files disagree with your curated title/artist/year. " +
+                      "Nothing was changed — click to review."
+                    }
+                  >
+                    drift{" "}
+                    <span className="font-mono">{pendingDrifts.length}</span>
+                  </button>
+                )}
                 {opSummary.data.orphaned > 0 && (
                   <span className="text-warn">
                     orphaned{" "}
                     <span className="font-mono">{opSummary.data.orphaned}</span>
+                  </span>
+                )}
+                {opSummary.data.noAudio > 0 && (
+                  <span className="text-muted">
+                    no audio{" "}
+                    <span className="font-mono">{opSummary.data.noAudio}</span>
                   </span>
                 )}
               </>
