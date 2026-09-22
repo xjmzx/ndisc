@@ -63,7 +63,17 @@ exactly one genuinely NFD filename, which proves the rule matters.
 - **Windows** has a live ndisc database indexing an **independent library** —
   a different music collection. Paths therefore never cross a platform
   boundary, which is why the normalisation work stopped where it did.
+  **v0.3.0 builds and launches there (2026-09-22) — and nothing beyond that is
+  confirmed.** None of this release was exercised on Windows: not the content
+  audit's relay paging, not drift review, not the targeted enrich. "It starts"
+  is the claim, and it is the whole claim.
 - **macOS** has ndisc installed but **has never been run with a database**.
+
+The suite has been here before. `docs/macos-status-2026-09-03.md` records all
+eight Tauri apps building, installing and launching on macOS — *"but only
+launch is confirmed"* — and the items left open there are still open three
+weeks later. A launch tells you the binary links and the webview starts. It
+says nothing about whether a feature works.
 
 Measured on the Linux library, 2026-09-22:
 
