@@ -6297,6 +6297,41 @@ pub struct ContentAudit {
     pub checked_at: i64,
 }
 
+/// Queue releases the content audit found drifted, so Publish re-emits them.
+///
+/// The audit is read-only by design, but a finding with no route to a fix is
+/// half a feature: the largest group it surfaces is releases whose events
+/// predate an ADDITIVE contract tag (`discs`, 2026-06). Nothing local changed,
+/// so nothing ever marked them stale, and they would stay divergent forever.
+///
+/// Applies exactly `mark_unpublished`'s semantics — all three markers, not two
+/// (see the beta.14 half-state). Ids are re-checked against the DB rather than
+/// trusted from a possibly-stale dialog.
+#[tauri::command]
+fn queue_for_republish(app: tauri::AppHandle, ids: Vec<i64>) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let conn = open(&app)?;
+    let mut queued = 0usize;
+    for id in ids {
+        let state: Option<String> = conn
+            .query_row(
+                "SELECT publish_state FROM releases WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .flatten();
+        if state.as_deref() == Some("published") {
+            mark_unpublished(&conn, id)?;
+            queued += 1;
+        }
+    }
+    Ok(queued)
+}
+
 /// Compare every published release's live event against its current row.
 ///
 /// Read-only: no signing, no publishing, nothing written to the DB. It reports
@@ -9145,6 +9180,7 @@ pub fn run() {
             audit_relays,
             purge_relay_events,
             audit_published_content,
+            queue_for_republish,
             check_relays,
             list_feed_drafts,
             save_feed_draft,

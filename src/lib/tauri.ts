@@ -556,6 +556,13 @@ export interface ContentAudit {
   checkedAt: number;
 }
 
+// Queue audit findings for republish. The audit itself is read-only; this is
+// the route from "found" to "fixed" for releases whose events predate an
+// additive contract tag and which nothing local would ever mark stale.
+export async function queueForRepublish(ids: number[]): Promise<number> {
+  return invoke<number>("queue_for_republish", { ids });
+}
+
 export async function auditPublishedContent(
   relays: string[],
 ): Promise<ContentAudit> {

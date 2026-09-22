@@ -1,5 +1,6 @@
-import { FileWarning, X } from "lucide-react";
-import type { ContentAudit } from "../lib/tauri";
+import { useState } from "react";
+import { FileWarning, Loader2, UploadCloud, X } from "lucide-react";
+import { queueForRepublish, type ContentAudit } from "../lib/tauri";
 
 // Read-only review of releases whose published event no longer matches the
 // catalogue row. Nothing here writes: the audit reports, the operator decides
@@ -7,10 +8,30 @@ import type { ContentAudit } from "../lib/tauri";
 export function ContentAuditDialog({
   audit,
   onClose,
+  onQueued,
 }: {
   audit: ContentAudit;
   onClose: () => void;
+  onQueued?: (n: number) => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [queued, setQueued] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function queueAll() {
+    setBusy(true);
+    setError(null);
+    try {
+      const n = await queueForRepublish(audit.drifted.map((d) => d.id));
+      setQueued(n);
+      onQueued?.(n);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div
       className="absolute inset-0 z-30 flex items-start justify-center p-4
@@ -37,11 +58,30 @@ export function ContentAuditDialog({
             <X size={16} />
           </button>
         </div>
-        <p className="text-[11px] text-muted mb-3">
-          What the relays are serving, against what this release would emit
-          today. Read-only — republish from Publish when you want the wire to
-          catch up.
-        </p>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <p className="text-[11px] text-muted">
+            What the relays are serving, against what this release would emit
+            today. The audit itself changes nothing.
+          </p>
+          {audit.drifted.length > 0 && (
+            <button
+              onClick={queueAll}
+              disabled={busy || queued !== null}
+              className="shrink-0 text-[11px] text-nostr hover:text-fg inline-flex
+                items-center gap-1 disabled:opacity-50"
+              title="Mark these for republish. Nothing is signed or sent — they move into the unpublished bucket for the next Publish pass."
+            >
+              {busy ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <UploadCloud size={11} />
+              )}
+              {queued === null
+                ? `queue all ${audit.drifted.length} for republish`
+                : `queued ${queued}`}
+            </button>
+          )}
+        </div>
 
         {audit.drifted.length === 0 ? (
           <div className="py-8 text-center text-muted text-sm">
@@ -92,6 +132,11 @@ export function ContentAuditDialog({
           <p className="mt-3 text-[11px] text-alert font-mono break-all">
             believed published but no relay is serving:{" "}
             {audit.absent.join(", ")}
+          </p>
+        )}
+        {error && (
+          <p className="mt-2 text-[11px] text-alert font-mono break-all">
+            {error}
           </p>
         )}
         {audit.errors.length > 0 && (

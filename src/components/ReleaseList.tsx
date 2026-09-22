@@ -1371,7 +1371,11 @@ export function ReleaseList({
       )}
 
       {auditOpen && (
-        <ContentAuditDialog audit={auditOpen} onClose={() => setAuditOpen(null)} />
+        <ContentAuditDialog
+          audit={auditOpen}
+          onClose={() => setAuditOpen(null)}
+          onQueued={() => reload()}
+        />
       )}
 
       {driftRows && (

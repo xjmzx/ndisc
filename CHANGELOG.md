@@ -21,6 +21,29 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.15 — 2026-09-22
+
+### Added — queue audit findings for republish
+
+The content audit was read-only, and a finding with no route to a fix is half a
+feature. **Drift review → queue all N for republish** marks the drifted
+releases unpublished so the next Publish pass re-emits them. Nothing is signed
+or sent by the button itself; it applies `mark_unpublished` semantics (all
+three markers) and re-checks each id against the DB rather than trusting the
+dialog.
+
+This closes the loop the first real audit exposed. Of 80 drifted releases,
+**76 had a current event that simply predated an additive contract tag** —
+`discs` was added in the 2026-06 round, and `disc_total` had come from a
+Discogs enrich long before. Nothing local ever changed, so nothing ever marked
+them stale, and no amount of publishing the stale queue would reach them: they
+would have stayed divergent indefinitely. The remaining groups were 29 formats
+in the same position and 21 releases no relay is serving.
+
+Republishing the stale queue is therefore *not* sufficient on its own — an
+additive contract change leaves every already-published release behind, and
+only the audit can see it.
+
 ## 0.2.0-beta.14 — 2026-09-22
 
 ### Fixed — enrich left releases in a publish half-state
