@@ -21,6 +21,62 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.3.0 — 2026-09-22
+
+**Versioning changed with this release.** ndisc leaves the `-beta.N` train and
+joins `ntree` and `gtrack` on plain semver: **feature → minor, fix → patch**,
+with `-beta.N` reserved for genuinely staging a release candidate. `0.x` already
+means unstable, so a second instability axis was not earning its keep — and a
+counter that only ever increments says nothing about whether a version brought
+a feature or a bug fix. `0.2.0` was never tagged past `beta.7`, so nothing in
+the tag history needed rewriting.
+
+This entry consolidates the 2026-09-22 session, previously spread across
+`0.2.0-beta.8` … `0.2.0-beta.15`. Those entries remain below as the working
+record.
+
+### Added
+
+- **Content audit** (*Maintenance → Audit published content*) — compares every
+  published release's live event, tag by tag, against what the catalogue would
+  emit. The only check that reads the served event's *content*; derives its
+  expectation from `release_wire_form`, the same function `release_event`
+  signs, so it cannot drift from the emitter.
+- **Drift review** — a library scan reports disagreements with the file tags
+  instead of applying them. Per-field *yours* vs *on disk*, with **use file**
+  or **keep mine**; dismissal is keyed on the file's current value so a later
+  genuine retag resurfaces.
+- **Queue for republish** from the audit — the route from *found* to *fixed*.
+- **Repair pressing strings** — targeted Discogs re-enrich for physical
+  releases carrying a codec, without a `force` pass over the whole library.
+- **Progress feedback** for the audit and the repair. The audit reports over
+  two phases in one scale — a relay fetch pages through a whole library, so it
+  gets its own step and label rather than leaving the bar frozen. The repair
+  listens to the `enrich:*` events, which were already emitted and had nobody
+  listening.
+
+### Fixed
+
+- A library scan overwrote curated `title` / `artist` / `year` from file tags,
+  and exempted itself from the staleness invariant — so published releases
+  diverged from their live events undetectably. Found via the relays.
+- A **video-only release was never refreshed** since import, freezing an
+  emitted tag.
+- A codec overwrote a **pressing** on physical releases (109 of 126 affected);
+  71 recovered from the signed events, 38 re-enriched from Discogs.
+- **Enrich left a publish half-state** — markers cleared, `publish_state` not.
+- Format drift flooded the scan report (10 → 318) by reporting a permanent,
+  intended difference.
+
+### Docs
+
+`schema/title-styling-2026-09-22.md` (naming conventions, with the decidable
+collision rule), `schema/identity-normalisation-design-2026-09-22.md`,
+`docs/file-data-handling-2026-09-22.md` (who writes tags across the suite;
+cross-platform unknowns), `docs/open-issues-2026-09-22.md` (what each check is
+blind to). README and introduction corrected where they described the old
+behaviour.
+
 ## 0.2.0-beta.15 — 2026-09-22
 
 ### Added — queue audit findings for republish

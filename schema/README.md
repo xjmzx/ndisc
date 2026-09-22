@@ -254,7 +254,15 @@ maturities, so the suite uses **two independent version axes** rather than one
 lockstep number:
 
 1. **App version** — per app, independent semver, tracking that app's own
-   features/UI. Tag format `vMAJOR.MINOR.PATCH`, with `-beta.N` pre-1.0.
+   features/UI. Tag format `vMAJOR.MINOR.PATCH`.
+
+   **Feature → minor. Fix → patch.** `0.x` already means unstable, so
+   `-beta.N` is a second instability axis that does not earn its keep: the
+   counter only ever increments, the real version never moves, and a reader
+   cannot tell a bug fix from a feature. Reserve `-beta.N` for genuinely
+   staging a release candidate before tagging. `ntree`, `gtrack` and `ndisc`
+   (from v0.3.0, 2026-09-22) follow this; `nplay`, `nsmpl`, `nping` and
+   `nchat` are still on beta trains and should move when convenient.
    An app-only change (e.g. an ndisc list-UI tweak) bumps *that app alone*;
    no other repo moves. Current lines: `ndisc` 0.1.x-beta · `ndisc.tree`
    0.2.x · `ndisc.smpl` 0.3.0-beta · `ndisc.view` 0.1.0-beta. Don't force a

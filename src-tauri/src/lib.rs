@@ -6381,11 +6381,28 @@ async fn audit_published_content(
         out
     };
 
+    // Progress is reported over two phases in one scale: fetching each relay,
+    // then comparing each release. A relay fetch is the slow part (it pages
+    // backwards through a whole library) so it gets its own step and its own
+    // label rather than leaving the bar frozen.
+    let total_steps = relays.len() + expected.len();
+    let _ = app.emit("audit:started", total_steps);
+    let mut step = 0usize;
+
     // Newest event per d-tag across every relay. A coordinate can differ
     // between relays; the newest is what a consumer resolves to.
     let mut live: HashMap<String, Event> = HashMap::new();
     let mut errors: Vec<RelayError> = Vec::new();
     for relay in &relays {
+        step += 1;
+        let _ = app.emit(
+            "audit:progress",
+            ImportProgress {
+                current: step,
+                total: total_steps,
+                current_dir: format!("fetching {relay}"),
+            },
+        );
         match fetch_all_from_relay(relay, &keys, vec![Kind::Custom(KIND_RELEASE)]).await {
             Ok(events) => {
                 for ev in events {
@@ -6414,6 +6431,15 @@ async fn audit_published_content(
     let mut absent: Vec<i64> = Vec::new();
 
     for e in &expected {
+        step += 1;
+        let _ = app.emit(
+            "audit:progress",
+            ImportProgress {
+                current: step,
+                total: total_steps,
+                current_dir: format!("{} — {}", e.artist, e.title),
+            },
+        );
         let d = release_d_tag(e.id);
         let Some(ev) = live.get(&d) else {
             absent.push(e.id);

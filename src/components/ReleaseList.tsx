@@ -71,6 +71,7 @@ import {
   type ReconcileSummary,
   type ContentAudit,
   type EnrichSummary,
+  type EnrichProgress,
   type RelayAudit,
   type Release,
   type RescanSummary,
@@ -494,8 +495,25 @@ export function ReleaseList({
       if (!yes) return;
       setActiveOp("repressing");
       setOpSummary(null);
+      setOpProgress(null);
       setError(null);
+      const un: UnlistenFn[] = [];
       try {
+        // enrich already emits these; the op just had nobody listening.
+        un.push(
+          await listen<number>("enrich:started", (e) => {
+            setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+          }),
+        );
+        un.push(
+          await listen<EnrichProgress>("enrich:progress", (e) => {
+            setOpProgress({
+              current: e.payload.current,
+              total: e.payload.total,
+              currentDir: e.payload.label,
+            });
+          }),
+        );
         setOpSummary({
           kind: "enrich",
           data: await enrichDiscogsLibrary(false, ids),
@@ -504,6 +522,8 @@ export function ReleaseList({
       } catch (e) {
         setError(String(e));
       } finally {
+        un.forEach((f) => f());
+        setOpProgress(null);
         setActiveOp(null);
       }
       return;
@@ -525,14 +545,28 @@ export function ReleaseList({
       if (!yes) return;
       setActiveOp("contentAudit");
       setOpSummary(null);
+      setOpProgress(null);
       setError(null);
+      const unlisteners: UnlistenFn[] = [];
       try {
+        unlisteners.push(
+          await listen<number>("audit:started", (e) => {
+            setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+          }),
+        );
+        unlisteners.push(
+          await listen<ImportProgress>("audit:progress", (e) => {
+            setOpProgress(e.payload);
+          }),
+        );
         const data = await auditPublishedContent(relays);
         setOpSummary({ kind: "contentAudit", data });
         if (data.drifted.length > 0) setAuditOpen(data);
       } catch (e) {
         setError(String(e));
       } finally {
+        unlisteners.forEach((f) => f());
+        setOpProgress(null);
         setActiveOp(null);
       }
       return;
@@ -1405,7 +1439,11 @@ export function ReleaseList({
                       ? "retracting stray events from relays"
                       : activeOp === "coverGap"
                         ? "materializing published covers"
-                        : "scanning library for changes"}{" "}
+                        : activeOp === "contentAudit"
+                          ? "comparing published events with the catalogue"
+                          : activeOp === "repressing"
+                            ? "re-fetching pressings from Discogs"
+                            : "scanning library for changes"}{" "}
               <span className="font-mono text-fg">
                 {opProgress.current.toLocaleString()}/
                 {(opProgress.total || 0).toLocaleString()}
