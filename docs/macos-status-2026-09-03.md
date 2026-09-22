@@ -21,8 +21,16 @@ take the Tauri `productName`. Spotlight will not find them under "nsmpl"/"ntree"
 
 **Update 2026-09-12: fixed.** Both apps now build as `nsmpl.app` / `ntree.app`
 (nsmpl `01bc482`, ntree `ec15b68`), and `./install.sh` removes the old bundle.
-The bundle identifiers and keychain services are unchanged, so saved data and
-Keychain entries carry over; expect the usual Keychain prompt after the rebuild.
+The bundle identifiers and keychain services are unchanged, so saved data
+carries over.
+
+**This line used to claim Keychain entries carried over too, and a prompt after
+the rebuild. That was false for ndisc, nsmpl and ntree until 2026-09-22.** None
+of the three had a `[target.'cfg(target_os = "macos")']` keyring block, so no
+Keychain backend was compiled in; keyring 3 fell through to its in-memory
+`mock`, which accepts a key and stores nothing. There were no entries to carry
+over and nothing to prompt for. Fixed by adding the `apple-native` block to all
+three — true as written from that date.
 
 Install locally with `./install.sh` in any repo (or `npm run install:app`). A
 locally built `.app` carries **no quarantine attribute**, so Gatekeeper does not

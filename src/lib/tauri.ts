@@ -896,6 +896,12 @@ export async function getNpub(): Promise<string | null> {
   return invoke<string | null>("get_npub");
 }
 
+/** Which OS store this build compiled in. Named by Rust so the UI cannot
+ *  claim a keychain the binary has no backend for. */
+export async function keyringBackend(): Promise<string> {
+  return invoke<string>("keyring_backend");
+}
+
 export async function clearKeypair(): Promise<void> {
   return invoke("clear_keypair");
 }

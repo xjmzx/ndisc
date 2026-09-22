@@ -4005,6 +4005,25 @@ fn keyring_service() -> &'static str {
     }
 }
 
+/// The keyring backend this build actually compiled in.
+///
+/// Reported to the UI so the footer can name the real store instead of assuming
+/// one. Before 2026-09-22 the macOS build had no backend at all and fell through
+/// to keyring's in-memory `mock`, while the UI hardcoded "libsecret" — it named
+/// a Linux store, on macOS, for a key that was never written anywhere.
+#[tauri::command]
+fn keyring_backend() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macOS Keychain"
+    } else if cfg!(target_os = "windows") {
+        "Windows Credential Manager"
+    } else if cfg!(target_os = "linux") {
+        "libsecret"
+    } else {
+        "none — in-memory mock, nothing is persisted"
+    }
+}
+
 fn keyring_entry() -> Result<Entry, String> {
     Entry::new(keyring_service(), KEYRING_USER).map_err(|e| e.to_string())
 }
@@ -9196,6 +9215,7 @@ pub fn run() {
             clear_release_path,
             generate_keypair,
             import_keypair,
+            keyring_backend,
             get_npub,
             clear_keypair,
             publish_release,

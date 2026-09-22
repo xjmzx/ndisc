@@ -46,13 +46,13 @@ import { ReactionsProvider } from "./hooks/useReactions";
 import {
   clearKeypair,
   getNpub,
+  keyringBackend,
   initDb,
   recountTracks,
   setDbPath as setDbPathCmd,
   type Release,
 } from "./lib/tauri";
 
-const KEYRING_BACKEND = "libsecret";
 
 const LABELS_STORAGE_KEY = "ndisc.labels";
 
@@ -149,6 +149,9 @@ export default function App() {
   const [dbError, setDbError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [npub, setNpub] = useState<string | null>(null);
+  // Which store this build actually compiled in — reported by Rust so the
+  // footer cannot name a keychain that is not there.
+  const [keyringStore, setKeyringStore] = useState<string>("…");
   const [profile, setProfile] = useState<ProfileMeta | null>(null);
   const [labels, setLabelsState] = useState<LabelEntry[]>(() => loadLabels());
   const [theme, setTheme] = useState<Theme>(loadTheme);
@@ -288,6 +291,9 @@ export default function App() {
     getNpub()
       .then((p) => setNpub(p ?? null))
       .catch(() => setNpub(null));
+    keyringBackend()
+      .then(setKeyringStore)
+      .catch(() => setKeyringStore("unknown"));
   }, []);
 
   useEffect(() => {
@@ -316,9 +322,21 @@ export default function App() {
     };
   }, [npub, relays]);
 
-  function onIdentityChanged(next: string | null) {
-    setNpub(next);
-    if (!next) setProfile(null);
+  // Re-read from the keychain rather than trusting what the write returned.
+  // A keyring build with no backend for the platform accepts the write, reports
+  // success and stores nothing — which is what let the footer say "nsec stored
+  // in keychain" on macOS while every command needing the key answered "no
+  // Nostr identity stored". get_npub goes through load_nsec, so a value from it
+  // has survived a round trip; `next` has not.
+  async function onIdentityChanged(next: string | null) {
+    if (!next) {
+      setNpub(null);
+      setProfile(null);
+      return;
+    }
+    const stored = await getNpub().catch(() => null);
+    setNpub(stored ?? null);
+    if (!stored) setProfile(null);
   }
 
   async function onForgetIdentity() {
@@ -703,10 +721,10 @@ export default function App() {
             </span>
             <span
               className="inline-flex items-center gap-1"
-              title={`secret key stored in OS keychain (${KEYRING_BACKEND})`}
+              title={`secret key stored in ${keyringStore}`}
             >
               <Lock size={11} />
-              <span>nsec stored in keychain</span>
+              <span>nsec stored in {keyringStore}</span>
             </span>
           </span>
         )}
