@@ -85,6 +85,34 @@ at all: see "Enforcement" below.
    value wins and the event is republished. The local value is what the file
    tags carry, and the files are the personal database of record.
 
+## Year: original release, with a Discogs margin
+
+The catalogue dates a release by its **original release**, not the pressing or
+reissue in hand. Two sources disagree in practice — the file tag (often a
+reissue's `DATE`, or simply imprecise) and Discogs.
+
+The rule has two halves, and the split is what makes it work:
+
+- **Gap ≤ 2 years → Discogs wins.** A one-year disagreement is not an
+  original-versus-reissue distinction; it is an imprecise tag, and Discogs is
+  the better source for the same release.
+- **Gap > 2 years → the earlier value wins.** That gap means two different
+  editions, and the earlier is the original.
+
+Applied on 2026-09-22 to eleven disagreements it produced: `Head Hunters`
+1999→1973 and `We Are Reasonable People` 2008→1998 (reissue dates dropped),
+`Twoism` kept at 1996 against Discogs' 2013 pressing, and three one-year
+disagreements resolved to Discogs (`Stop The Panic` →2000, `Ischemic Folks`
+→2000, `Bittersweet Synthphony` →1999) — which were precisely the three a
+plain earliest-wins rule had got wrong.
+
+**Caveat on "Discogs".** The comparison above used the value in the *published
+event* as a proxy for Discogs, because that is what was to hand: those events
+were Discogs-enriched at some point, but the relay is not Discogs and the
+proxy could be stale. Every affected row carries a `discogs_id`, so a real
+implementation of this rule re-enriches from the Discogs API rather than
+trusting the wire. Worth doing before the rule is automated.
+
 ## On dashes — there are none
 
 Worth stating plainly, because it is easy to misread: **the catalogue contains
