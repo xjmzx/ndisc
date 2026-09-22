@@ -163,10 +163,34 @@ ndisc text values (artist/title/label)     non-NFC:            0
 nplay track titles                         non-NFC:            8
 ```
 
-So the **path** half of Tier 0 is *latent*, not live: on one platform both
-sides hold identical bytes and everything resolves. It becomes real when the
-same library is read by ndisc on macOS (APFS hands back decomposed names) or a
-DB moves between machines. Worth doing; not urgent.
+So the **path** half of Tier 0 is *latent* on this box: both sides hold
+identical bytes and everything resolves.
+
+**Platform status (corrected 2026-09-22).** ndisc is installed on macOS but has
+never been run with a database there, so nothing exists to diverge yet.
+**Windows does have a live database.** That matters less than it sounds for
+*this* problem, and more for a different one:
+
+- **Windows is not an NFD hazard.** NTFS stores UTF-16 and does not normalise;
+  like Linux it is codepoint-exact, so a name written NFC stays NFC. The
+  decomposition hazard is specific to macOS — strongest on HFS+, which actively
+  normalised to a variant of NFD; APFS is normalisation-*insensitive* but
+  *preserving*, so it returns what was written.
+- **Windows is a case hazard instead.** NTFS is case-insensitive and
+  case-preserving, so `.../Suns Of Arqa/` and `.../Suns of Arqa/` are *the same
+  directory* there and two different ones here. A library whose paths differ
+  only by case behaves differently per platform — the same shape as the artist
+  case-splits fixed on 2026-09-22, one layer down, and not something NFC
+  addresses.
+- **Paths are not portable between machines anyway** — separators and drive
+  letters differ before normalisation is even reached. So "a DB moves between
+  machines" is only a real scenario if the DBs are ever merged or synced.
+
+**Open question, and it decides whether any of this matters:** does the Windows
+database index *the same library* as this one, or an independent one on that
+machine? If independent, path comparison never crosses a platform boundary and
+Tier 0's path half stays theoretical. If they are ever reconciled, the blocker
+is path portability, not normalisation.
 
 The **text** half was live and is now fixed in nplay (0.2.x): eight track
 titles were stored NFD, so searching for `Começo` as typed — NFC — matched
@@ -365,8 +389,11 @@ Local-only, so no coordinated wave and no SHA re-pin. Suggested order:
    no non-NFC text today but should adopt the same helper so it does not drift
    in from an import.
 2. **Tier 0, path half** — a derived NFC key for cross-platform folder
-   comparison, with stored paths left byte-exact. Latent; do it before ndisc
-   is first run on macOS against a shared library.
+   comparison, with stored paths left byte-exact. Latent, and gated on the
+   open question above: ndisc on macOS has no database yet, and the Windows
+   database is not an NFD hazard (NTFS does not normalise). Revisit if the
+   per-machine databases are ever reconciled — at which point path
+   portability and NTFS case-insensitivity are the larger problems.
 3. **Tier 1 in ndisc** — `dup_norm` → Tier 1, label panel, search, backend sort.
    Add vectors + a Rust test mirroring the `master_key` pattern.
 4. **Tier 1 in nplay** — grouping and search. Vendor the same vectors.
