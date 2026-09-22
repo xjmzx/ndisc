@@ -256,6 +256,25 @@ lockstep number:
 1. **App version** — per app, independent semver, tracking that app's own
    features/UI. Tag format `vMAJOR.MINOR.PATCH`.
 
+   **Maturity is documented, not encoded in the version.** The `-beta.N`
+   suffix never tracked it — `ntree` sat at a plain `0.3.x` while being one of
+   the least-tested apps in the suite, and `nchat` carried `-beta.N` while
+   being the only one verified working on a second platform. A version answers
+   "which build is this machine running"; how far to trust it is a separate
+   question, answered below and in each app's CHANGELOG.
+
+   As of 2026-09-22, where each app stands — the reason the numbers moved:
+
+   - **Core** — `ndisc`, `nplay`, `ntune`. Daily-driven on Linux. `ndisc`
+     builds and launches on Windows (2026-09-22) with nothing exercised.
+   - **Experimental** — `ntree`, `nsmpl`. Untested on macOS and Windows.
+   - **`nchat`** — exists on all three. **Tested working on macOS**; on Windows
+     it builds but has not really been used.
+   - **`nview`** — mobile, outside this scheme for now; may be brought in.
+   - **Scaffolds** — `aledger`, `bledger`, `xledger` sit at `0.0.0` with no
+     tags and no adapters. Deliberately unversioned: a version answers a
+     question about a running build, and nothing runs from them yet.
+
    **Feature → minor. Fix → patch.** `0.x` already means unstable, so
    `-beta.N` is a second instability axis that does not earn its keep: the
    counter only ever increments, the real version never moves, and a reader
