@@ -678,6 +678,29 @@ each app declaring its own stack.
 
 ## Direction / roadmap
 
+**Proposed next (2026-09-22)** — two directions, both independent of the
+catalogue work and of each other.
+
+- **ntune: multi-station logging.** The live logger currently follows one
+  station (Acid Jazz). Investigate switching stations and logging several.
+  The blocker is not code: **most stations do not publish what is currently
+  playing**, so the first step is a survey of which stations expose usable
+  now-playing metadata (ICY `StreamTitle`, or a station API) and what the
+  useful subset actually is. Logging a station that reports nothing produces
+  an empty log, so this is a data-availability question before it is a feature.
+  Detail in `radio-scan/docs/`.
+
+- **Desktop onboarding flow.** `nview` has one for mobile; the desktop apps
+  drop a new user straight into an empty window. Three things need setting up
+  and all three are currently found by reading source or docs:
+  **relays**, **data locations** (library root, logs, DB), and **nsec
+  management in the OS keychain**. Goal is simplicity, not a wizard.
+  Per-app to start — ndisc, ntree, nsmpl and ntune each need a different
+  subset — with a shared shape only if one emerges. Worth noting the keychain
+  step is the one with real consequences: in `nchat` removing an identity
+  destroys the only copy of its key.
+
+
 **Near-term — tighten suite integration**
 - Bring `ndisc`'s tree-dots + track/disc-count styling into `nplay`.
   **Count-badge styling done (2026-07-21)** — `nplay` now shares `--c-medium`
