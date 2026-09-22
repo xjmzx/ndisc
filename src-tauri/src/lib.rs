@@ -2315,6 +2315,27 @@ pub fn resolve_track_total(
 /// title while the row still read "published".
 const EMITTED_TAGS: [&str; 6] = ["artist", "title", "year", "format", "label", "tracks"];
 
+/// Does this `format` value describe a codec (a rip) rather than a pressing?
+///
+/// Deliberately a prefix test on the codec names `build_format_string` emits:
+/// `FLAC 16/44.1`, `MP3 320`. A pressing string starts with the physical form
+/// (`12"`, `2xLP`, `7"`, `LP`, `CD`) and never with a codec name.
+pub fn looks_like_codec(s: &str) -> bool {
+    const CODECS: [&str; 12] = [
+        "FLAC", "MP3", "ALAC", "AAC", "OGG", "OPUS", "WAV", "AIFF", "APE", "WV", "DSF", "DFF",
+    ];
+    let head = s.trim_start();
+    CODECS.iter().any(|c| {
+        head.len() >= c.len()
+            && head[..c.len()].eq_ignore_ascii_case(c)
+            && head[c.len()..]
+                .chars()
+                .next()
+                .map(|ch| !ch.is_alphanumeric())
+                .unwrap_or(true)
+    })
+}
+
 /// Whether a refresh's `changes` should drop a published release to stale.
 /// `video_emit_changed` is passed separately because only the >0 truth of the
 /// video count is emitted, not the count itself.
@@ -2418,10 +2439,32 @@ fn refresh_release_inner(
     let new_year = r.value;
     drift.extend(r.drift);
 
-    let new_format_str = if info.codec.is_some() {
-        Some(build_format_string(&info))
-    } else {
-        release.format.clone()
+    // `format` holds two different kinds of fact. For a digital release it is
+    // the codec of the files, and tracking disk is right — replacing an MP3 rip
+    // with a FLAC one should update it. For a physical release it is the
+    // PRESSING (`12", Ltd, Whi`, `2xLP, Album, Gat`), which is catalogue data
+    // about the object, usually Discogs-enriched, and a codec describes the rip
+    // sitting in the folder rather than the record on the shelf.
+    //
+    // beta.9 guarded title/artist/year and left this one classified as
+    // disk-derived. The content audit then found 109 of 126 physical releases
+    // carrying a codec where a pressing string used to be — the same silent
+    // clobber, one field over. The rule is narrow and needs no new state: a
+    // codec never overwrites something that is not a codec.
+    let new_format_str = match (info.codec.is_some(), release.format.as_deref()) {
+        (true, Some(cur)) if !looks_like_codec(cur) && !cur.trim().is_empty() => {
+            // A pressing string. Keep it, and report the disagreement instead.
+            if !trust_files {
+                drift.push(FieldDrift {
+                    field: "format".into(),
+                    current: cur.to_string(),
+                    on_disk: build_format_string(&info),
+                });
+            }
+            release.format.clone()
+        }
+        (true, _) => Some(build_format_string(&info)),
+        (false, _) => release.format.clone(),
     };
     // Two modes for label:
     //   trust_files = true  (per-release Refresh) — file tag wins, so
@@ -10795,6 +10838,32 @@ mod refresh_guard {
     #[test]
     fn track_total_is_capped() {
         assert_eq!(resolve_track_total(None, Some(500), 3, false, true), Some(99));
+    }
+
+    // ---- format: a codec must never overwrite a pressing ------------------
+
+    #[test]
+    fn codec_strings_are_recognised() {
+        for s in ["FLAC 16/44.1", "MP3 320", "mp3 213", "ALAC", "FLAC 24/44.1"] {
+            assert!(looks_like_codec(s), "{s:?} should read as a codec");
+        }
+    }
+
+    #[test]
+    fn pressing_strings_are_not_codecs() {
+        // The real values the audit recovered from the relays.
+        for s in [
+            "12\"", "2xLP, Album, Gat", "7\", Single, W/Lbl", "12\", Ltd, Whi",
+            "LP, Album", "12\", EP, Ltd, Num, Cle", "Cass, Mixed", "VHS, PAL",
+        ] {
+            assert!(!looks_like_codec(s), "{s:?} must not read as a codec");
+        }
+    }
+
+    #[test]
+    fn a_codec_name_inside_a_longer_word_is_not_a_codec() {
+        assert!(!looks_like_codec("Flacon"));
+        assert!(!looks_like_codec("MP3Players"));
     }
 
     // ---- the stale invariant ---------------------------------------------

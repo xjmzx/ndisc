@@ -21,6 +21,47 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.11 — 2026-09-22
+
+### Fixed — a codec could overwrite a pressing
+
+Found by the content audit on its first run, which is the point of it.
+
+`format` holds two different kinds of fact. For a **digital** release it is the
+codec of the files, and tracking disk is right — replacing an MP3 rip with a
+FLAC one should update it. For a **physical** release it is the *pressing*
+(`12", Ltd, Whi`, `2xLP, Album, Gat`, `7", Single, W/Lbl`), which is catalogue
+data about the object, usually Discogs-enriched. A codec describes the rip in
+the folder, not the record on the shelf.
+
+beta.9 guarded `title`/`artist`/`year` and classified `format` as disk-derived,
+disk-always-wins. That was wrong for the physical half of the catalogue. The
+audit found **109 of 126 physical releases** carrying a codec where a pressing
+string used to be — the same silent clobber as beta.8, one field over, and
+invisible to every check that existed before the audit.
+
+- A codec no longer overwrites a format that is not a codec. Narrow rule, no
+  new state, and digital releases still track their files.
+- On a batch scan the disagreement is reported as `format` drift instead of
+  being applied, like `title`/`artist`/`year`.
+- `looks_like_codec` is pinned by tests over the real pressing strings the
+  audit recovered, including `Cass, Mixed` and `VHS, PAL`, and rejects a codec
+  name embedded in a longer word (`Flacon`). 125 tests.
+
+**71 pressing strings were recovered** from the signed relay events. The other
+38 were clobbered before their last publish, so the pressing is gone locally
+*and* on the wire; those need re-enriching from Discogs.
+
+### Changed — years reconciled to original release
+
+Eleven releases disagreed with their published event on `year`, in both
+directions — a reissue date overwriting an original (`Head Hunters` local 1999,
+relay 1973) and the reverse (`Twoism` local 1996, relay 2013). Resolved to the
+earlier of the two as a proxy for the original release: 7 took the relay value,
+4 kept local. The proxy is not the same as the true original year, and two
+(`Stop The Panic`, `Ischemic Folks`) are flagged in case the earlier value is
+simply a bad tag.
+
 ## 0.2.0-beta.10 — 2026-09-22
 
 ### Added — published content audit
