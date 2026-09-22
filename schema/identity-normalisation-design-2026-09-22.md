@@ -133,28 +133,54 @@ genuinely distinct, and without disturbing the pinned master key.
 
 ### Tier 0 — ingest normalisation (boundary)
 
-Every string entering the DB — tag values **and filesystem paths** — is
-normalised to **NFC** at the point it is read, before it is stored or compared.
-Display and storage both use the NFC form.
+**Text** entering the DB from a tag — title, artist, album, label — is
+normalised to **NFC** at the point it is read. **Paths are not.**
 
-This is the only tier that touches a stored value, and it is safe under rule 3
-because **NFC is canonical equivalence**: it does not change the text, only its
-encoding. `Perälä` stays `Perälä`. Nothing is folded, nothing is lost, and a
-round-trip back out is the same name. Files are untouched either way — this
-normalises what ndisc *stores*, never what is on disk.
+That asymmetry is the whole of Tier 0, and getting it backwards breaks things:
 
-This is the tier that matters most for a cross-platform app, and it is
-**independent of the artist-name question**:
+- **Text → NFC, stored.** Safe under rule 3 because NFC is *canonical
+  equivalence*: it does not change the text, only its encoding. `Perälä` stays
+  `Perälä`. Nothing is folded, nothing is lost.
+- **Paths → verbatim, never normalised.** A filename on Linux is a byte string
+  with **no canonical equivalence at the filesystem layer**. The composed and
+  decomposed spellings of a name are two different files as far as `open(2)`
+  is concerned. Normalising a stored path yields a path that does not exist.
 
-> macOS APFS/HFS+ hands back **decomposed** filenames (`é` = `e` + U+0301).
-> Linux and Windows hand back **composed**. ndisc stores `file_path` in
-> SQLite. The same folder therefore does not string-compare equal between two
-> machines in the suite — and `Čechomor`, `Žagar`, `Perälä` are all in the
-> library today, with psync/gtrack moving state between boxes.
+An earlier draft of this note said "tag values **and** filesystem paths",
+which would have broken a real file in the maintainer's library:
+`/data/music/Mr. 76ix/3 (Minority of 1)/02 Wöden's Phallus.flac` is stored and
+present on disk in NFD, and ndisc opens it correctly today. Rewriting it to
+NFC on ingest would have made it unopenable. Measurement caught that; the
+principle alone did not.
 
-Recommend fixing Tier 0 **first and separately**; it is a small, contained
-change with a concrete cross-machine payoff, and it is a prerequisite for the
-tiers above it being meaningful.
+**Measured state of the library (2026-09-22):**
+
+```
+/data/music names                 27,144   of which non-NFC:  1  (that file)
+ndisc stored paths                 2,023   failing to resolve: 0
+nplay stored paths                19,152   failing to resolve: 0
+ndisc text values (artist/title/label)     non-NFC:            0
+nplay track titles                         non-NFC:            8
+```
+
+So the **path** half of Tier 0 is *latent*, not live: on one platform both
+sides hold identical bytes and everything resolves. It becomes real when the
+same library is read by ndisc on macOS (APFS hands back decomposed names) or a
+DB moves between machines. Worth doing; not urgent.
+
+The **text** half was live and is now fixed in nplay (0.2.x): eight track
+titles were stored NFD, so searching for `Começo` as typed — NFC — matched
+nothing, while `Come` matched. They also sorted and grouped apart from their
+neighbours.
+
+**Where cross-platform path comparison is genuinely needed** — "is this DB row
+the same folder the scanner just found?" — compare a *derived* NFC key and
+keep opening the file by the stored bytes. Never let the key become the path.
+
+**Search is a third case.** Both sides of a comparison are normalised at
+comparison time rather than trusting the stored form, because old rows keep
+whatever was ingested and paths are deliberately left alone. nplay does this
+in `src/lib/search.ts`.
 
 ### Tier 1 — the match key (new)
 
@@ -334,11 +360,17 @@ choices (`Tchaikovsky` / `Čajkovskij`).
 
 Local-only, so no coordinated wave and no SHA re-pin. Suggested order:
 
-1. **Tier 0 (NFC at ingest)** — smallest, highest value, cross-machine. Ship alone.
-2. **Tier 1 in ndisc** — `dup_norm` → Tier 1, label panel, search, backend sort.
+1. **Tier 0, text half** — NFC for tag text at ingest, plus normalising both
+   sides of every search comparison. **Done in nplay (2026-09-22)**; ndisc has
+   no non-NFC text today but should adopt the same helper so it does not drift
+   in from an import.
+2. **Tier 0, path half** — a derived NFC key for cross-platform folder
+   comparison, with stored paths left byte-exact. Latent; do it before ndisc
+   is first run on macOS against a shared library.
+3. **Tier 1 in ndisc** — `dup_norm` → Tier 1, label panel, search, backend sort.
    Add vectors + a Rust test mirroring the `master_key` pattern.
-3. **Tier 1 in nplay** — grouping and search. Vendor the same vectors.
-4. Revisit artist IDs on import as a separate design note.
+4. **Tier 1 in nplay** — grouping and search. Vendor the same vectors.
+5. Revisit artist IDs on import as a separate design note.
 
 Nothing here requires a data migration: the keys are derived, so a rebuild of
 the grouping is a rescan (or not even that, if the key is computed on read).
