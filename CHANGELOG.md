@@ -21,6 +21,37 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.9 — 2026-09-22
+
+### Fixed — a video-only release was never refreshed
+
+`refresh_release_inner` gave up on any folder with no audio, returning
+**before** the video count, the cover lookup and every other disk-derived
+field. A video-only release — a legitimate shape here: a VHS rip, a mix video
+— was therefore skipped by every library scan since import, and its
+`video_count` stayed frozen at whatever the initial import set.
+
+That matters because `video` is an **emitted tag**. A published video release
+could drift from its live `kind:31237` event with nothing able to detect it —
+the same silent-divergence shape as the title bug in beta.8, reached by a
+different route. Found while identifying the two releases a scan reports as
+`no audio`: *Various Artists — (Motion)* (Warp, *Artificial Intelligence:
+Motion*, one 200 MB `.mp4`) is video-only and had been inert since import.
+
+- A refresh now bails only when the folder holds **neither audio nor video**.
+  With video present it proceeds; reading tags from an empty file list yields
+  an all-`None` `DirInfo`, and absent tags are not drift.
+- `track_total` is no longer derived from disk when there is **no audio**.
+  There is no `TRACKTOTAL` tag to read, and the fallback to the present count
+  would write `0` over a real catalogue total. (Both affected releases here
+  are Discogs-linked, so the existing Discogs guard already covered them —
+  this closes the unlinked case.)
+- Both guards are pure functions (`refresh_has_nothing`, `resolve_track_total`)
+  pinned by tests and mutation-verified, as in beta.8. Suite: 115.
+
+The other `no audio` release, *VLR — CPU Mix*, is a cassette whose folder holds
+only artwork. Correctly reported; nothing to fix.
+
 ## 0.2.0-beta.8 — 2026-09-22
 
 ### Fixed — a library scan could silently overwrite curated metadata

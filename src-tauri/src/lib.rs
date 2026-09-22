@@ -2281,6 +2281,33 @@ pub fn resolve_curated_year(
     }
 }
 
+/// Whether a refresh should give up on a folder: nothing playable of any kind.
+/// Audio-less is NOT the same as empty — see the call site.
+pub fn refresh_has_nothing(has_audio: bool, has_video: bool) -> bool {
+    !has_audio && !has_video
+}
+
+/// Resolve `track_total` on a refresh.
+///
+/// Two things protect the stored value:
+/// - **Discogs owns it** once a release is linked (Discogs = canonical, disk =
+///   present), so an enriched total is never overwritten by a local tag.
+/// - **No audio, no answer.** With no audio files there is no TRACKTOTAL tag to
+///   read, and falling back to the present count would write 0 over a real
+///   catalogue total — which is exactly what a video-only release would hit.
+pub fn resolve_track_total(
+    db: Option<i64>,
+    tag_total: Option<i64>,
+    present: i64,
+    discogs_linked: bool,
+    has_audio: bool,
+) -> Option<i64> {
+    if discogs_linked || !has_audio {
+        return db;
+    }
+    Some(tag_total.unwrap_or(present).min(99))
+}
+
 /// Fields this refresh wrote that are ALSO carried in the kind:31237 event.
 /// Any of them changing makes a published release's live event stale — the
 /// invariant `mark_unpublished` documents. The refresh path used to exempt
@@ -2348,7 +2375,20 @@ fn refresh_release_inner(
     // exactly the folder's own audio for a flat release.
     let audio_files = gather_release_audio(&dir);
 
-    if audio_files.is_empty() {
+    // A video-only release is a legitimate shape in this catalogue (a VHS rip,
+    // a mix video). Bailing on "no audio" alone returned BEFORE the video
+    // count, the cover lookup and everything else — so such a release was
+    // never refreshed by any scan, and `video_count` stayed frozen at whatever
+    // import set it. `video` is an emitted tag, so a published video release
+    // could silently drift from its live event with nothing able to detect it.
+    //
+    // Reading tags from an empty file list simply yields an all-None DirInfo,
+    // and absent tags are not drift, so the rest of the function is safe to
+    // run. Bail only when the folder holds neither.
+    let has_video = count_media_in_dir(&dir.to_string_lossy())
+        .map(|(_, v)| v > 0)
+        .unwrap_or(false);
+    if refresh_has_nothing(!audio_files.is_empty(), has_video) {
         return Ok(RefreshResult {
             status: "no_audio".into(),
             changes: vec![],
@@ -2434,11 +2474,13 @@ fn refresh_release_inner(
     // must not overwrite the enriched track_total with the local tag value
     // (that's the dual-source guard — Discogs = canonical, disk = present).
     // Present count still updates from disk; disc_total isn't touched here.
-    let new_track_total = if release.discogs_id.is_some() {
-        release.track_total
-    } else {
-        Some(info.track_total.unwrap_or(present).min(99))
-    };
+    let new_track_total = resolve_track_total(
+        release.track_total,
+        info.track_total,
+        present,
+        release.discogs_id.is_some(),
+        !audio_files.is_empty(),
+    );
 
     // Audio-visual presence — count recognised video files in the same dir, so
     // a Refresh (or the bulk Scan-library-changes pass) picks up videos added
@@ -10382,6 +10424,61 @@ mod refresh_guard {
         let r = resolve_curated_year(Some(1994), Some(2011), true);
         assert_eq!(r.value, Some(2011));
         assert!(r.drift.is_none());
+    }
+
+    // ---- video-only releases ---------------------------------------------
+
+    #[test]
+    fn a_video_only_release_is_still_refreshed() {
+        // The Warp "Artificial Intelligence (Motion)" case: one .mp4, no audio.
+        // Bailing here froze video_count — an EMITTED tag — at whatever import
+        // set it, on a published release, undetectably.
+        assert!(
+            !refresh_has_nothing(false, true),
+            "a folder with video but no audio must still be refreshed"
+        );
+    }
+
+    #[test]
+    fn a_folder_with_neither_is_given_up_on() {
+        assert!(refresh_has_nothing(false, false));
+    }
+
+    #[test]
+    fn audio_is_enough_on_its_own() {
+        assert!(!refresh_has_nothing(true, false));
+        assert!(!refresh_has_nothing(true, true));
+    }
+
+    // ---- track_total ------------------------------------------------------
+
+    #[test]
+    fn no_audio_never_writes_zero_over_a_real_total() {
+        // A video-only release has no TRACKTOTAL to read; the present count is
+        // 0, and writing that over a catalogue total would be data loss.
+        assert_eq!(
+            resolve_track_total(Some(10), None, 0, false, false),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn discogs_still_owns_the_total_when_linked() {
+        assert_eq!(
+            resolve_track_total(Some(10), Some(3), 3, true, true),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn an_unlinked_release_takes_the_tag_total_then_the_present_count() {
+        assert_eq!(resolve_track_total(Some(1), Some(12), 9, false, true), Some(12));
+        assert_eq!(resolve_track_total(Some(1), None, 9, false, true), Some(9));
+    }
+
+    #[test]
+    fn track_total_is_capped() {
+        assert_eq!(resolve_track_total(None, Some(500), 3, false, true), Some(99));
     }
 
     // ---- the stale invariant ---------------------------------------------
