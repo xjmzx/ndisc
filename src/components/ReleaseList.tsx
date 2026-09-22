@@ -25,6 +25,7 @@ import {
   Tag,
   Wand2,
   type LucideIcon,
+  FileWarning,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -42,6 +43,7 @@ import {
   purgeRelayEvents,
   reconcileLibrary,
   reconcilePublished,
+  auditPublishedContent,
   reconcilePublishedCovers,
   rescanLocalCovers,
   scanLibraryChanges,
@@ -65,6 +67,7 @@ import {
   type PublishedCoverReconcile,
   type PurgeSummary,
   type ReconcileSummary,
+  type ContentAudit,
   type RelayAudit,
   type Release,
   type RescanSummary,
@@ -76,6 +79,7 @@ import type { ReleaseDrift } from "../lib/tauri";
 import { withoutDismissed } from "../lib/driftDismiss";
 import { DuplicatesDialog } from "./DuplicatesDialog";
 import { DriftDialog } from "./DriftDialog";
+import { ContentAuditDialog } from "./ContentAuditDialog";
 import {
   SOURCE_PLATFORMS,
   releaseSourceColor,
@@ -228,6 +232,7 @@ export function ReleaseList({
     | "scan"
     | "reconcile"
     | "reconcileDisk"
+    | "contentAudit"
     | "audit"
     | "purge"
     | "republish"
@@ -238,6 +243,8 @@ export function ReleaseList({
   // Rows for the drift review dialog, captured from the last scan summary.
   // null = dialog closed.
   const [driftRows, setDriftRows] = useState<ReleaseDrift[] | null>(null);
+  // The last content audit, when its dialog is open. null = closed.
+  const [auditOpen, setAuditOpen] = useState<ContentAudit | null>(null);
   // Bumped whenever a dismissal is written, so the banner re-counts.
   const [driftTick, setDriftTick] = useState(0);
   const [opSummary, setOpSummary] = useState<
@@ -246,6 +253,7 @@ export function ReleaseList({
     | { kind: "scan"; data: LibraryScanSummary }
     | { kind: "reconcile"; data: ReconcileSummary }
     | { kind: "reconcileDisk"; data: LibraryReconcileSummary }
+    | { kind: "contentAudit"; data: ContentAudit }
     | { kind: "audit"; data: RelayAudit }
     | { kind: "purge"; data: PurgeSummary }
     | { kind: "manifest"; data: ManifestSummary }
@@ -445,6 +453,35 @@ export function ReleaseList({
       setError(null);
       try {
         setOpSummary({ kind: "manifest", data: await exportPublishedManifest() });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
+
+    // The content audit — the only check that reads what the relays are
+    // actually SERVING and compares it with the row. publish_state is a flag
+    // and the relay audit checks existence/timestamps; neither would notice a
+    // release whose content changed without anything marking it stale.
+    if (kind === "contentAudit") {
+      const yes = await ask(
+        "Fetch every published release from the configured relays and " +
+          "compare the served event, tag by tag, with what this catalogue " +
+          "would emit today?\n\n" +
+          "Read-only — nothing is signed, sent, or written. Reports which " +
+          "releases the wire disagrees with, and on which tags.",
+        { title: "Audit published content", kind: "info" },
+      );
+      if (!yes) return;
+      setActiveOp("contentAudit");
+      setOpSummary(null);
+      setError(null);
+      try {
+        const data = await auditPublishedContent(relays);
+        setOpSummary({ kind: "contentAudit", data });
+        if (data.drifted.length > 0) setAuditOpen(data);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -1190,6 +1227,17 @@ export function ReleaseList({
                 onClick={setLibraryFolder}
               />
               <MaintMenuItem
+                icon={<FileWarning size={14} />}
+                label="Audit published content"
+                detail="Compare live events with the catalogue, tag by tag"
+                active={activeOp === "contentAudit"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("contentAudit");
+                }}
+              />
+              <MaintMenuItem
                 icon={<SatelliteDish size={14} />}
                 label="Reconcile published state"
                 detail="Backfill publish markers from relays"
@@ -1261,6 +1309,10 @@ export function ReleaseList({
             reload();
           }}
         />
+      )}
+
+      {auditOpen && (
+        <ContentAuditDialog audit={auditOpen} onClose={() => setAuditOpen(null)} />
       )}
 
       {driftRows && (
@@ -1477,6 +1529,39 @@ export function ReleaseList({
                   <span className="text-muted">
                     no audio{" "}
                     <span className="font-mono">{opSummary.data.noAudio}</span>
+                  </span>
+                )}
+              </>
+            )}
+            {opSummary.kind === "contentAudit" && (
+              <>
+                <span className="text-muted">
+                  checked{" "}
+                  <span className="font-mono">{opSummary.data.found}</span>
+                </span>
+                <span className="text-ok">
+                  match{" "}
+                  <span className="font-mono">{opSummary.data.matching}</span>
+                </span>
+                {opSummary.data.drifted.length > 0 && (
+                  <button
+                    onClick={() => setAuditOpen(opSummary.data)}
+                    className="text-warn underline decoration-dotted underline-offset-2
+                      cursor-pointer hover:text-fg hover:decoration-solid"
+                    title="The relays are serving something other than what this catalogue would emit — click to review."
+                  >
+                    drifted{" "}
+                    <span className="font-mono">
+                      {opSummary.data.drifted.length}
+                    </span>
+                  </button>
+                )}
+                {opSummary.data.absent.length > 0 && (
+                  <span className="text-alert">
+                    absent{" "}
+                    <span className="font-mono">
+                      {opSummary.data.absent.length}
+                    </span>
                   </span>
                 )}
               </>

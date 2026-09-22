@@ -59,18 +59,58 @@ at all: see "Enforcement" below.
    *is*: `What Time Is Love? (Live At Trancentral)`, `Peel Session`. Contrast
    with rule 3 — `(Remastered)` is the same recording, differently mastered.
 
-7. **Disk is the reference for casing.** Where the local catalogue and a
+7. **A needed marker is parenthesised.** When rule 5 or 6 means a format or
+   version marker has to stay, it goes in **parentheses**: `Moog Acid (EP)`,
+   `Democracy (single)`, `What Time Is Love? (Live At Trancentral)`. A marker
+   attached with ` - ` is the Apple Music import shape and is always
+   **questioned** — either it should be dropped under rule 3, or kept under
+   rule 5 and re-formed as parentheses. `Skeng - Single (Autechre Dub)` became
+   `Skeng (Autechre Dub)`; `Split - EP 2` became `Split 2`.
+
+8. **`EP`, not `E.P.`** — one form chosen, no dots. Decided on the catalogue's
+   own evidence: 74 titles already used bare `EP` against 6 using `E.P.`. The
+   six were normalised on 2026-09-22.
+
+9. **Two names are joined with a spaced solidus, ` / `.** Splits and A/B
+   pairings put both names in the field they belong to — both artists in
+   `artist`, both sides in `title`: `Kyuss / Wool — Split`,
+   `Yunx / Datathief — Split`, `Lunar Passport / Forest Communication`.
+   Established by 83 uses against 7 unspaced. An unspaced slash survives only
+   where it is a compact **identifier** rather than a separator —
+   `dc07/dc08/dc09`, `(Federspiel/Stuebi)` — and that distinction is a
+   judgement call, not a rule.
+
+10. **Disk is the reference for casing.** Where the local catalogue and a
    published event differ only in capitalisation or punctuation, the local
    value wins and the event is republished. The local value is what the file
    tags carry, and the files are the personal database of record.
 
+## On dashes — there are none
+
+Worth stating plainly, because it is easy to misread: **the catalogue contains
+no em dashes and essentially no en dashes.** A survey of every `artist` and
+`title` on 2026-09-22 found:
+
+```
+128  -  U+002D  HYPHEN-MINUS     (inside names: μ-Ziq, Hi-Fi, D Funk)
+ 90  /  U+002F  SOLIDUS          (joining two names)
+  1  –  U+2013  EN DASH          (Philip Glass – Valentina Lisitsa)
+  0  —  U+2014  EM DASH
+```
+
+The ` — ` that appears in reports and tooling output is a **display separator
+between artist and title**, generated for reading. It is not in the data and
+must never be typed into a field.
+
+So the working rule is simpler than the em/en question suggests: **U+002D
+inside a name, ` / ` between two names, and nothing else.** The lone en dash is
+an inherited artist name, left alone under rule 10.
+
 ## Open
 
-- **`EP` vs `E.P.`** — no consensus. Evidence as of 2026-09-22: the catalogue
-  has **74** titles using bare `EP` and **6** using `E.P.`, two of which
-  (`Thicc! E.P.`, `Anti E.P.`) were deliberately set in the 2026-09-16 pass.
-  Consistency argues for `EP`; the deliberate edits argue the other way for
-  those six. Unresolved.
+- The one unspaced-slash judgement call: is `dc07/dc08/dc09` an identifier
+  (leave) or three joined names (space it)? Same question for
+  `(Federspiel/Stuebi)`. Left as identifiers for now.
 
 ## Enforcement
 

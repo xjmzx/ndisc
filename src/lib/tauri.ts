@@ -516,6 +516,44 @@ export async function rescanLocalCovers(): Promise<RescanSummary> {
 
 // --- Interop: refresh from disk + sync cover to disk ------------------------
 
+// --- Content audit: does the wire still say what the catalogue says? -------
+// publish_state is a flag and the relay audit checks existence + timestamps;
+// neither reads the served event's CONTENT. This is the check that catches a
+// release whose row changed without anything marking it stale.
+
+export interface TagDiff {
+  tag: string;
+  /** What the relays serve. null = absent on the wire. */
+  published: string | null;
+  /** What we would emit from the current row. null = we would not emit it. */
+  local: string | null;
+}
+
+export interface ContentDrift {
+  id: number;
+  artist: string;
+  title: string;
+  publishedAt: number;
+  diffs: TagDiff[];
+}
+
+export interface ContentAudit {
+  expected: number;
+  found: number;
+  matching: number;
+  drifted: ContentDrift[];
+  absent: number[];
+  relaysChecked: string[];
+  errors: RelayError[];
+  checkedAt: number;
+}
+
+export async function auditPublishedContent(
+  relays: string[],
+): Promise<ContentAudit> {
+  return invoke<ContentAudit>("audit_published_content", { relays });
+}
+
 export interface RefreshResult {
   status: string;
   changes: string[];

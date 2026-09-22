@@ -4243,7 +4243,15 @@ fn push_tag(tags: &mut Vec<Tag>, name: &str, value: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
+/// The tag set and content a `kind:31237` for this release WOULD carry.
+///
+/// Split out of `release_event` so the content audit can compute the expected
+/// wire form without signing or publishing. Both go through this, which is the
+/// point: an audit that built its own idea of the tags could drift from the
+/// emitter and start reporting phantom differences — or, worse, miss real ones.
+/// There is exactly one definition of "what this release looks like on the
+/// wire", and it lives here.
+fn release_wire_form(r: &Release) -> Result<(Vec<Tag>, String), String> {
     let d = release_d_tag(r.id.unwrap_or_default());
     let mut tags: Vec<Tag> = Vec::new();
     push_tag(&mut tags, "d", &d)?;
@@ -4326,6 +4334,11 @@ fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
     }
 
     let content = r.notes.clone().unwrap_or_default();
+    Ok((tags, content))
+}
+
+fn release_event(keys: &Keys, r: &Release) -> Result<Event, String> {
+    let (tags, content) = release_wire_form(r)?;
     EventBuilder::new(Kind::Custom(KIND_RELEASE), content)
         .tags(tags)
         .sign_with_keys(keys)
@@ -6182,6 +6195,224 @@ pub struct PurgeSummary {
     /// Ids that turned out to be legitimately published and were left alone.
     pub skipped: usize,
     pub errors: Vec<RelayError>,
+}
+
+// ---------------------------------------------------------------------------
+// Content audit: does the wire still say what the catalogue says?
+// ---------------------------------------------------------------------------
+// The gap this closes. `publish_state` is a FLAG, set by whoever last touched
+// the row; the relay audit checks existence and timestamps. Neither reads the
+// served event's content. So a code path that mutates an emitted field without
+// calling `mark_unpublished` leaves a release reading "published", its event
+// newer than `last_published_at`, and its content silently wrong — which is
+// exactly what happened for six days in September 2026 (see CHANGELOG
+// 0.2.0-beta.8). Every existing check passed the whole time.
+//
+// This audit asks the only question that catches that class: for each release
+// the DB believes is published, does the event the relays are serving carry
+// the tags we would emit today? It derives "what we would emit" from
+// `release_wire_form` — the same function `release_event` signs — so the audit
+// cannot drift from the emitter.
+
+/// One emitted tag whose served value differs from what we would emit now.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDiff {
+    pub tag: String,
+    /// What the relays are serving. None = the tag is absent on the wire.
+    pub published: Option<String>,
+    /// What we would emit from the current row. None = we would not emit it.
+    pub local: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentDrift {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    /// Newest `created_at` seen for this coordinate, across all relays.
+    pub published_at: i64,
+    pub diffs: Vec<TagDiff>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentAudit {
+    /// Releases the DB believes are published.
+    pub expected: usize,
+    /// Of those, found on at least one relay.
+    pub found: usize,
+    /// Found and byte-identical in every emitted tag.
+    pub matching: usize,
+    /// Found, but the wire disagrees with the row. THE POINT OF THIS AUDIT.
+    pub drifted: Vec<ContentDrift>,
+    /// Believed published, but no relay is serving it.
+    pub absent: Vec<i64>,
+    pub relays_checked: Vec<String>,
+    pub errors: Vec<RelayError>,
+    pub checked_at: i64,
+}
+
+/// Compare every published release's live event against its current row.
+///
+/// Read-only: no signing, no publishing, nothing written to the DB. It reports
+/// what disagrees and leaves the decision to the operator, the same shape as
+/// the scan's drift review.
+#[tauri::command]
+async fn audit_published_content(
+    app: tauri::AppHandle,
+    relays: Vec<String>,
+) -> Result<ContentAudit, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    // Snapshot the rows we expect to be live, and the wire form each should
+    // have. Done before any await — a rusqlite Connection is not Send.
+    struct Expected {
+        id: i64,
+        artist: String,
+        title: String,
+        want: BTreeMap<String, String>,
+    }
+    let expected: Vec<Expected> = {
+        let conn = open(&app)?;
+        let sql = format!(
+            "SELECT {} FROM releases WHERE publish_state = 'published'",
+            RELEASE_SELECT_COLS
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], row_to_release)
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for r in rows {
+            let r = r.map_err(|e| e.to_string())?;
+            let Some(id) = r.id else { continue };
+            let (tags, _content) = release_wire_form(&r)?;
+            out.push(Expected {
+                id,
+                artist: r.artist.clone(),
+                title: r.title.clone(),
+                want: tag_map(&tags),
+            });
+        }
+        out
+    };
+
+    // Newest event per d-tag across every relay. A coordinate can differ
+    // between relays; the newest is what a consumer resolves to.
+    let mut live: HashMap<String, Event> = HashMap::new();
+    let mut errors: Vec<RelayError> = Vec::new();
+    for relay in &relays {
+        match fetch_all_from_relay(relay, &keys, vec![Kind::Custom(KIND_RELEASE)]).await {
+            Ok(events) => {
+                for ev in events {
+                    let Some(d) = tag_value(&ev, "d").map(str::to_string) else {
+                        continue;
+                    };
+                    let newer = live
+                        .get(&d)
+                        .map(|e| ev.created_at > e.created_at)
+                        .unwrap_or(true);
+                    if newer {
+                        live.insert(d, ev);
+                    }
+                }
+            }
+            Err(e) => errors.push(RelayError {
+                relay: relay.clone(),
+                error: e,
+            }),
+        }
+    }
+
+    let mut matching = 0usize;
+    let mut found = 0usize;
+    let mut drifted: Vec<ContentDrift> = Vec::new();
+    let mut absent: Vec<i64> = Vec::new();
+
+    for e in &expected {
+        let d = release_d_tag(e.id);
+        let Some(ev) = live.get(&d) else {
+            absent.push(e.id);
+            continue;
+        };
+        found += 1;
+        let have = tag_map(ev.tags.as_slice());
+        let diffs = diff_tag_maps(&have, &e.want);
+        if diffs.is_empty() {
+            matching += 1;
+        } else {
+            drifted.push(ContentDrift {
+                id: e.id,
+                artist: e.artist.clone(),
+                title: e.title.clone(),
+                published_at: ev.created_at.as_u64() as i64,
+                diffs,
+            });
+        }
+    }
+    drifted.sort_by(|a, b| a.artist.cmp(&b.artist).then(a.title.cmp(&b.title)));
+    absent.sort_unstable();
+
+    Ok(ContentAudit {
+        expected: expected.len(),
+        found,
+        matching,
+        drifted,
+        absent,
+        relays_checked: relays,
+        errors,
+        checked_at: now_secs(),
+    })
+}
+
+/// Flatten a tag list to name -> value for comparison.
+///
+/// Repeatable tags (`genre`, and `i` on some releases) are joined with `\u{1f}`
+/// so ORDER IS PRESERVED — `genre` slot order is emission priority and a
+/// reordering is a real difference, not a cosmetic one. The `d` tag is dropped:
+/// it is the coordinate, so it is equal by construction and would only add
+/// noise.
+fn tag_map(tags: &[Tag]) -> BTreeMap<String, String> {
+    let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for t in tags {
+        let v = t.clone().to_vec();
+        if v.len() < 2 || v[0] == "d" {
+            continue;
+        }
+        m.entry(v[0].clone()).or_default().push(v[1].clone());
+    }
+    m.into_iter()
+        .map(|(k, vs)| (k, vs.join("\u{1f}")))
+        .collect()
+}
+
+/// Tags present in one map and not the other, or present in both with
+/// different values. Sorted by tag name so output is stable.
+fn diff_tag_maps(
+    published: &BTreeMap<String, String>,
+    local: &BTreeMap<String, String>,
+) -> Vec<TagDiff> {
+    let mut names: Vec<&String> = published.keys().chain(local.keys()).collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+        .into_iter()
+        .filter_map(|n| {
+            let p = published.get(n);
+            let l = local.get(n);
+            (p != l).then(|| TagDiff {
+                tag: n.clone(),
+                published: p.cloned(),
+                local: l.cloned(),
+            })
+        })
+        .collect()
 }
 
 /// Every event of the given kinds that a single relay holds for `pubkey`.
@@ -8794,6 +9025,7 @@ pub fn run() {
             reconcile_published,
             audit_relays,
             purge_relay_events,
+            audit_published_content,
             check_relays,
             list_feed_drafts,
             save_feed_draft,
@@ -10313,6 +10545,90 @@ mod published_manifest_shape {
             v.get("ndiscPubkey").is_none(),
             "ndiscPubkey must be omitted when no key is stored"
         );
+    }
+}
+
+#[cfg(test)]
+mod content_audit {
+    use super::*;
+
+    fn m(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn identical_tag_sets_report_nothing() {
+        let a = m(&[("title", "Grush"), ("artist", "\u{3bc}-Ziq")]);
+        assert!(diff_tag_maps(&a, &a).is_empty());
+    }
+
+    #[test]
+    fn a_changed_value_is_reported_both_ways() {
+        // The September case: the wire kept the curated title, the row was
+        // overwritten from the file tags.
+        let wire = m(&[("title", "Solo Piano")]);
+        let local = m(&[("title", "Solo Piano (Deluxe Version)")]);
+        let d = diff_tag_maps(&wire, &local);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].tag, "title");
+        assert_eq!(d[0].published.as_deref(), Some("Solo Piano"));
+        assert_eq!(d[0].local.as_deref(), Some("Solo Piano (Deluxe Version)"));
+    }
+
+    #[test]
+    fn a_tag_added_locally_is_reported_with_no_published_side() {
+        let d = diff_tag_maps(&m(&[]), &m(&[("video", "1")]));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].published, None);
+        assert_eq!(d[0].local.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn a_tag_dropped_locally_is_reported_with_no_local_side() {
+        let d = diff_tag_maps(&m(&[("label", "Planet \u{3bc}")]), &m(&[]));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].published.as_deref(), Some("Planet \u{3bc}"));
+        assert_eq!(d[0].local, None);
+    }
+
+    #[test]
+    fn the_d_tag_is_not_compared() {
+        // It is the coordinate: equal by construction, and noise in a diff.
+        let t = vec![
+            Tag::parse(["d", "disco-vault:1"]).unwrap(),
+            Tag::parse(["title", "X"]).unwrap(),
+        ];
+        let got = tag_map(&t);
+        assert!(!got.contains_key("d"));
+        assert_eq!(got.get("title").map(String::as_str), Some("X"));
+    }
+
+    #[test]
+    fn repeated_tags_keep_their_order() {
+        // `genre` slot order is emission priority — a reordering IS a change.
+        let a = vec![
+            Tag::parse(["genre", "electronic"]).unwrap(),
+            Tag::parse(["genre", "techno"]).unwrap(),
+        ];
+        let b = vec![
+            Tag::parse(["genre", "techno"]).unwrap(),
+            Tag::parse(["genre", "electronic"]).unwrap(),
+        ];
+        assert!(
+            !diff_tag_maps(&tag_map(&a), &tag_map(&b)).is_empty(),
+            "reordered genre slots must be reported, not silently equal"
+        );
+    }
+
+    #[test]
+    fn a_homoglyph_difference_is_reported() {
+        // U+00B5 vs U+03BC render identically; the audit must not miss it.
+        let wire = m(&[("artist", "\u{b5}-Ziq")]);
+        let local = m(&[("artist", "\u{3bc}-Ziq")]);
+        assert_eq!(diff_tag_maps(&wire, &local).len(), 1);
     }
 }
 

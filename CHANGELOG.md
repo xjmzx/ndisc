@@ -21,6 +21,54 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.10 — 2026-09-22
+
+### Added — published content audit
+
+**Maintenance → Audit published content.** Fetches every published release
+from the configured relays and compares the served event, tag by tag, against
+what the catalogue would emit today. Read-only: nothing signed, sent, or
+written.
+
+This closes the gap that let beta.8's bug hide for six days. `publish_state` is
+a *flag*, set by whoever last touched the row. The relay audit checks existence
+and timestamps (`stale` is literally `event.created_at >= last_published_at`).
+**Neither reads the served event's content.** So a code path that changed an
+emitted field without calling `mark_unpublished` left a release reading
+`published`, with an event newer than its last publish, and content silently
+wrong — and every existing check passed, correctly, the whole time. They were
+answering "is it there, and recent enough?", never "does it still say the same
+thing?".
+
+- The audit derives the expected wire form from **`release_wire_form`**, split
+  out of `release_event` so the emitter and the audit share one definition. An
+  audit that built its own idea of the tags could drift from the emitter and
+  report phantom differences, or miss real ones.
+- Reports per release which tags differ, with the served value beside the one
+  we would emit. Repeatable tags keep their order (`genre` slot order is
+  emission priority, so a reordering is a real difference). The `d` tag is
+  excluded — it is the coordinate, equal by construction.
+- Also reports releases the DB believes are published that no relay serves.
+- `mod content_audit` pins the comparison, including the homoglyph case
+  (U+00B5 vs U+03BC render identically and must still be reported). 122 tests.
+
+Found on first run against the live catalogue: **275 published releases whose
+titles no longer matched**, restored from the signed events.
+
+### Changed — title styling applied catalogue-wide
+
+Recorded in `schema/title-styling-2026-09-22.md` and applied: format and
+edition suffixes dropped (22 titles), `E.P.` normalised to `EP` (6), needed
+markers re-formed as parentheses (`Moog Acid (EP)`, `Skeng (Autechre Dub)`,
+`Split 2`), the last Discogs disambiguator dropped (`Fah (2)`), split releases
+joined with a spaced solidus (`Kyuss / Wool — Split`), and one genuine data
+error corrected (`The Worlds Is A Ghetto` → `The World Is a Ghetto`). Titles
+and file tags were moved together every time, so a rescan cannot revert them.
+
+The collision rule — a suffix stays exactly when the stripped title already
+exists for that artist — is derived from the catalogue rather than an
+allowlist. Run blind over 2,040 releases it rediscovered both known cases.
+
 ## 0.2.0-beta.9 — 2026-09-22
 
 ### Fixed — a video-only release was never refreshed
