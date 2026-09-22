@@ -21,6 +21,24 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.2.0-beta.14 — 2026-09-22
+
+### Fixed — enrich left releases in a publish half-state
+
+`apply_enrichment` cleared `last_published_at` and `last_published_naddr` when
+an emitted field changed, but **not `publish_state`**. `mark_unpublished` sets
+all three, and the app reads both markers: `BatchEditView` keys off
+`lastPublishedNaddr`, while `MergeConfirm` and the content audit key off
+`publish_state`. A release could therefore read `published` with no naddr and
+be treated as published or unpublished depending on which screen you were on.
+
+Surfaced by the pressing repair: all 38 repaired releases landed in exactly
+that state — `format` changed, markers cleared, `publish_state` still
+`published`. Enrich now moves `publish_state` to `stale` with the markers.
+
+The 38 already in the half-state were corrected in place; a catalogue-wide
+check now shows 0 rows published-with-no-naddr.
+
 ## 0.2.0-beta.13 — 2026-09-22
 
 ### Fixed — the pressing repair silently did nothing

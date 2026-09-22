@@ -8584,6 +8584,11 @@ fn apply_enrichment(
     let meta_changed = c_cat || c_lab || c_cn || c_co || c_fmt;
     let clear_pub = (track_changed || disc_changed || meta_changed) && published.is_some();
 
+    // Moves publish_state as well as the markers. mark_unpublished sets all
+    // three, and the app reads both: BatchEditView keys off lastPublishedNaddr
+    // while MergeConfirm and the content audit key off publish_state. Clearing
+    // only the markers left a release reading published with no naddr — the
+    // repaired pressings landed in exactly that half-state.
     conn.execute(
         "UPDATE releases SET
              track_total = COALESCE(?1, track_total),
@@ -8597,6 +8602,9 @@ fn apply_enrichment(
                  CASE WHEN ?8 THEN NULL ELSE last_published_at END,
              last_published_naddr =
                  CASE WHEN ?8 THEN NULL ELSE last_published_naddr END,
+             publish_state =
+                 CASE WHEN ?8 AND publish_state = 'published' THEN 'stale'
+                      ELSE publish_state END,
              updated_at = strftime('%s','now')
          WHERE id = ?9",
         params![
