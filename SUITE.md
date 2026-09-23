@@ -451,6 +451,19 @@ transparent canvas corners.
   | iOS / Android | `ios/` · `android/` | as `tauri icon` writes them | unchanged | see the full-bleed square note below |
   | in-app / web | `icon.svg` · `public/icon.svg` | the master, uncropped | 80.5% | the source of truth; never cropped in the repo |
 
+  **`public/icon.svg` is a second copy, and `make icons` must write it.** It is
+  the webview favicon — `index.html` carries
+  `<link rel="icon" type="image/svg+xml" href="/icon.svg">` — so it is *not*
+  produced by `tauri icon`, and nothing else keeps it in step. Every repo that
+  has one ends its `icons` target with `cp icon.svg public/icon.svg`. Without
+  that line the two drift in the worst possible way: the raster set rebuilds so
+  the dock icon updates, while the window title bar keeps the old mark — exactly
+  what psync shipped in v0.2.10 (fixed in v0.2.11, with the line added to
+  gtrack, nchat and nping at the same time; uchar already had it). Verified
+  2026-09-23, the repos carrying a `public/icon.svg` are psync, gtrack, nchat,
+  nping and uchar. **A new Tauri app scaffolds with one — add the line when the
+  repo is created.**
+
   **Only the `.icns` and the mobile sets keep the grid margin.** A change to one
   platform's framing must not move another's: the Linux crop and the Windows
   `.ico` are written *after* `tauri icon` in the same target, from a separate
