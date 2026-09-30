@@ -8,7 +8,7 @@ and social layer. Built by **xjmzx** (`github.com/xjmzx/*`).
 
 This is the **canonical hub document**. It holds the material shared across all
 apps: the roster, the architecture conventions, the Nostr wire contract, the
-design language, and the roadmap. Each app also ships its own
+remote signer, the design language, and the roadmap. Each app also ships its own
 `<app>-introduction.md` covering its specifics and linking back here.
 
 ---
@@ -85,6 +85,8 @@ as a convenience, never the record.
 | **nview** | Mobile viewer (read + react) | Capacitor · React | Reads releases/labels/feed; reacts via NIP-46 |
 | **nping** | Nostr relay connectivity tester | Tauri 2 · React | No keys — tests relays |
 | **nchat** | Private direct messages | Tauri 2 · React | NIP-17 gift-wrapped DMs; whitelist-only |
+| **nsign** | The suite's remote signer (headless daemon) | Rust · rust-nostr | Holds the key; answers NIP-46; asks a person via the approval channel |
+| **nbridge** | Relay viewer + the signer's **monitor** | SwiftUI (macOS) · native per platform | Shows signer traffic; approves or denies requests; holds its own key, never the signer's |
 
 `ndisc` is the authoritative publisher; everything else reads from and/or reacts
 to the data it emits. `nchat` is in the suite because it is where the suite's
@@ -170,7 +172,8 @@ Worth knowing before either app grows a "change library location" feature: for
   webview. (Web Audio is also muted on this stack; short clips elsewhere use an
   `HTMLMediaElement`.)
 - **Signing key** in the OS keyring for local-signer apps (`ndisc`, `ntree`,
-  `nsmpl`, `nchat`); **NIP-46 remote bunker** for `nview`; none for
+  `nsmpl`, `nchat`); **NIP-46 remote signer** (the suite's own `nsign`, see
+  *The remote signer*) for `nview` and the `glmps` web logins; none for
   `nplay`/`nping`.
 - **Dev/install isolation** via `cfg(debug_assertions)` — debug builds use
   `*-dev` DB/config filenames and a distinct keyring service, so `make dev`
@@ -394,7 +397,7 @@ decides.
 
 **Signing paths.** Local `nsec` in the OS keyring → `ndisc`, `ntree`, `nsmpl`,
 `nchat`.
-Remote NIP-46 bunker → `nview`. No keys (read-only / connectivity only) →
+Remote NIP-46 signer (`nsign`) → `nview`, `glmps`. No keys (read-only / connectivity only) →
 `nplay`, `nping`. **One key per person (decided 2026-07-19):** the desktop tools
 sign with the **same** `nsec` (one person = one `npub`) so "my clips/samples"
 reconciles under a single author pubkey. Pasting in / switching between multiple
@@ -404,6 +407,129 @@ correspondent list mixes people with bots, and keeping the key that signs an
 alert separate from the one that signs a personal message is the point of the
 app. The rule is about reconciling *authored catalogue data* under one pubkey —
 which `nchat` publishes none of.
+
+---
+
+## The remote signer (2026-09-28 →)
+
+The suite's key can live in one place that every platform reaches the same way:
+**`nsign`**, a small headless Rust daemon that holds the key and answers NIP-46
+requests, and **`nbridge`**, the monitor on each desktop that shows what the signer
+does and approves what an app's permissions don't cover. Live since 2026-09-29:
+nview on iPhone, Android and iPad, and the glmps sites, sign through it. The build
+log and nbridge's side are in `macos-node/nbridge/docs/DIRECTION.md`; the approval
+wire format is `macos-node/nbridge/spec/approval-v1.md`.
+
+**Who signs how.** Mobile signs only through the signer: iOS can't keep a socket
+open in the background, and a key on a phone is the hardest one to manage.
+**Desktop apps keep their own OS-keyring key** (decided 2026-09-29) — ndisc,
+nsmpl, ntree, ntune and nchat are not moved onto the signer; revisit only if one of
+them ever needs what the signer adds. Web pages log in with NIP-07, or with
+`bunker://` where built (glmps).
+
+### Invariants
+
+These hold whatever gets built, on every platform.
+
+1. **The link is Nostr itself.** Signer ⇄ app and signer ⇄ monitor travel as
+   encrypted events over our relays (NIP-46, NIP-44). No private HTTP API.
+2. **Every format is written down once, with test vectors** — one reference spec,
+   vendored copies, a test in each implementation that fails on drift. The same
+   pattern as `master-key.vectors.json`.
+3. **One signing function in each app, two back ends:** the local keyring key or
+   the remote signer. Switching is a setting, not a rewrite.
+4. **Mobile signs only through the remote signer.**
+5. **The monitor never holds the signing key.** It has its own, and the signer
+   encrypts approval requests to it.
+
+### Decisions
+
+| | Decision |
+|---|---|
+| Signer | Our own daemon, `nsign` (xjmzx, private), on rust-nostr. Not off-the-shelf bunker software: the approval flow and the log are ours to shape. rust-nostr's own nostr-connect signer was ruled out (synchronous yes/no, reusable secret, silent on unknown methods). |
+| Monitors | `nbridge` on each platform, native per platform: SwiftUI on macOS (`macos-node/nbridge`), its own xjmzx repo on Linux. iOS and Android possibly later; Windows not planned. |
+| Shared core | rust-nostr everywhere — the crate in nsign and the Linux nbridge, its Swift bindings (`nostrdevkit/nostr-sdk-swift`, pinned exactly 0.45.1) on the Mac — so no two implementations can disagree about the wire. |
+| Where it runs | **At home, not on a VPS**: a Raspberry Pi 5, outgoing connections only, nothing forwarded. A signer never needs to be reachable, so the key needn't sit on a server; the cost is that nothing signs while the Pi or the home line is down. Moving it later is cheap; un-leaking a key isn't. The box: Raspberry Pi OS Lite 64-bit, SSH by security key from the home network only, NTP on (relays reject events far in the future), unattended security updates; nsign runs as its own system user under systemd. |
+| Signing back end | A setting of the daemon. **Single key** now; **FROSTR 2-of-3** later (below). |
+
+### Keys and pairing
+
+- **Two keys, NIP-49 encrypted under one passphrase:** *identity* signs, *service*
+  talks. Relays, apps and monitors only ever see the service key.
+- **Locked after every boot** until the passphrase is entered (over SSH today).
+  Unlocking automatically would put the passphrase on the same disk.
+- **Backup is the `ncryptsec` itself, offline — never a disk image.** Harmless for a
+  single key, but under FROSTR a restored image reuses signing nonces and leaks
+  that share; the habit starts now.
+- **One pairing per app per device.** A `bunker://` string's secret works once, and
+  each pairing can be revoked alone.
+
+### Policy, whatever the back end
+
+- **Default-deny per app:** its public key, ping, and the kinds it was paired for.
+- **Kinds 0, 3 and 10002** (profile, contacts, relay list) **always ask.**
+- **Encrypt and decrypt (NIP-04/44) are refused** — they read messages. nchat stays
+  off the signer.
+- **Anything outside an app's permissions goes to a person**, over the approval
+  channel; no monitor answering in time (nsign's default window: 120 s) means no.
+
+### Relays: split by whose keys are stable
+
+- **App ⇄ signer (NIP-46, kind 24133).** Apps make a fresh client key per login, so
+  no whitelist can hold them: this goes over a small, open relay that accepts **only
+  kind 24133**, stores nothing (the kind is ephemeral) and has its own memory cap —
+  a second nostr-rs-relay beside `relay.fizx.uk`. Its address travels in the
+  `bunker://` string; `git.upleb.uk` refuses the kind.
+- **Signer ⇄ monitors (the approval channel, kind 4133).** Every key is stable, so
+  it goes over `relay.fizx.uk`, with the service key and each monitor key on its
+  `pubkey_whitelist`. The events are **stored**, so a monitor that was closed
+  catches up when it opens.
+- **Phones need `wss://`:** Capacitor serves nview over https, and iOS allows no
+  plain sockets.
+
+### The approval channel — approval-v1, frozen
+
+Our own protocol between our own keys, not a NIP: a stored kind-4133 event,
+NIP-44 encrypted, one `p` tag, a NIP-40 expiration. Three messages —
+`approval_request` (signer → monitor), `approval_response` (monitor → signer, first
+valid answer wins), `approval_resolved` (signer → every monitor it asked) — and ten
+receiving checks in a fixed order, so every implementation rejects a bad event with
+the same code. **Frozen 2026-10-01 at revision 3**, pinned by its 44 vectors
+(SHA-256 `3805cc78…`), which nsign (the reference), the macOS nbridge and the Linux
+nbridge all decode identically. It grows only by what old readers survive: optional
+fields, and new message types, which an old reader ignores. Anything else is `v: 2`.
+
+### Logging
+
+The daemon keeps the log; nbridge shows it. One record per app session (paired
+when, from which secret, last seen, counts by method and kind, revoked when and
+why). Every request (time, app, method, kind, decision) is kept ~7 days; per-app
+daily counts for long; denials, errors, out-of-policy requests, new client keys and
+anything touching kinds 0/3/10002 always, in full. **Never content**, and the log is
+private: it reaches a monitor NIP-44 encrypted, as a stored event with its own spec
+and vectors.
+
+### Later: FROSTR
+
+A split key — 2-of-3 shares, e.g. one at home, one on a separate box, one held by
+the person — would make an approval a signature a compromised machine cannot
+produce, rather than a screen it could skip. Deferred until bifrost-rs leaves beta
+(the protocol was rewritten in July 2026), until no full copy of the key remains in
+a desktop keyring (a split protects nothing while one does), and until the approval
+flow has run on the single key for a while. Clients see no difference either way:
+same npub, ordinary signatures.
+
+### Learned on the way
+
+- **`switch_relays` must be answered, for anyone, before `connect`** — newer clients
+  (`nak`) ask it first and quietly never sign if it fails.
+- **`nak serve` is not a test relay** for this: it delivers a live event to only one
+  of several matching subscriptions. Test on nostr-rs-relay, the software the real
+  relays run.
+- **Client wait times bound the approval window.** `nak` gives up after 30 s;
+  nostr-tools' `BunkerSigner` (nview, glmps) waits without a limit.
+- **Web logins are per subdomain and per browser** — each subdomain has its own
+  storage — so `bunker://` means a pairing for each. See the roadmap.
 
 ---
 
@@ -607,6 +733,34 @@ bg directly); artist/album rows put the density padding on their inner blocks
 inner `truncate` span so it still ellipsizes *and* stays vertically centred at
 any height.
 
+### Themes and status indicators (2026-09-29)
+
+**Three themes, for chrome only.** Apps carry **mono (the default on launch)**,
+**fizx** (cool) and **upleb** (warm), cycled by clicking the wordmark and
+persisted; the web sites default to their own domain's theme. A theme recolours
+**chrome** — ground, surfaces, text, the wordmark, chips that say nothing. **Status
+and any colour that means something are outside theming** and keep their fixed
+colours in every theme, mono included: a status dot, an error, a warning, the cyan
+"checking" pulse. Keep theming cheap; don't build machinery for it. (nbridge
+splits the two in code: `SuitePalette` for chrome, `StatusColor` for meaning.)
+
+**The relay status dot** (reference: nbridge, 2026-09-29), extending nping and
+nchat's `StatusDot`:
+
+| State | Dot | Means |
+|---|---|---|
+| `ok` | green | connected / answered |
+| `checking` | cyan, a ~1 s pulse | connecting or retrying now |
+| `waiting` | **grey, breathing at a fixed 3 s rhythm** | down, retrying on its own |
+| `warn` | amber | reached, but something's off |
+| `fail` | red | refused, or can't be used as configured |
+| `idle` | faint grey | not checked yet |
+
+A relay that drops is **waiting, not failed**: it reconnects by itself with backoff
+(5, 10, 20, 40, 60 s), pulsing cyan at each attempt, and at once when the network
+returns or the machine wakes. The time to the next try shows **on hover only**; a
+visible countdown (a draining pie was tried) reads as erratic.
+
 ### Parked for the lab
 
 Two open design questions, all deliberately not guessed at:
@@ -642,8 +796,8 @@ each app declaring its own stack.
 
 
 - **Palette** — the *fizx* dark scheme, driven by CSS variables (`--c-*` in each
-  app's `index.css`) and exposed as Tailwind tokens in `tailwind.config.ts`. Two
-  themes: **fizx.uk** (default) and **upleb.uk** (orange swap). **Reference the
+  app's `index.css`) and exposed as Tailwind tokens in `tailwind.config.ts`. Three
+  themes — mono, fizx, upleb; see *Themes and status indicators*. **Reference the
   tokens, never hardcode hexes.** Semantic roles: `bg` / `panel` / `surface` /
   `surfaceHover`, `fg` / `muted`, `accent`, `digital`, `mauve`, `ok` / `warn` /
   `alert` / `auburn`, and `medium` (the **neutral-dot** token — grey in mono,
@@ -731,6 +885,44 @@ catalogue work and of each other.
   values** — "published count equals each relay's live count for this pubkey"
   survives; "118 releases" rots within the week.
 
+
+**The signer — where next (2026-10-01)**, candidates in a suggested order; nbridge's
+own items are in its `DIRECTION.md`.
+- **nsign finishes revision 3:** shorten oversized templates and say so (`truncated`
+  — a large contact list can't be encrypted whole), and store standing permissions
+  (`scope: "always"`).
+- **More clients.** nping's relay sign-in (NIP-42) and nostr.build upload auth
+  (NIP-98) are ordinary signing requests. glmps has a `bunker://` login; its sibling
+  pages (smpl, trth, fx on upleb) still use NIP-07 only. One login per site per
+  browser is the cost — options, not yet chosen:
+
+  | Option | Logins | Pairing |
+  |---|---|---|
+  | `bunker://` per site (glmps today) | every site, every browser | SSH to the signer each time |
+  | a session cookie on the main domain, read by every subdomain | once per domain, per browser | SSH, once per domain per browser |
+  | `nostrconnect://` — the page shows a code, a monitor approves it | as either row above | from nbridge, no SSH |
+
+  Each needs the signing pages to share one login component, in both site forks.
+  Framing the subdomains under the main domain was considered and dropped: frames
+  don't share storage either, and they break deep links. The cookie's client key
+  can only *ask* the signer, so with every kind asking the worst case is unwanted
+  approval cards.
+- **Pairing and revoking from nbridge** instead of SSH — new approval-channel
+  message types, which v1 allows as additions.
+- **History in the monitor** — the log above, delivered to nbridge.
+- **Unlock without SSH** after a power cut, from nbridge — never in a form a relay
+  could replay.
+- **A mobile nbridge**, with push, deciding the approval window alongside it.
+- **Resilience:** a spare Pi with the `ncryptsec` restored and a tested restore
+  procedure; later FROSTR.
+- **Alongside, exploratory: a Nostr-connected player** (2026-09-30) —
+  [`schema/player-design-2026-09-30.md`](schema/player-design-2026-09-30.md). It
+  would publish release skeletons, never audio, map a desktop library to them, and
+  play a rotating handful of albums on a phone, leaning on the signer for ratings
+  and playlists. Blossom through nostr.build is an option: `blossom.nostr.build`
+  takes audio on its free tier, uploads are authorised by a signed event (kind
+  24242, an ordinary signing request), and downloads are public by hash — so it
+  suits open releases and public-safe test audio, never a purchased library.
 
 **Near-term — tighten suite integration**
 - Bring `ndisc`'s tree-dots + track/disc-count styling into `nplay`.
