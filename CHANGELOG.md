@@ -21,6 +21,35 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.3.2 — 2026-09-30
+
+### Fixed
+
+- **macOS now actually stores the signing key.** The macOS build had no
+  keychain backend compiled in, so the keyring library fell back to an
+  in-memory placeholder: it accepted a key, reported success and kept nothing,
+  not even until the next command. Every platform now names its backend
+  explicitly (Keychain on macOS, Secret Service on Linux, Credential Manager
+  on Windows), the UI reports the backend the build really has instead of
+  saying "libsecret" everywhere, including the sign-in panel, and saving a key reads it back to confirm.
+  Linux and Windows builds are unchanged.
+
+### Changed
+
+- **Linux releases ship a `.deb` only.** The AppImage bundled its own
+  webkit2gtk (~80 MB against the `.deb`'s ~6 MB) for distros nobody here runs,
+  and needs libfuse2 on current Ubuntu. Other distros can build from source.
+  Earlier releases keep theirs.
+- **New icon**, from the 2026-09-29 Figma export.
+
+### Docs
+
+- Windows status: confirmed for build, keychain and publish, and nothing else.
+- SUITE.md: `public/icon.svg` is a second copy of the icon, and `make icons`
+  must write it.
+- Two exploratory design notes in `schema/`: a Nostr-connected player and the
+  suite's site. No wire change.
+
 ## 0.3.1 — 2026-09-22
 
 ### Fixed
