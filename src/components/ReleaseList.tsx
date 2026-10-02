@@ -90,7 +90,6 @@ import {
   releaseSourceName,
   isPaired,
   hasBandcampReceipt,
-  colorWithAlpha,
 } from "../lib/source";
 import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 import {
@@ -170,7 +169,7 @@ export function ReleaseList({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Re-render the whole list when a source's colour / digital / physical flag is
-  // edited from a detail panel (localStorage — otherwise the pairing rings +
+  // edited from a detail panel (localStorage — otherwise the pairing tooltips +
   // glyphs would lag until an unrelated render). Fixes the "changed all
   // releases" appearing only after a stale delay.
   useSourceMetaVersion();
@@ -2138,29 +2137,15 @@ export function ReleaseList({
                     className={cn(
                       "shrink-0 inline-flex items-center justify-center",
                       "gap-1 px-1.5 h-5 min-w-[38px] rounded-full",
-                      // Neutral pill base only when NOT paired — a paired row
-                      // replaces it with the source-tinted fill below.
-                      !isPaired(r) && "bg-surface/60",
+                      // The same neutral pill on every row. A paired release
+                      // (physical + digital, see isPaired in lib/source.ts)
+                      // used to swap it for a source-tinted fill; that was
+                      // removed 2026-10-02 — most "paired" rows were only a
+                      // digital release with a Discogs link, and the fill
+                      // repeated the source colour the medium dot already
+                      // carries. Pairing now shows in the tooltip only.
+                      "bg-surface/60",
                     )}
-                    style={
-                      // Paired band: a release that exists in BOTH physical and
-                      // digital form — a physical row with a digital half (files
-                      // or a digital source), or a digital row with a physical
-                      // half (a Discogs entry or a physical source) — gets a
-                      // translucent FILL behind the state + medium dots. Its
-                      // COLOUR encodes the acquisition source (Bandcamp blue,
-                      // Boomkat amber, …); the neutral --c-medium dot is the
-                      // default — green in the colour themes, grey in mono.
-                      // See isPaired in lib/source.ts.
-                      isPaired(r)
-                        ? {
-                            backgroundColor: colorWithAlpha(
-                              releaseSourceColor(r) ?? "rgb(var(--c-medium))",
-                              0.5,
-                            ),
-                          }
-                        : undefined
-                    }
                     title={
                       isPaired(r)
                         ? [
@@ -2190,26 +2175,20 @@ export function ReleaseList({
                           aria-label={`publish state: ${m.label}`}
                           className="inline-flex"
                         >
-                          <Circle
-                            size={10}
-                            fill="currentColor"
-                            className={cn("shrink-0", m.dot)}
-                          />
+                          <StateDot className={cn("shrink-0", m.dot)} />
                         </span>
                       );
                     })()}
-                    {/* Medium — physical is a solid disc (Disc3), digital a
-                        solid dot; both filled. Tinted by source platform
-                        (Bandcamp blue, Boomkat amber, …) when detected, so a
-                        release's origin reads at a glance; neutral `text-medium`
-                        otherwise (digital faded to 70%). Shape encodes
-                        physical/digital — only colour changes. */}
+                    {/* Medium — the same StateDot as the publish dot, at the
+                        same size; a physical release carries a spindle hole.
+                        Tinted by acquisition source (Bandcamp blue, Boomkat
+                        olive, …) so a release's origin reads at a glance;
+                        neutral white otherwise, digital faded to 70%. */}
                     {(() => {
                       // Tint the medium glyph by acquisition source — the
                       // assigned `sourceLabel` colour wins, falling back to the
                       // platform inferred from the URL/receipt; neutral when
-                      // neither applies. Shares releaseSourceColor with the ring
-                      // so a release's origin reads consistently.
+                      // neither applies.
                       const color = releaseSourceColor(r);
                       const name = releaseSourceName(r);
                       const tip = name ? ` · ${name}` : "";
@@ -2228,7 +2207,7 @@ export function ReleaseList({
                             )}
                             style={tint}
                           >
-                            <Disc3 size={12} fill="currentColor" />
+                            <StateDot hole />
                           </span>
                         );
                       }
@@ -2246,7 +2225,7 @@ export function ReleaseList({
                             )}
                             style={tint}
                           >
-                            <Circle size={11} fill="currentColor" />
+                            <StateDot />
                           </span>
                         );
                       }
@@ -2329,6 +2308,45 @@ interface FilterToggleProps {
   // instead of the default `accent`. Used for the Bandcamp source toggle so it
   // reads in the same blue as the source dot.
   color?: string;
+}
+
+// One dot of the row's state pair (publish state · medium). Every dot in the
+// pair is THIS shape at THIS size, so the two always share a centre line.
+//
+// They used to be three different lucide glyphs — Circle at 10 for the publish
+// state, Circle at 11 for a digital release, a filled Disc3 at 12 for a
+// physical one — which put the right-hand dot a pixel or two larger than the
+// left on every row. lucide also strokes its circle, and with a translucent
+// colour (`text-fg/70`) the stroke overlapping the fill drew a brighter rim.
+// A single unstroked circle has neither problem.
+//
+// `hole` is the physical mark: the same disc with a spindle hole, so medium is
+// still told by shape now that it is no longer told by size.
+function StateDot({
+  hole = false,
+  className,
+}: {
+  hole?: boolean;
+  className?: string;
+}) {
+  return (
+    <svg
+      width={10}
+      height={10}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d={
+          "M12 1a11 11 0 1 0 0 22a11 11 0 1 0 0-22Z" +
+          (hole ? "M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8Z" : "")
+        }
+      />
+    </svg>
+  );
 }
 
 function FilterToggle({

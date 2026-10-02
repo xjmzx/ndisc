@@ -1462,6 +1462,43 @@ function EditableText({
   );
 }
 
+// A themed checkbox. The native control is drawn by the platform — on Linux
+// (WebKitGTK) that is the desktop's own accent-coloured box, oversized for a
+// 10px label and with its tick clipped — so the box is ours: a rounded square
+// in the same surface/border family as the field chips beside it, with the
+// tick as an icon on top. The real <input> stays, for keyboard and a11y.
+function TickBox({
+  checked,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <span className="relative shrink-0 grid place-items-center w-3.5 h-3.5">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={ariaLabel}
+        className="peer appearance-none m-0 w-3.5 h-3.5 rounded-[3px] cursor-pointer
+                   border border-muted/40 bg-surface/40 transition-colors
+                   hover:border-accent/50 checked:border-accent/70
+                   checked:bg-accent/15 focus-visible:outline
+                   focus-visible:outline-1 focus-visible:outline-accent"
+      />
+      <Check
+        size={10}
+        strokeWidth={3}
+        className="pointer-events-none absolute text-accent opacity-0
+                   peer-checked:opacity-100"
+      />
+    </span>
+  );
+}
+
 interface EditableSourceProps {
   value: string | null;
   onChange: (v: string | null) => Promise<void> | void;
@@ -1470,7 +1507,7 @@ interface EditableSourceProps {
 // Acquisition-source editor: assign WHERE/how a release was obtained. The name
 // is a free-text category (pick an existing one from the datalist or type a new
 // store — the vocabulary is just the set of names in use). Per-name presentation
-// lives in localStorage: a colour (the swatch, and the list's grouping ring/
+// lives in localStorage: a colour (the swatch, and the list's medium-
 // glyph tint) and a "digital" flag marking the source as a download you own —
 // which lets a physical release from it count as a physical+digital pairing.
 // Per-release pairing toggle: does this release ALSO exist in the other medium
@@ -1493,18 +1530,17 @@ function PairedToggle({
   return (
     <label
       title={
-        `This release also exists as a ${counterpart} edition — shows the ` +
-        `physical+digital pairing ring. Per-release; overrides the source default` +
+        `This release also exists as a ${counterpart} edition — noted in the ` +
+        `list tooltip as a physical + digital pairing. Per-release; overrides the source default` +
         (overridden ? " (set explicitly)." : " (currently auto).")
       }
-      className="inline-flex items-center gap-1 text-[10px] text-fg/80
-                 cursor-pointer select-none whitespace-nowrap"
+      className="h-6 inline-flex items-center gap-1.5 px-1.5 text-[10px]
+                 text-fg/80 cursor-pointer select-none whitespace-nowrap"
     >
-      <input
-        type="checkbox"
+      <TickBox
         checked={paired}
-        onChange={(e) => onChange(e.target.checked)}
-        aria-label={`also ${counterpart}`}
+        onChange={onChange}
+        ariaLabel={`also ${counterpart}`}
       />
       +{counterpart}
     </label>
@@ -1626,7 +1662,7 @@ function EditableSource({ value, onChange }: EditableSourceProps) {
           <input
             type="color"
             aria-label="source colour"
-            title="Source colour (used by the list ring + glyph)"
+            title="Source colour (tints the medium dot in the list)"
             value={swatch ?? "#888888"}
             onChange={(e) => {
               setSourceMeta(value, { color: e.target.value });
@@ -1637,14 +1673,13 @@ function EditableSource({ value, onChange }: EditableSourceProps) {
           />
           <label
             title="This source gives you a digital copy you own — lets a physical release from it count as a physical+digital pairing"
-            className="inline-flex items-center gap-1 text-[10px] text-fg/80
-                       cursor-pointer select-none"
+            className="h-6 inline-flex items-center gap-1.5 px-1 text-[10px]
+                       text-fg/80 cursor-pointer select-none"
           >
-            <input
-              type="checkbox"
+            <TickBox
               checked={sourceIsDigital(value)}
-              onChange={(e) => {
-                setSourceMeta(value, { digital: e.target.checked });
+              onChange={(checked) => {
+                setSourceMeta(value, { digital: checked });
                 setBump((n) => n + 1);
               }}
             />

@@ -21,9 +21,9 @@ export interface SourcePlatform {
 export const SOURCE_PLATFORMS: SourcePlatform[] = [
   // Digital stores — a download you own, each recognisable at a glance.
   { key: "bandcamp", label: "Bandcamp", domain: "bandcamp.com", color: "#1da0c3" },
-  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#e0913a" },
+  { key: "boomkat", label: "Boomkat", domain: "boomkat.com", color: "#9d9d64" },
   { key: "bleep", label: "Bleep", domain: "bleep.com", color: "#e05a9c" },
-  { key: "warp", label: "Warp", domain: "warp.net", color: "#8b6be8" },
+  { key: "warp", label: "Warp", domain: "warp.net", color: "#3f5bf6" },
   { key: "planetmu", label: "Planet Mu", domain: "planet.mu", color: "#a8c94a" },
   // Physical marketplace — no domain inference: a Discogs catalogue link is a
   // pairing signal (discogsId), not an acquisition source to auto-tint. Its
@@ -73,7 +73,7 @@ const SOURCE_META_KEY = "ndisc.sources"; // { [lowercased name]: SourceMeta }
 // --- change notification -----------------------------------------------------
 // `setSourceMeta` writes localStorage, which React cannot observe — so a source
 // recolour / digital / physical edit used to update only the panel that made it
-// while the release-list rings + glyphs (which derive from the same meta via
+// while the release-list glyphs + tooltips (which derive from the same meta via
 // isPaired / releaseSourceColor) lagged until their next unrelated render. This
 // tiny external store lets every derived view re-render together on a write.
 // Subscribe with `useSourceMetaVersion` (hooks/useSourceMeta.ts).
@@ -173,7 +173,7 @@ export function setSourceMeta(
   map[key] = { ...map[key], ...patch };
   try {
     localStorage.setItem(SOURCE_META_KEY, JSON.stringify(map));
-    // Re-render every view derived from source meta (release-list rings,
+    // Re-render every view derived from source meta (release-list glyphs,
     // detail panel), not just the caller.
     notifySourceMetaChanged();
   } catch {
@@ -200,7 +200,7 @@ export function sourceIsDigital(name: string | null | undefined): boolean {
 }
 
 // The single source of truth for a release's source colour, used by the
-// grouping ring and the medium-glyph tint. Prefers the user-assigned
+// medium-glyph tint. Prefers the user-assigned
 // `sourceLabel`; falls back to the platform inferred from the URL/receipt; null
 // when neither applies (callers then use the neutral default, e.g. --c-ok).
 // Generic "default" source names that stay MONOCHROME — a catch-all bucket, not
@@ -231,7 +231,7 @@ export function releaseSourceName(r: Release): string | null {
 }
 
 // The "digital half" of a physical+digital pairing. A physical release counts
-// as paired — and so shows the grouping ring — when there's evidence it also
+// as paired when there's evidence it also
 // exists digitally, by ANY route (the point of "pairing in many ways"):
 //   • local files on disk (filePath), or
 //   • an acquisition source flagged as digital (a download you own) — either the
@@ -257,30 +257,15 @@ export function hasPhysicalCounterpart(r: Release): boolean {
   return r.discogsId != null;
 }
 
-// A release is "paired" — shows the tinted state-cluster fill — when it exists
+// A release is "paired" — recorded, and named in the list tooltip — when it exists
 // in BOTH physical and digital form: a physical row with a digital half, or a
-// digital row with a physical half. The fill colour is releaseSourceColor (the
-// same in both directions), green when the source is unknown.
+// digital row with a physical half.
 export function isPaired(r: Release): boolean {
   // A deliberate per-release override wins over any inference (either direction).
   if (r.pairedOverride != null) return r.pairedOverride;
   if (r.medium === "physical") return hasDigitalCounterpart(r);
   if (r.medium === "digital") return hasPhysicalCounterpart(r);
   return false;
-}
-
-// Apply an alpha to a source colour so the paired-cluster fill can be
-// translucent. Handles the two shapes we emit: a `#rrggbb` source colour, and
-// the channel-var default `rgb(var(--c-ok))` (→ `rgb(var(--c-ok) / a)`, valid
-// because --c-ok is a raw channel triple). Anything else is returned as-is.
-export function colorWithAlpha(color: string, a: number): string {
-  const hex = /^#([0-9a-f]{6})$/i.exec(color);
-  if (hex) {
-    const n = parseInt(hex[1], 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-  }
-  if (color.startsWith("rgb(var(")) return color.replace(/\)\s*$/, ` / ${a})`);
-  return color;
 }
 
 export function isHttpUrl(s: string | null | undefined): boolean {

@@ -21,19 +21,6 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
-
-### Changed
-
-- **Default relays are `relay.fizx.uk` + `relay.nfunc.xyz`.** `nos.lol` and
-  `relay.primal.net` are gone from the built-in list, the startup top-up and
-  the reaction relays. Neither keeps the catalogue: on 2026-10-02 both held
-  nothing older than two days for the owner key, where `nos.lol` had held
-  every release ten days earlier. `relay.nfunc.xyz` is a second
-  whitelist-only relay carrying a byte-identical mirror of the hub (1,899
-  releases, the label library, the feed notes). A saved relay list is
-  untouched; this changes what a fresh install or a reset gets.
-
 ## 0.4.0 — 2026-10-02
 
 ### Added
@@ -53,6 +40,38 @@ wave; an app-only change bumps ndisc alone. See
   and nothing but *use file* — which undoes the rename — could clear them.
   Run against the live library: 251 releases written, drift 0, 1,899 still
   published.
+
+### Changed
+
+- **Default relays are `relay.fizx.uk` + `relay.nfunc.xyz`.** `nos.lol` and
+  `relay.primal.net` are gone from the built-in list, the startup top-up and
+  the reaction relays. Neither keeps the catalogue: on 2026-10-02 both held
+  nothing older than two days for the owner key, where `nos.lol` had held
+  every release ten days earlier. `relay.nfunc.xyz` is a second
+  whitelist-only relay carrying a byte-identical mirror of the hub (1,899
+  releases, the label library, the feed notes). A saved relay list is
+  untouched; this changes what a fresh install or a reset gets.
+- **The paired fill is gone from the release list.** A release marked as
+  existing in both physical and digital form swapped its neutral state pill
+  for a source-tinted fill. 652 rows carried it, 439 of them only because a
+  digital release had a Discogs link, and the fill repeated the source colour
+  the medium dot already shows. Every row now has the same neutral pill;
+  pairing is still recorded, still editable, and named in the pill's tooltip.
+- **The state pair is one dot shape at one size.** The publish dot, the
+  digital dot and the physical disc were three lucide glyphs at 10, 11 and 12,
+  so the right-hand dot sat a pixel or two larger than the left on every row,
+  and the glyph's stroke drew a brighter rim on the translucent neutral dot.
+  All three are now a single unstroked circle at 10. A physical release is
+  told by a spindle hole, since it is no longer told by size.
+- **Warp and Boomkat have new built-in colours.** Warp moves from `#8b6be8`
+  to a blue-violet `#3f5bf6`: the old value was nearly the published lilac
+  (CIEDE2000 9.9; now 20.0, and 27.6 from Bandcamp). Boomkat moves from amber
+  to its own brand olive, `#9d9d64`. A colour saved in settings still wins.
+- **Checkboxes are drawn by ndisc, not the platform.** On Linux the native
+  control came out in the desktop's accent colour, oversized against a 10px
+  label and with its tick clipped. The `+physical` / `+digital` tick and the
+  source editor's `digital` tick are now a themed rounded square with room
+  around it.
 
 ### Fixed
 
