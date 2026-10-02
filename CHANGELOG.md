@@ -21,6 +21,19 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Changed
+
+- **Default relays are `relay.fizx.uk` + `relay.nfunc.xyz`.** `nos.lol` and
+  `relay.primal.net` are gone from the built-in list, the startup top-up and
+  the reaction relays. Neither keeps the catalogue: on 2026-10-02 both held
+  nothing older than two days for the owner key, where `nos.lol` had held
+  every release ten days earlier. `relay.nfunc.xyz` is a second
+  whitelist-only relay carrying a byte-identical mirror of the hub (1,899
+  releases, the label library, the feed notes). A saved relay list is
+  untouched; this changes what a fresh install or a reset gets.
+
 ## 0.4.0 — 2026-10-02
 
 ### Added

@@ -99,15 +99,16 @@ const DB_FILTERS = [{ name: "SQLite", extensions: ["db", "sqlite"] }];
 
 const DEFAULT_RELAYS = [
   "wss://relay.fizx.uk",
-  "wss://nos.lol",
-  "wss://relay.primal.net",
+  "wss://relay.nfunc.xyz",
 ];
 
 // Minimum relays required for ndisc to publish/read meaningfully. If the
 // saved relay list ever falls below this on startup (user cleared most of
 // it, persisted state corrupted), top up from the tail of DEFAULT_RELAYS —
-// the last two are the public-fallback pair (nos.lol + primal) so even a
+// the hub and its mirror (relay.fizx.uk + relay.nfunc.xyz) — so even a
 // totally empty saved state recovers to something functional on next launch.
+// The public pair that used to sit here (nos.lol + primal) does not keep the
+// catalogue: on 2026-10-02 both held nothing older than two days for this key.
 const MIN_RELAYS = 2;
 const RELAY_FALLBACKS = DEFAULT_RELAYS.slice(-MIN_RELAYS);
 

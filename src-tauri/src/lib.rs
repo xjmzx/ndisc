@@ -4309,7 +4309,7 @@ fn release_d_tag(release_id: i64) -> String {
     format!("disco-vault:{}", release_id)
 }
 
-const REACTION_RELAYS_DEFAULT: &[&str] = &["wss://relay.fizx.uk", "wss://nos.lol"];
+const REACTION_RELAYS_DEFAULT: &[&str] = &["wss://relay.fizx.uk", "wss://relay.nfunc.xyz"];
 
 /// Publish a kind:7 reaction targeting one of the user's own releases.
 /// Builds the replaceable address `31237:<my_pk>:disco-vault:<release_id>`
