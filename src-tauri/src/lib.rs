@@ -9,6 +9,8 @@ use std::time::Duration;
 use keyring::Entry;
 use lofty::config::{ParseOptions, ParsingMode, WriteOptions};
 use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::flac::FlacFile;
+use lofty::ogg::VorbisComments;
 use lofty::probe::Probe;
 // NB: `lofty::tag::Tag` is referenced fully-qualified below — importing it here
 // would collide with `nostr_sdk::Tag` used by the publisher.
@@ -2803,12 +2805,78 @@ fn set_tag_field(tag: &mut lofty::tag::Tag, key: ItemKey, value: &str) -> bool {
     true
 }
 
+// The Vorbis comment name for each key this module writes.
+fn vorbis_key(key: &ItemKey) -> Option<&'static str> {
+    Some(match key {
+        ItemKey::AlbumTitle => "ALBUM",
+        ItemKey::AlbumArtist => "ALBUMARTIST",
+        ItemKey::RecordingDate => "DATE",
+        ItemKey::ContentGroup => "GROUPING",
+        ItemKey::DiscNumber => "DISCNUMBER",
+        ItemKey::DiscTotal => "DISCTOTAL",
+        _ => return None,
+    })
+}
+
+// FLAC: edit the Vorbis comment block directly, one named comment at a time.
+//
+// The generic path below round-trips the whole block through lofty's
+// format-neutral `Tag`, and that conversion is not neutral for Vorbis: saving
+// renames TOTALTRACKS → TRACKTOTAL and ORGANIZATION → LABEL (duplicating the
+// value when both spellings exist), folds ORIGINALYEAR into ORIGINALDATE, drops
+// empty comments, rewrites `01` as `1`, and adds an ENCODER comment from the
+// vendor string. Found 2026-10-02 by diffing written copies against their
+// originals. Touching only the named comment is what "preserving every other
+// tag item" has to mean.
+fn apply_edits_to_flac(
+    path: &Path,
+    items: &[(&'static str, ItemKey, String)],
+) -> Result<bool, String> {
+    let opts = ParseOptions::new().parsing_mode(ParsingMode::Relaxed);
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut flac = FlacFile::read_from(&mut file, opts).map_err(|e| e.to_string())?;
+    drop(file);
+    if flac.vorbis_comments().is_none() {
+        flac.set_vorbis_comments(VorbisComments::default());
+    }
+    let vc = flac
+        .vorbis_comments_mut()
+        .ok_or_else(|| "no writable tag".to_string())?;
+    let mut changed = false;
+    for (_field, key, val) in items {
+        let name = vorbis_key(key).ok_or_else(|| format!("no Vorbis name for {key:?}"))?;
+        let trimmed = val.trim();
+        let current: Vec<String> = vc.get_all(name).map(|v| v.trim().to_string()).collect();
+        if trimmed.is_empty() {
+            if !current.is_empty() {
+                let _ = vc.remove(name).count();
+                changed = true;
+            }
+        } else if current.len() != 1 || current[0] != trimmed {
+            vc.insert(name.to_string(), trimmed.to_string());
+            changed = true;
+        }
+    }
+    if changed {
+        flac.save_to_path(path, WriteOptions::default())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(changed)
+}
+
 // Write the resolved edits into one file, preserving every other tag item.
 // Returns true if the file was actually modified and saved.
 fn apply_edits_to_file(
     path: &Path,
     items: &[(&'static str, ItemKey, String)],
 ) -> Result<bool, String> {
+    let is_flac = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("flac"));
+    if is_flac {
+        return apply_edits_to_flac(path, items);
+    }
     let opts = ParseOptions::new().parsing_mode(ParsingMode::Relaxed);
     let mut tagged = Probe::open(path)
         .map_err(|e| e.to_string())?
@@ -2958,6 +3026,79 @@ fn write_release_tags(
         errors,
         refresh,
     })
+}
+
+/// The tag edits that bring a release's files into line with its curated DB
+/// values, for the given drifting fields only (`title` / `artist` / `year`).
+/// A field that is not drifting is left `None`, so its tag is never touched.
+pub fn curated_edits(title: &str, artist: &str, year: Option<i32>, fields: &[String]) -> TagEdits {
+    let has = |f: &str| fields.iter().any(|x| x == f);
+    TagEdits {
+        album: has("title").then(|| title.to_string()),
+        artist: has("artist").then(|| artist.to_string()),
+        year: year.filter(|_| has("year")).map(|y| y.to_string()),
+        ..TagEdits::default()
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteCuratedSummary {
+    pub files_written: usize,
+    pub files_unchanged: usize,
+    pub files_failed: usize,
+    pub errors: Vec<String>,
+    /// Drift still present after the write, re-read from disk. Empty is the
+    /// goal; anything left is a tag this write could not reach.
+    pub remaining: Vec<FieldDrift>,
+}
+
+// The third outcome of a drift review: keep the curated value AND make the
+// files say it. The mirror image of `write_release_tags`, and deliberately not
+// a call to it:
+//   - the values come from the DB row, never from the caller, so this can only
+//     ever move a file TOWARDS the catalogue;
+//   - it does NOT mark the release unpublished. The live event was emitted from
+//     the DB row, which does not change here, so there is nothing to republish;
+//   - it does not run a trust-the-file refresh. It re-reads in scan mode purely
+//     to report what drift is left.
+#[tauri::command]
+fn write_curated_to_files(
+    app: tauri::AppHandle,
+    release_id: i64,
+    fields: Vec<String>,
+) -> Result<WriteCuratedSummary, String> {
+    let conn = open(&app)?;
+    let release = load_release(&conn, release_id)?;
+    drop(conn);
+    let files = release_audio_files(&release)?;
+    let edits = curated_edits(&release.title, &release.artist, release.year, &fields);
+
+    let mut summary = WriteCuratedSummary {
+        files_written: 0,
+        files_unchanged: 0,
+        files_failed: 0,
+        errors: Vec::new(),
+        remaining: Vec::new(),
+    };
+    if has_edits(&edits) {
+        for f in &files {
+            let items = edit_items_for(&edits, f);
+            match apply_edits_to_file(f, &items) {
+                Ok(true) => summary.files_written += 1,
+                Ok(false) => summary.files_unchanged += 1,
+                Err(e) => {
+                    summary.files_failed += 1;
+                    let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                    summary.errors.push(format!("{name}: {e}"));
+                }
+            }
+        }
+    } else {
+        summary.files_unchanged = files.len();
+    }
+    summary.remaining = refresh_release_inner(app, release_id, false)?.drift;
+    Ok(summary)
 }
 
 #[derive(Serialize, Clone)]
@@ -9165,6 +9306,7 @@ pub fn run() {
             set_release_disc_total,
             preview_release_tags,
             write_release_tags,
+            write_curated_to_files,
             set_release_genres,
             list_distinct_labels,
             list_distinct_sources,
@@ -10927,6 +11069,49 @@ mod refresh_guard {
         let r = resolve_curated_year(None, Some(1994), false);
         assert_eq!(r.value, Some(1994), "filling a gap is not overwriting");
         assert!(r.drift.is_none());
+    }
+
+    // ---- write mine to file: only the drifting fields, only DB values ------
+
+    #[test]
+    fn curated_edits_touch_only_the_drifting_fields() {
+        let e = curated_edits("Voodoo Ray", "A Guy Called Gerald", Some(1988), &ch(&["title"]));
+        assert_eq!(e.album.as_deref(), Some("Voodoo Ray"));
+        assert!(e.artist.is_none() && e.year.is_none(), "untouched fields stay None");
+        assert!(e.label.is_none() && e.disc_number.is_none() && e.disc_total.is_none());
+    }
+
+    #[test]
+    fn curated_edits_carry_year_and_artist_when_they_drift() {
+        let e = curated_edits("Head Hunters", "Herbie Hancock", Some(1973), &ch(&["year", "artist"]));
+        assert_eq!(e.year.as_deref(), Some("1973"));
+        assert_eq!(e.artist.as_deref(), Some("Herbie Hancock"));
+        assert!(e.album.is_none());
+    }
+
+    #[test]
+    fn curated_edits_never_clear_a_year_the_db_lacks() {
+        // An empty string would CLEAR the tag; a missing DB year must be a no-op.
+        let e = curated_edits("X", "Y", None, &ch(&["year"]));
+        assert!(e.year.is_none());
+        assert!(!has_edits(&e));
+    }
+
+    #[test]
+    fn every_writable_field_has_a_vorbis_name() {
+        // The FLAC path refuses a key it cannot name, so a field added to
+        // TagEdits without a Vorbis name would fail every FLAC write.
+        let all = TagEdits {
+            album: Some("a".into()),
+            artist: Some("b".into()),
+            year: Some("1999".into()),
+            label: Some("c".into()),
+            disc_number: Some("1".into()),
+            disc_total: Some("2".into()),
+        };
+        for (field, key, _) in edit_items_for(&all, Path::new("x/01.flac")) {
+            assert!(vorbis_key(&key).is_some(), "{field} has no Vorbis name");
+        }
     }
 
     #[test]

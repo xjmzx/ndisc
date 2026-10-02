@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileWarning, Loader2, RotateCw, X } from "lucide-react";
+import { FileWarning, Loader2, PenLine, RotateCw, X } from "lucide-react";
 import {
   dismissDriftKeys,
   driftKey,
   withoutDismissed,
 } from "../lib/driftDismiss";
-import { refreshRelease, type ReleaseDrift } from "../lib/tauri";
+import {
+  refreshRelease,
+  writeCuratedToFiles,
+  type ReleaseDrift,
+} from "../lib/tauri";
 
 // Review of curated fields that disagree with the files on disk.
 //
 // A library scan NEVER applies these — it only reports them (see
 // `refresh_release_inner`, `trust_files = false`). This is where you decide.
-// Two outcomes per release:
+// Three outcomes per release:
 //
+//   Write   — keep your value AND write it into the files' tags, so the two
+//             agree and the drift is gone for good. Nothing on the wire
+//             changes, so a published release stays published.
 //   Apply   — take the file's values. This runs the ordinary per-release
 //             Refresh, so it is a whole-release "trust the file" action, not a
 //             single-field patch: any other disk-derived field moves too, and
@@ -34,6 +41,10 @@ export function DriftDialog({
   const [rows, setRows] = useState<ReleaseDrift[]>([]);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bulk "write all": progress while it runs, and a two-step confirm because
+  // it rewrites tags in every listed release's files.
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
 
   const load = useCallback(() => {
     setRows(withoutDismissed(drifts));
@@ -47,6 +58,62 @@ export function DriftDialog({
     dismissDriftKeys(r.fields.map((f) => driftKey(r.id, f)));
     setRows((rs) => rs.filter((x) => x.id !== r.id));
     onChanged();
+  }
+
+  // Write the curated values into one release's files. Resolves true when the
+  // drift is gone; otherwise leaves the row in place and reports why.
+  async function writeOne(r: ReleaseDrift): Promise<boolean> {
+    const res = await writeCuratedToFiles(
+      r.id,
+      r.fields.map((f) => f.field),
+    );
+    if (res.filesFailed > 0 || res.remaining.length > 0) {
+      const why =
+        res.errors[0] ??
+        `still differs: ${res.remaining.map((f) => f.field).join(", ")}`;
+      throw new Error(`${r.artist} — ${r.title}: ${why}`);
+    }
+    // The file value we just replaced is, by construction, rejected — record
+    // it so the banner count drops without waiting for the next scan.
+    dismissDriftKeys(r.fields.map((f) => driftKey(r.id, f)));
+    setRows((rs) => rs.filter((x) => x.id !== r.id));
+    return true;
+  }
+
+  async function write(r: ReleaseDrift) {
+    setBusy(r.id);
+    setError(null);
+    try {
+      await writeOne(r);
+      onChanged();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function writeAll() {
+    const todo = rows;
+    setConfirmAll(false);
+    setError(null);
+    setBulk({ done: 0, total: todo.length });
+    const failures: string[] = [];
+    for (let i = 0; i < todo.length; i++) {
+      try {
+        await writeOne(todo[i]);
+      } catch (e) {
+        failures.push(String(e));
+      }
+      setBulk({ done: i + 1, total: todo.length });
+    }
+    setBulk(null);
+    onChanged();
+    if (failures.length > 0) {
+      setError(
+        `${failures.length} not written — ${failures.slice(0, 5).join(" · ")}`,
+      );
+    }
   }
 
   async function apply(r: ReleaseDrift) {
@@ -95,6 +162,45 @@ export function DriftDialog({
           kept unless you apply the file's.
         </p>
 
+        {rows.length > 0 && (
+          <div className="mb-3 flex items-center gap-3 text-[11px]">
+            {bulk ? (
+              <span className="text-muted inline-flex items-center gap-1.5">
+                <Loader2 size={11} className="animate-spin" />
+                writing {bulk.done} / {bulk.total}
+              </span>
+            ) : confirmAll ? (
+              <>
+                <span className="text-warn">
+                  Rewrite the tags in the files of {rows.length} release
+                  {rows.length === 1 ? "" : "s"}?
+                </span>
+                <button
+                  onClick={writeAll}
+                  className="text-ok hover:text-fg"
+                >
+                  yes, write all
+                </button>
+                <button
+                  onClick={() => setConfirmAll(false)}
+                  className="text-muted hover:text-fg"
+                >
+                  cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmAll(true)}
+                disabled={busy !== null}
+                className="text-ok hover:text-fg inline-flex items-center gap-1 disabled:opacity-50"
+                title="Write your value into the files of every release listed. Published releases stay published."
+              >
+                <PenLine size={11} /> write mine to all files
+              </button>
+            )}
+          </div>
+        )}
+
         {rows.length === 0 ? (
           <div className="py-8 text-center text-muted text-sm">
             Nothing to review. 🎉
@@ -119,8 +225,17 @@ export function DriftDialog({
                       keep mine
                     </button>
                     <button
+                      onClick={() => write(r)}
+                      disabled={busy === r.id || bulk !== null}
+                      className="text-[11px] text-ok hover:text-fg inline-flex items-center gap-1 disabled:opacity-50"
+                      title="Keep my value and write it into the files' tags. Nothing is republished."
+                    >
+                      <PenLine size={11} />
+                      write mine
+                    </button>
+                    <button
                       onClick={() => apply(r)}
-                      disabled={busy === r.id}
+                      disabled={busy === r.id || bulk !== null}
                       className="text-[11px] text-nostr hover:text-fg inline-flex items-center gap-1 disabled:opacity-50"
                       title="Take the file's values — runs the per-release Refresh, so other disk-derived fields update too and a published release goes stale."
                     >

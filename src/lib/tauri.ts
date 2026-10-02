@@ -595,6 +595,26 @@ export async function refreshRelease(releaseId: number): Promise<RefreshResult> 
   return invoke<RefreshResult>("refresh_release", { releaseId });
 }
 
+export interface WriteCuratedSummary {
+  filesWritten: number;
+  filesUnchanged: number;
+  filesFailed: number;
+  errors: string[];
+  remaining: FieldDrift[]; // drift still present after the write (goal: none)
+}
+
+// Drift review, third outcome: keep the curated value and write it into the
+// files. Values come from the DB row; the release stays published.
+export async function writeCuratedToFiles(
+  releaseId: number,
+  fields: string[],
+): Promise<WriteCuratedSummary> {
+  return invoke<WriteCuratedSummary>("write_curated_to_files", {
+    releaseId,
+    fields,
+  });
+}
+
 // --- Interop: WRITE tags back to the audio files (folder-level batch) --------
 
 // A batch of tag edits applied to every audio file in a release folder. Each
