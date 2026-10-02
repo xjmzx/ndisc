@@ -21,6 +21,20 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.4.1 — 2026-10-02
+
+### Fixed
+
+- **A library rescan no longer freezes the window.** Rescan library folder,
+  the folder import and the refresh scan ran on the main thread, so for the
+  length of the walk the window could not answer the desktop. On a cold file
+  cache, the first scan after a reboot, GNOME on Wayland offered to force-quit
+  an app that was only busy; pressing it would have stopped the scan partway.
+  They now run in the background, as do recount tracks, rescan local covers,
+  the directory preview and extract embedded covers. The scan logic is
+  unchanged. A side effect: the progress counter the scan already reported
+  can now be painted while it runs.
+
 ## 0.4.0 — 2026-10-02
 
 ### Added

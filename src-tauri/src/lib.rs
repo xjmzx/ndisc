@@ -1848,7 +1848,14 @@ fn video_emit(count: Option<i64>) -> Option<i64> {
 /// mark_unpublished — it now reads as "needs republish" so the new tag can be
 /// emitted. Audio-only releases (video stays 0) are never affected.
 #[tauri::command]
-fn recount_tracks(app: tauri::AppHandle, force: Option<bool>) -> Result<usize, String> {
+async fn recount_tracks(app: tauri::AppHandle, force: Option<bool>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || recount_tracks_blocking(app, force))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Off the main thread — see `scan_library_changes`.
+fn recount_tracks_blocking(app: tauri::AppHandle, force: Option<bool>) -> Result<usize, String> {
     let conn = open(&app)?;
     let where_clause = if force.unwrap_or(false) {
         "file_path IS NOT NULL AND file_path <> ''"
@@ -3138,8 +3145,22 @@ pub struct LibraryScanSummary {
     pub errors: Vec<String>,
 }
 
+// The three library walks — discover, refresh, and the two together — read
+// tags from every file under the library root. As plain `#[tauri::command] fn`
+// they ran on the main thread, so for the length of the walk the window could
+// not answer the compositor: on a cold file cache (the first scan after a
+// reboot) GNOME on Wayland offered to force-quit a perfectly healthy app, and
+// the progress events they emit had nothing to paint them. Each is now an
+// async command that runs its `*_blocking` body on the blocking pool; the
+// bodies are unchanged.
 #[tauri::command]
-fn scan_library_changes(
+async fn scan_library_changes(app: tauri::AppHandle) -> Result<LibraryScanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_library_changes_blocking(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn scan_library_changes_blocking(
     app: tauri::AppHandle,
 ) -> Result<LibraryScanSummary, String> {
     // Pull all releases that have a file_path. Physical releases without a
@@ -3267,7 +3288,16 @@ pub struct LibraryReconcileSummary {
 /// can show a "last scanned" readout without re-walking the disk. `root`
 /// defaults to the derived common prefix of all local releases.
 #[tauri::command]
-fn reconcile_library(
+async fn reconcile_library(
+    app: tauri::AppHandle,
+    root: Option<String>,
+) -> Result<LibraryReconcileSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || reconcile_library_blocking(app, root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn reconcile_library_blocking(
     app: tauri::AppHandle,
     root: Option<String>,
 ) -> Result<LibraryReconcileSummary, String> {
@@ -3277,9 +3307,9 @@ fn reconcile_library(
     };
 
     let _ = app.emit("reconcile:phase", "discover");
-    let import = import_directory(app.clone(), root.clone())?;
+    let import = import_directory_blocking(app.clone(), root.clone())?;
     let _ = app.emit("reconcile:phase", "refresh");
-    let scan = scan_library_changes(app.clone())?;
+    let scan = scan_library_changes_blocking(app.clone())?;
 
     let scanned_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -7409,7 +7439,14 @@ pub struct RescanSummary {
 }
 
 #[tauri::command]
-fn rescan_local_covers(app: tauri::AppHandle) -> Result<RescanSummary, String> {
+async fn rescan_local_covers(app: tauri::AppHandle) -> Result<RescanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || rescan_local_covers_blocking(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Off the main thread — see `scan_library_changes`.
+fn rescan_local_covers_blocking(app: tauri::AppHandle) -> Result<RescanSummary, String> {
     let mut conn = open(&app)?;
 
     let candidates: Vec<(i64, String)> = {
@@ -7520,7 +7557,14 @@ struct ImportProgress {
 }
 
 #[tauri::command]
-fn scan_directory(root: String) -> Result<ScanReport, String> {
+async fn scan_directory(root: String) -> Result<ScanReport, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_directory_blocking(root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Off the main thread — see `scan_library_changes`.
+fn scan_directory_blocking(root: String) -> Result<ScanReport, String> {
     let root = PathBuf::from(&root);
     if !root.is_dir() {
         return Err(format!("not a directory: {}", root.display()));
@@ -7718,7 +7762,13 @@ fn build_format_string(info: &DirInfo) -> String {
 }
 
 #[tauri::command]
-fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary, String> {
+async fn import_directory(app: tauri::AppHandle, root: String) -> Result<ImportSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || import_directory_blocking(app, root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn import_directory_blocking(app: tauri::AppHandle, root: String) -> Result<ImportSummary, String> {
     let root = PathBuf::from(&root);
     if !root.is_dir() {
         return Err(format!("not a directory: {}", root.display()));
@@ -7939,7 +7989,14 @@ fn extract_picture_from(audio_path: &Path) -> Option<(Vec<u8>, &'static str)> {
 }
 
 #[tauri::command]
-fn extract_embedded_covers(app: tauri::AppHandle) -> Result<ExtractSummary, String> {
+async fn extract_embedded_covers(app: tauri::AppHandle) -> Result<ExtractSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || extract_embedded_covers_blocking(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Off the main thread — see `scan_library_changes`.
+fn extract_embedded_covers_blocking(app: tauri::AppHandle) -> Result<ExtractSummary, String> {
     let mut conn = open(&app)?;
 
     // Pull every release that currently lacks a cover URL and a cover path,
