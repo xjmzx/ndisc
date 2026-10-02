@@ -21,6 +21,43 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.4.0 — 2026-10-02
+
+### Added
+
+- **Drift review: write mine to file.** A third outcome beside *keep mine* and
+  *use file*: keep the curated value and write it into the files' tags
+  (`ALBUM`, `ALBUMARTIST`, `DATE`), per release or for every release listed.
+  The values come from the catalogue row, so it can only move a file towards
+  the catalogue, and it does **not** mark the release for republish: the live
+  event was emitted from the row, which does not change. It re-reads the files
+  afterwards and keeps any release that still disagrees in the list.
+
+  This closes a loop left open in September. The suffix strip of 2026-09-16
+  changed the catalogue only; a scan reverted it; the restore from the signed
+  events on 2026-09-22 repaired the catalogue only. The files kept the retail
+  names (`Voodoo Ray - EP`), so every scan re-reported the same ~250 releases
+  and nothing but *use file* — which undoes the rename — could clear them.
+  Run against the live library: 251 releases written, drift 0, 1,899 still
+  published.
+
+### Fixed
+
+- **Writing tags to a FLAC changed tags it was not asked to.** The write went
+  through lofty's format-neutral `Tag`, and that round trip is not neutral for
+  Vorbis comments: it renamed `TOTALTRACKS` → `TRACKTOTAL` and
+  `ORGANIZATION` → `LABEL` (duplicating the value where both spellings
+  existed), folded `ORIGINALYEAR` into `ORIGINALDATE`, and added an `ENCODER`
+  comment from the vendor string. FLAC files now have the named comment edited
+  directly in the Vorbis block. Found by diffing written copies against their
+  originals; the same diff after the change shows only the intended comment
+  moving. MP3 was already clean. Folders written by 0.3.2 or earlier may carry
+  the renamed or duplicated comments.
+
+  Still true: lofty's Vorbis *parser* drops empty-valued comments and rewrites
+  `TRACKNUMBER` `01` as `1`, so a file carrying either is normalised on any
+  write.
+
 ## 0.3.2 — 2026-09-30
 
 ### Fixed
