@@ -1828,6 +1828,101 @@ fn count_media_in_dir(dir: &str) -> Option<(i64, i64)> {
     Some((audio, video))
 }
 
+/// How many tracks in a release folder have a lyrics sidecar: a `.lrc` or
+/// `.txt` whose name matches an audio or video file beside it — the same rule
+/// nplay uses to find one, so a stray `info.txt` never counts. Spans disc
+/// subfolders like `count_media_in_dir`.
+fn count_lyrics_in_dir(dir: &str) -> i64 {
+    let base = Path::new(dir);
+    let mut roots: Vec<PathBuf> = vec![base.to_path_buf()];
+    roots.extend(disc_subdirs(base));
+    let mut n = 0;
+    for r in &roots {
+        let Ok(entries) = std::fs::read_dir(r) else {
+            continue;
+        };
+        let files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+        let tracks: HashSet<&std::ffi::OsStr> = files
+            .iter()
+            .filter(|p| is_audio(p) || is_video(p))
+            .filter_map(|p| p.file_stem())
+            .collect();
+        // A track with both a .lrc and a .txt still has lyrics once.
+        let with_lyrics: HashSet<&std::ffi::OsStr> = files
+            .iter()
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("lrc") || e.eq_ignore_ascii_case("txt"))
+            })
+            .filter_map(|p| p.file_stem())
+            .filter(|stem| tracks.contains(stem))
+            .collect();
+        n += with_lyrics.len() as i64;
+    }
+    n
+}
+
+#[cfg(test)]
+mod lyrics_count_tests {
+    use super::count_lyrics_in_dir;
+    use std::fs;
+
+    #[test]
+    fn counts_only_sidecars_that_match_a_track() {
+        let dir = std::env::temp_dir().join(format!("ndisc-lyrics-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for f in [
+            "01 - One.flac",
+            "01 - One.lrc",
+            "02 - Two.flac",
+            "02 - Two.txt",
+            "02 - Two.lrc", // both kinds: still one track with lyrics
+            "03 - Three.flac",
+            "info.txt",        // no track of that name
+            "04 - Gone.lrc",   // lyric with no track
+            "cover.jpg",
+        ] {
+            fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(count_lyrics_in_dir(dir.to_str().unwrap()), 2);
+        assert_eq!(count_lyrics_in_dir("/nonexistent/ndisc-lyrics"), 0);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+/// Release id → number of tracks with lyrics, for releases that have any.
+///
+/// Read from the folders on every call and never stored: lyrics are local
+/// files beside the audio (nplay shows and edits them), not catalogue data, so
+/// there is no column, nothing to migrate, and nothing here is ever published.
+/// One directory read per release; off the main thread because a cold cache on
+/// a large library is slow enough to stall the window.
+#[tauri::command]
+async fn lyrics_counts(app: tauri::AppHandle) -> Result<HashMap<i64, i64>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare("SELECT id, file_path FROM releases WHERE file_path IS NOT NULL AND file_path != ''")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, dir)| {
+                let n = count_lyrics_in_dir(&dir);
+                (n > 0).then_some((id, n))
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The `video` tag is emitted only when the count is > 0; this is the form a
 /// change is compared against to decide publish-staleness (NULL/0 both mean
 /// "no tag"). Returns the emitted value, or None when nothing would be emitted.
@@ -9345,6 +9440,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            lyrics_counts,
             init_db,
             set_db_path,
             add_release,

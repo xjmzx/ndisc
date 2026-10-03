@@ -21,6 +21,16 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Added — a "has lyrics" marker on the release list
+
+A release whose tracks have lyric files beside them (`<track>.lrc` or `.txt`,
+the files nplay 0.3.3 shows and edits) carries a small microphone in its row,
+with the count in the tooltip. Read from the folders each time the list loads:
+no new column, no migration, **no contract change** — lyrics are local files
+and nothing about them is published.
+
 ## 0.4.1 — 2026-10-02
 
 ### Fixed

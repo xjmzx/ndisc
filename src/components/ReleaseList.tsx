@@ -6,6 +6,7 @@ import {
   Combine,
   Disc3,
   Film,
+  MicVocal,
   FolderCog,
   FolderSearch,
   FolderSync,
@@ -39,6 +40,7 @@ import {
   findDuplicateGroups,
   getLibraryRoot,
   listReleases,
+  lyricsCounts,
   publishByIds,
   purgeRelayEvents,
   reconcileLibrary,
@@ -1023,6 +1025,23 @@ export function ReleaseList({
   }
   useEffect(() => {
     refreshDupCount();
+  }, [reloadKey]);
+
+  // Which releases have lyric files beside their tracks. A side lookup rather
+  // than a field on the release: lyrics live in the folders (nplay shows and
+  // edits them), so this is re-read from disk and a failure just means no
+  // markers.
+  const [lyrics, setLyrics] = useState<Record<number, number>>({});
+  useEffect(() => {
+    let alive = true;
+    lyricsCounts()
+      .then((m) => {
+        if (alive) setLyrics(m);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, [reloadKey]);
 
   // Bubble the FULL filter set + the exact visible id list up so the Nostr
@@ -2126,6 +2145,17 @@ export function ReleaseList({
                       aria-label="has video"
                     >
                       <Film size={12} />
+                    </span>
+                  )}
+                  {/* Lyrics marker — same muted-mauve glyph treatment as the
+                      video marker; the count is in the tooltip. */}
+                  {r.id != null && lyrics[r.id] > 0 && (
+                    <span
+                      className="shrink-0 grid place-items-center text-mauve/60"
+                      title={`Lyrics for ${lyrics[r.id]} track${lyrics[r.id] === 1 ? "" : "s"}`}
+                      aria-label="has lyrics"
+                    >
+                      <MicVocal size={12} />
                     </span>
                   )}
                   {/* State cluster: 4-state publish dot + medium share one

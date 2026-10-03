@@ -164,6 +164,13 @@ export async function restoreRelease(release: Release): Promise<number> {
   return invoke<number>("restore_release", { release });
 }
 
+/** Release id → number of tracks with a lyrics file beside them (`<track>.lrc`
+ *  or `.txt`), for releases that have any. Read from disk on each call; lyrics
+ *  are local files, never catalogue data and never published. */
+export function lyricsCounts(): Promise<Record<number, number>> {
+  return invoke("lyrics_counts");
+}
+
 export async function listReleases(
   query?: string,
   medium?: "physical" | "digital",
