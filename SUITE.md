@@ -17,7 +17,7 @@ remote signer, the design language, and the roadmap. Each app also ships its own
 
 The name says which rules apply. Two kinds of app read this document:
 
-- **`n*` apps are the suite** (ndisc, nplay, ntree, nsmpl, nview, nping,
+- **`n*` apps are the suite** (ndisc, nplay, ntree, nsmpl, nview, nping, nref,
   nchat…). *Shared design language* below applies to them **strictly**: the
   palette, the top-bar and library grammars, squared corners and the other
   form rules. A departure is a change to this document first, not a local
@@ -84,6 +84,7 @@ as a convenience, never the record.
 | **nsmpl** | Sample tool (two-track) + publisher | Tauri 2 · React | Publishes NIP-94 samples + reactions; reads feed |
 | **nview** | Mobile viewer (read + react) | Capacitor · React | Reads releases/labels/feed; reacts via NIP-46 |
 | **nping** | Nostr relay connectivity tester | Tauri 2 · React | No keys — tests relays |
+| **nref** | Reference browser for event kinds + NIPs | Tauri 2 · React | None — no keys, no relays; reads two local git checkouts |
 | **nchat** | Private direct messages | Tauri 2 · React | NIP-17 gift-wrapped DMs; whitelist-only |
 | **nsign** | The suite's remote signer (headless daemon) | Rust · rust-nostr | Holds the key; answers NIP-46; asks a person via the approval channel |
 | **nbridge** | Relay viewer + the signer's **monitor** | SwiftUI (macOS) · native per platform | Shows signer traffic; approves or denies requests; holds its own key, never the signer's |
@@ -92,6 +93,14 @@ as a convenience, never the record.
 to the data it emits. `nchat` is in the suite because it is where the suite's
 own alerts land — the cert and domain expiry bots DM their operator — not
 because it touches a release.
+
+`nref` (2026-10-03) is off the wire entirely: it reads `nostr-protocol/nips` and
+`nostr-protocol/registry-of-kinds` from local checkouts and shows the kinds and
+the specs, cross-linked. It marks the kinds this suite uses from a hand-kept
+list (`nref/src/lib/suite.ts`) that mirrors the wire-contract table below —
+**a contract change that adds, drops or renumbers a kind needs that file
+updated too.** As of its first release the public registry lists none of
+31237 / 31238 / 31239.
 
 ---
 
