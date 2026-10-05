@@ -23,6 +23,7 @@ import {
   Radio,
   RefreshCw,
   SatelliteDish,
+  StickyNote,
   ScanLine,
   Search,
   Tag,
@@ -52,6 +53,7 @@ import {
   auditPublishedContent,
   reconcilePublishedCovers,
   migrateCoversToBlossom,
+  listReleaseNotes,
   mirrorCoversToBlossom,
   rescanLocalCovers,
   scanLibraryChanges,
@@ -74,6 +76,7 @@ import {
   type ManifestSummary,
   type PublishedCoverReconcile,
   type CoverMigration,
+  type NoteGroup,
   type CoverMirroring,
   type PurgeSummary,
   type ReconcileSummary,
@@ -92,6 +95,7 @@ import { withoutDismissed } from "../lib/driftDismiss";
 import { DuplicatesDialog } from "./DuplicatesDialog";
 import { DriftDialog } from "./DriftDialog";
 import { ContentAuditDialog } from "./ContentAuditDialog";
+import { NotesReviewDialog } from "./NotesReviewDialog";
 import {
   SOURCE_PLATFORMS,
   releaseSourceColor,
@@ -263,6 +267,8 @@ export function ReleaseList({
   // Rows for the drift review dialog, captured from the last scan summary.
   // null = dialog closed.
   const [driftRows, setDriftRows] = useState<ReleaseDrift[] | null>(null);
+  // The notes review's groups, when its dialog is open. null = closed.
+  const [notesOpen, setNotesOpen] = useState<NoteGroup[] | null>(null);
   // The last content audit, when its dialog is open. null = closed.
   const [auditOpen, setAuditOpen] = useState<ContentAudit | null>(null);
   // Bumped whenever a dismissal is written, so the banner re-counts.
@@ -1529,6 +1535,22 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<StickyNote size={14} />}
+                label="Review notes"
+                detail="See every distinct note, clear the unwanted in bulk"
+                active={false}
+                disabled={activeOp !== null}
+                onClick={async () => {
+                  setMaintMenuOpen(false);
+                  setError(null);
+                  try {
+                    setNotesOpen(await listReleaseNotes());
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+              />
+              <MaintMenuItem
                 icon={<FileWarning size={14} />}
                 label="Audit published content"
                 detail="Compare live events with the catalogue, tag by tag"
@@ -1610,6 +1632,14 @@ export function ReleaseList({
             refreshDupCount();
             reload();
           }}
+        />
+      )}
+
+      {notesOpen && (
+        <NotesReviewDialog
+          groups={notesOpen}
+          onClose={() => setNotesOpen(null)}
+          onCleared={() => reload()}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Check,
   Combine,
@@ -10,6 +10,7 @@ import {
   FolderPlus,
   ImageDown,
   ImageUp,
+  StickyNote,
   Image as ImageIcon,
   Loader2,
   Pencil,
@@ -46,6 +47,7 @@ import {
   publishRelease,
   refreshRelease,
   setCoverArtUrl,
+  setReleaseNotes,
   setReleaseCatalogNumber,
   setReleaseDiscogsId,
   setReleaseDiscTotal,
@@ -255,6 +257,22 @@ export function ReleaseDetail({
       setLatestOp({ kind: "error", text: String(e) });
     } finally {
       setUploadingCover(false);
+    }
+  }
+
+  // Notes are the release's published content, so an edit goes through
+  // applyEdit like any other wire field and leaves the release stale.
+  async function commitNotes(value: string | null) {
+    if (!release.id) return;
+    try {
+      await setReleaseNotes(release.id, value);
+      applyEdit({ notes: value });
+      setLatestOp({
+        kind: "info",
+        text: value ? "notes saved" : "notes cleared",
+      });
+    } catch (e) {
+      setLatestOp({ kind: "error", text: String(e) });
     }
   }
 
@@ -828,8 +846,9 @@ export function ReleaseDetail({
         />
       )}
 
-      <div className="mt-4 grid grid-cols-[max-content_1fr] gap-x-3 items-center
-                      text-xs max-w-md">
+      <div className="mt-4 flex items-center gap-4 text-xs">
+      <div className="grid grid-cols-[max-content_1fr] gap-x-3 items-center
+                      flex-1 min-w-0 max-w-md">
         <span className="text-muted flex items-center" title="cover url">
           <ImageIcon size={14} aria-label="cover url" />
         </span>
@@ -845,6 +864,20 @@ export function ReleaseDetail({
             }
             uploading={uploadingCover}
           />
+        </div>
+      </div>
+        {/* Notes sit on the cover-URL line as a narrow chip, never a row of
+            their own: a full-width field here pushed the whole card down,
+            which is why it was removed once before. The chip shows the first
+            few characters; the editor opens over the layout, not in it. */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className="text-muted flex items-center"
+            title="notes — published with the release"
+          >
+            <StickyNote size={14} aria-label="notes" />
+          </span>
+          <NotesField value={release.notes ?? ""} onCommit={commitNotes} />
         </div>
       </div>
 
@@ -1954,6 +1987,93 @@ function CoverUrlField({
         </button>
       )}
     </div>
+  );
+}
+
+// The release's note, as a narrow chip: the first few characters and an
+// ellipsis, enough to see that a note exists and roughly what it says. Clicking
+// opens an editor that floats over the card (absolute), so reading or editing a
+// long note never moves anything. Commits on blur or Ctrl+Enter; Escape puts
+// the stored text back. Plain Enter is a newline — notes can be several lines.
+function NotesField({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string | null) => Promise<void> | void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Closing the editor unmounts the focused textarea, which can raise a second
+  // blur; this makes sure one edit is finished once.
+  const open = useRef(false);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  async function finish(commit: boolean) {
+    if (!open.current) return;
+    open.current = false;
+    setEditing(false);
+    const trimmed = draft.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    if (!commit || (value.trim() || null) === next) {
+      setDraft(value);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onCommit(next);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const preview = value.trim().split("\n")[0];
+  return (
+    <span className="relative block w-28">
+      <button
+        type="button"
+        onClick={() => {
+          open.current = true;
+          setEditing(true);
+        }}
+        disabled={saving}
+        title={value.trim() ? value : "Add a note — published with the release"}
+        className={
+          "block w-full px-2 py-1 rounded bg-surface/40 border border-surface/60 " +
+          "hover:border-accent/50 text-left text-[10px] truncate " +
+          "disabled:opacity-50 " +
+          (preview ? "text-fg" : "text-muted/60")
+        }
+      >
+        {preview || "notes"}
+      </button>
+      {editing && (
+        <textarea
+          autoFocus
+          value={draft}
+          rows={Math.min(8, Math.max(3, draft.split("\n").length + 1))}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => finish(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) finish(true);
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              finish(false);
+            }
+          }}
+          placeholder="notes — published with the release"
+          className="absolute z-20 top-0 right-0 w-80 px-2 py-1 rounded bg-panel
+                     text-fg outline-none border border-accent/50 shadow-xl
+                     text-[11px] leading-snug placeholder:text-muted/60
+                     resize-none"
+          spellCheck={false}
+        />
+      )}
+    </span>
   );
 }
 

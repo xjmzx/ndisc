@@ -110,6 +110,14 @@ CREATE TABLE IF NOT EXISTS cover_migrations (
     bytes       INTEGER NOT NULL,
     migrated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
+-- Notes removed in bulk by the notes review (clear_release_notes), so a note
+-- cleared by mistake can be read back and retyped.
+CREATE TABLE IF NOT EXISTS cleared_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    release_id  INTEGER NOT NULL,
+    notes       TEXT    NOT NULL,
+    cleared_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 -- Which mirror servers hold which cover, by hash. A mirror cannot be asked
 -- reliably — a shared host answers "yes" for a blob some other key uploaded —
 -- so what this key has sent is remembered here, and mirror_covers_to_blossom
@@ -513,6 +521,80 @@ mod blossom;
 
 #[cfg(test)]
 mod master_key;
+
+#[cfg(test)]
+mod notes_review {
+    use super::*;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        for (col, ty) in [
+            ("last_published_at", "INTEGER"),
+            ("last_published_naddr", "TEXT"),
+            ("publish_state", "TEXT"),
+        ] {
+            ensure_column(&conn, "releases", col, ty).unwrap();
+        }
+        let add = |title: &str, notes: Option<&str>, state: Option<&str>| {
+            conn.execute(
+                "INSERT INTO releases (artist, title, notes, publish_state, last_published_at)
+                 VALUES ('a', ?1, ?2, ?3, 1)",
+                params![title, notes, state],
+            )
+            .unwrap();
+        };
+        add("one", Some("Visit https://shop.example"), Some("published"));
+        add("two", Some("Visit https://shop.example"), Some("published"));
+        add("three", Some("Visit https://shop.example"), None);
+        add("four", Some("my own note"), Some("published"));
+        add("five", None, Some("published"));
+        add("six", Some("   "), Some("published"));
+        conn
+    }
+
+    #[test]
+    fn notes_are_grouped_by_text_most_widespread_first() {
+        let groups = note_groups(&db()).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].note, "Visit https://shop.example");
+        assert_eq!((groups[0].count, groups[0].published), (3, 2));
+        assert_eq!(groups[0].examples.len(), 3);
+        assert_eq!((groups[1].count, groups[1].published), (1, 1));
+    }
+
+    #[test]
+    fn clearing_removes_only_the_chosen_text_and_marks_stale() {
+        let mut conn = db();
+        let cleared =
+            clear_notes(&mut conn, &["Visit https://shop.example".to_string()]).unwrap();
+        assert_eq!(cleared, 3);
+
+        let left: Vec<(String, Option<String>, Option<String>)> = conn
+            .prepare("SELECT title, notes, publish_state FROM releases ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        // The two published ones went stale; the never-published one did not
+        // become anything it was not.
+        assert_eq!(left[0], ("one".into(), None, Some("stale".into())));
+        assert_eq!(left[1], ("two".into(), None, Some("stale".into())));
+        assert_eq!(left[2], ("three".into(), None, None));
+        // A different note, and its release's publish state, are untouched.
+        assert_eq!(
+            left[3],
+            ("four".into(), Some("my own note".into()), Some("published".into()))
+        );
+
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cleared_notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 3);
+        assert_eq!(note_groups(&conn).unwrap().len(), 1);
+    }
+}
 
 #[cfg(test)]
 mod distinct_label_list {
@@ -1210,6 +1292,125 @@ fn set_release_notes(
     .map_err(|e| e.to_string())?;
     mark_unpublished(&conn, release_id)?;
     Ok(())
+}
+
+/// One distinct note and the releases that carry it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteGroup {
+    pub note: String,
+    /// Releases with exactly this note.
+    pub count: usize,
+    /// Of those, how many are live on relays — where the note is public.
+    pub published: usize,
+    /// A few "artist — title" to recognise it by.
+    pub examples: Vec<String>,
+}
+
+/// Every distinct note in the catalogue, most widespread first.
+///
+/// Notes are published, and many arrived from file tags rather than from the
+/// owner. Grouping them by text is what makes reviewing them possible: sixty
+/// releases sharing one store's "Visit https://…" line are one decision, not
+/// sixty.
+#[tauri::command]
+fn list_release_notes(app: tauri::AppHandle) -> Result<Vec<NoteGroup>, String> {
+    let conn = open(&app)?;
+    note_groups(&conn)
+}
+
+fn note_groups(conn: &Connection) -> Result<Vec<NoteGroup>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT notes, artist, title, publish_state FROM releases
+              WHERE notes IS NOT NULL AND TRIM(notes) <> ''
+              ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut groups: Vec<NoteGroup> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for (note, artist, title, state) in rows.filter_map(|r| r.ok()) {
+        let at = *index.entry(note.clone()).or_insert_with(|| {
+            groups.push(NoteGroup {
+                note,
+                count: 0,
+                published: 0,
+                examples: Vec::new(),
+            });
+            groups.len() - 1
+        });
+        let group = &mut groups[at];
+        group.count += 1;
+        if matches!(state.as_deref(), Some("published") | Some("stale")) {
+            group.published += 1;
+        }
+        if group.examples.len() < 3 {
+            group.examples.push(format!("{artist} — {title}"));
+        }
+    }
+    groups.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.note.to_lowercase().cmp(&b.note.to_lowercase()))
+    });
+    Ok(groups)
+}
+
+/// Clear the notes of every release whose note is exactly one of `notes`.
+///
+/// Each cleared note is kept in `cleared_notes`, and each release is marked
+/// stale — its note was published content, so the event on the relays still
+/// carries it until the release is published again. Returns how many releases
+/// changed.
+#[tauri::command]
+fn clear_release_notes(app: tauri::AppHandle, notes: Vec<String>) -> Result<usize, String> {
+    let mut conn = open(&app)?;
+    clear_notes(&mut conn, &notes)
+}
+
+fn clear_notes(conn: &mut Connection, notes: &[String]) -> Result<usize, String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut cleared = 0usize;
+    for note in notes {
+        let ids: Vec<i64> = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM releases WHERE notes = ?1")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![note], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        for id in ids {
+            tx.execute(
+                "INSERT INTO cleared_notes (release_id, notes) VALUES (?1, ?2)",
+                params![id, note],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute(
+                "UPDATE releases
+                 SET notes = NULL, updated_at = strftime('%s','now')
+                 WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|e| e.to_string())?;
+            mark_unpublished(&tx, id)?;
+            cleared += 1;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(cleared)
 }
 
 #[tauri::command]
@@ -2770,16 +2971,19 @@ fn refresh_release_inner(
     };
     let new_cover_path = find_cover_deep(&dir).or_else(|| release.cover_art_path.clone());
 
-    // notes / source — fill-when-empty in BOTH modes, regardless of
-    // `overwrite_label`. We never overwrite a non-empty value, so hand-edited
-    // notes and curated source URLs survive a rescan. This only backfills
-    // releases that have none yet — e.g. lifting a Bandcamp store URL out of a
-    // file's COMMENT tag into `source` (and keeping the raw comment in notes).
-    let new_notes = if release.notes.as_deref().map(str::trim).unwrap_or("").is_empty() {
-        info.comment.clone().or_else(|| release.notes.clone())
-    } else {
-        release.notes.clone()
-    };
+    // source — fill-when-empty in BOTH modes, regardless of `overwrite_label`.
+    // We never overwrite a non-empty value, so a curated source URL survives a
+    // rescan. This only backfills releases that have none yet — e.g. lifting a
+    // Bandcamp store URL out of a file's COMMENT tag into `source`.
+    //
+    // notes are NOT touched by a scan. They are the published content of the
+    // release's event, and a file's COMMENT tag is whatever a store or a ripper
+    // left there ("Visit https://…", a download site's watermark). Copying it
+    // in put that text on the relays under the owner's name — and silently,
+    // because a scan does not mark a release stale. Notes are the owner's words
+    // or nothing; the one useful thing in a comment, a store URL, goes to
+    // `source` below.
+    let new_notes = release.notes.clone();
     let new_source = if release.source.as_deref().map(str::trim).unwrap_or("").is_empty() {
         info.source_url.clone().or_else(|| release.source.clone())
     } else {
@@ -8993,7 +9197,10 @@ fn import_directory_blocking(app: tauri::AppHandle, root: String) -> Result<Impo
                 info.year,
                 format,
                 info.label,
-                info.comment,
+                // notes start empty — a file's COMMENT tag is not the owner's
+                // note (see the scan's refresh path). Its store URL, if any,
+                // is already in `source_url`.
+                None::<String>,
                 info.source_url,
                 dir_str,
                 cover,
@@ -10503,6 +10710,8 @@ pub fn run() {
             upload_cover_to_blossom,
             mirror_covers_to_blossom,
             migrate_label_art_to_blossom,
+            list_release_notes,
+            clear_release_notes,
             publish_blossom_servers,
             update_release_path,
             inspect_release_path,

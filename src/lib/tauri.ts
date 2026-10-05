@@ -285,6 +285,28 @@ export async function setReleaseNotes(
   return invoke("set_release_notes", { releaseId, value });
 }
 
+// One distinct note and the releases that carry it.
+export interface NoteGroup {
+  note: string;
+  count: number;
+  // Of those, how many are live on relays — where the note is public.
+  published: number;
+  // A few "artist — title" to recognise it by.
+  examples: string[];
+}
+
+// Every distinct note in the catalogue, most widespread first.
+export async function listReleaseNotes(): Promise<NoteGroup[]> {
+  return invoke<NoteGroup[]>("list_release_notes");
+}
+
+// Clear the notes of every release whose note is exactly one of `notes`.
+// Marks them stale (a note is published content) and keeps the cleared text in
+// the cleared_notes table. Returns how many releases changed.
+export async function clearReleaseNotes(notes: string[]): Promise<number> {
+  return invoke<number>("clear_release_notes", { notes });
+}
+
 export async function setReleaseCondition(
   releaseId: number,
   value: string | null,
