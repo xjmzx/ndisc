@@ -21,6 +21,32 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.5.1 — 2026-10-05
+
+### Fixed
+
+- **The orphan view offered labels that are in use.** The label list was capped
+  at 500 rows, and the panel decided "in use or orphan" from that same list — so
+  in a catalogue with more than 500 labels, every one past the cut that had art
+  was listed as an orphan and offered for deletion. The list is no longer
+  capped; the panel's row limit now only bounds what is drawn. The artwork
+  counter's total is the whole catalogue's label count as a result.
+
+### Added — label art on Blossom
+
+The record-label images follow the covers. **No contract change:** the labels
+manifest (`labels.v1`, kind:31238) still carries one image URL per label.
+
+- **Move label art to Blossom** (label panel, beside the publish icon; shown
+  while any label image lives somewhere other than the primary server). Each
+  image is downloaded from its current address, checked the same way a cover is,
+  uploaded, and the label re-pointed. Labels that share one image move together.
+- **Mirror covers** now copies label art along with the covers.
+
+Moving the art changes the manifest, so the publish icon lights up — sending the
+new manifest stays its own step. The address each label had before is kept in a
+new `label_image_migrations` table.
+
 ## 0.5.0 — 2026-10-05
 
 ### Added — covers on Blossom
