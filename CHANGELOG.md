@@ -21,6 +21,30 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.5.2 — 2026-10-06
+
+### Changed — notes are the owner's words, not a file's comment
+
+A release's note is the content of its published event. Until now a scan filled
+an empty note from the files' COMMENT tag — whatever a store or a ripper left
+there ("Visit https://…", a download site's watermark) — and did so without
+marking the release stale, so the text reached the relays unannounced on the
+next publish.
+
+- **Scans and imports no longer copy a file's comment into notes.** A store URL
+  found in a comment still goes to `source`, as before. A cleared note now stays
+  cleared.
+- **Review notes** (maintenance menu). Every distinct note in the catalogue,
+  most widespread first, with its release count and a few examples. Tick the
+  unwanted ones and clear them together; the releases are marked stale and the
+  cleared text is kept in a new `cleared_notes` table.
+- **Notes in the release detail.** A narrow chip on the cover-URL line shows the
+  first few characters; clicking opens an editor that floats over the card, so
+  it never takes a row of its own.
+
+**No contract change.** Nothing here publishes: clearing or editing a note leaves
+the release stale until it is published again.
+
 ## 0.5.1 — 2026-10-05
 
 ### Fixed
