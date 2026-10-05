@@ -1,5 +1,12 @@
 # Coverage-by-type + playback source-select — design note (2026-07-22)
 
+> **Update, 2026-10-06 — the web copy is AAC now.** Everything below that says
+> "Opus" describes the design as built in July. From ntree 0.4.0 / nsmpl 0.6.0
+> the web-optimised copy of a clip is AAC in an MP4 container
+> (`<sig>.10s.m4a`, 128 kbps, 44.1 kHz), chosen for playback reach on Apple
+> devices. The three-audition model, the string-mirror lookup and the stable
+> blue identity are unchanged; the token is `--c-web` and the chip reads "aac".
+
 > **Status: BUILT — Phases 1–3 (ntree, 2026-07-22).** The ntree-side counterpart
 > to nsmpl's three-root switcher. No wire change; a per-app library-view feature
 > over the three suite trees (`music` / `music_clips` / `music_clips_comp`). What
