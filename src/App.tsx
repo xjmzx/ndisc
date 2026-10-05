@@ -123,6 +123,11 @@ function ensureMinRelays(relays: string[]): string[] {
 }
 
 const RELAYS_STORAGE_KEY = "ndisc.relays";
+// Blossom servers that hold cover images, in order: the first is the primary
+// (the URL a release publishes), the rest are mirrors. Empty by default — a
+// Blossom server only accepts uploads from keys it knows, so there is no
+// sensible shared default the way there is for a relay.
+const BLOSSOM_STORAGE_KEY = "ndisc.blossomServers";
 const LEGACY_RELAYS_STORAGE_KEY = "disco-vault.relays";
 
 // One-shot relay migration: damus rate-limits batch publish. Swap it for the
@@ -255,6 +260,18 @@ export default function App() {
     return DEFAULT_RELAYS;
   });
 
+  const [blossomServers, setBlossomServers] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(BLOSSOM_STORAGE_KEY) ?? "[]");
+      if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {
+        return parsed;
+      }
+    } catch {
+      /* fall through to none */
+    }
+    return [];
+  });
+
   const [filterContext, setFilterContext] = useState<FilterContext>({
     query: "",
     medium: null,
@@ -361,6 +378,14 @@ export default function App() {
       /* ignore */
     }
   }, [relays]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BLOSSOM_STORAGE_KEY, JSON.stringify(blossomServers));
+    } catch {
+      /* ignore */
+    }
+  }, [blossomServers]);
 
   function reload() {
     setReloadKey((k) => k + 1);
@@ -609,6 +634,7 @@ export default function App() {
               onSelect={selectRelease}
               onFilterChange={setFilterContext}
               relays={relays}
+              blossomServers={blossomServers}
             />
           </div>
           <div
@@ -625,6 +651,7 @@ export default function App() {
               <ReleaseDetail
                 release={selected}
                 relays={relays}
+                blossomServers={blossomServers}
                 onDeleted={reload}
                 onChanged={handleReleaseChanged}
                 showUndoToast={showUndoToast}
@@ -647,6 +674,8 @@ export default function App() {
               <NostrPanel
                 relays={relays}
                 setRelays={setRelays}
+                blossomServers={blossomServers}
+                setBlossomServers={setBlossomServers}
                 filterContext={filterContext}
                 npub={npub}
                 onIdentityChanged={onIdentityChanged}

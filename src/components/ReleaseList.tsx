@@ -4,6 +4,7 @@ import {
   ChevronUp,
   Circle,
   Combine,
+  Copy,
   Disc3,
   Film,
   MicVocal,
@@ -12,6 +13,7 @@ import {
   FolderSync,
   ImageDown,
   ImageOff,
+  ImageUp,
   Link2,
   Music,
   ShoppingBag,
@@ -49,6 +51,8 @@ import {
   physicalReleasesMissingPressing,
   auditPublishedContent,
   reconcilePublishedCovers,
+  migrateCoversToBlossom,
+  mirrorCoversToBlossom,
   rescanLocalCovers,
   scanLibraryChanges,
   setCoverArtUrl,
@@ -69,6 +73,8 @@ import {
   type PublishState,
   type ManifestSummary,
   type PublishedCoverReconcile,
+  type CoverMigration,
+  type CoverMirroring,
   type PurgeSummary,
   type ReconcileSummary,
   type ContentAudit,
@@ -127,6 +133,8 @@ interface Props {
   selected: Release | null;
   onFilterChange?: (ctx: FilterContext) => void;
   relays: string[];
+  // Ordered Blossom servers (first = primary), for the cover migration.
+  blossomServers: string[];
 }
 
 type MediumFilter = "" | "physical" | "digital";
@@ -154,6 +162,7 @@ export function ReleaseList({
   selected,
   onFilterChange,
   relays,
+  blossomServers,
 }: Props) {
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
@@ -243,7 +252,9 @@ export function ReleaseList({
     | "purge"
     | "republish"
     | "manifest"
-    | "coverGap";
+    | "coverGap"
+    | "coverMigrate"
+    | "coverMirror";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   // Rows for the drift review dialog, captured from the last scan summary.
@@ -265,6 +276,8 @@ export function ReleaseList({
     | { kind: "purge"; data: PurgeSummary }
     | { kind: "manifest"; data: ManifestSummary }
     | { kind: "coverGap"; data: PublishedCoverReconcile }
+    | { kind: "coverMigrate"; data: CoverMigration }
+    | { kind: "coverMirror"; data: CoverMirroring }
     | null
   >(null);
 
@@ -403,6 +416,101 @@ export function ReleaseList({
     // driftTick re-runs this after a dismissal is written.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opSummary, driftTick]);
+
+  // Move the covers the check pass listed onto the Blossom servers. Signs
+  // uploads and rewrites each release's cover URL, so it is an explicit step
+  // after the read-only check (runBackgroundOp("coverMigrate")). It does not
+  // publish — moved releases are left stale for the ordinary publish step.
+  async function runCoverMigrateFix(migration: CoverMigration) {
+    const todo = migration.pending.filter((p) => p.status !== "ok");
+    if (activeOp !== null || todo.length === 0) return;
+    const n = todo.length;
+    const yes = await ask(
+      `Move ${n.toLocaleString()} cover${n === 1 ? "" : "s"} to ${migration.server}?\n\n` +
+        "Each cover is downloaded from the address it has now, checked, and " +
+        "uploaded under its SHA-256 — the same image, at a new address. " +
+        "The release then points at the new address and is marked stale; " +
+        "the old address is kept on record and nothing is deleted from the " +
+        "old host.\n\n" +
+        "Nothing is published. Readers keep seeing the old covers until you " +
+        "publish the stale releases. Safe to stop and run again.",
+      { title: "Move covers to Blossom", kind: "info" },
+    );
+    if (!yes) return;
+
+    setActiveOp("coverMigrate");
+    setOpSummary(null);
+    setOpProgress({ current: 0, total: n, currentDir: "" });
+    setError(null);
+
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<number>("cover-migrate:started", (e) => {
+          setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+        }),
+      );
+      unlisteners.push(
+        await listen<ImportProgress>("cover-migrate:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const data = await migrateCoversToBlossom(blossomServers, true);
+      setOpSummary({ kind: "coverMigrate", data });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
+
+  // Copy the covers on the primary Blossom server to the mirrors — the
+  // follow-up to the check pass (runBackgroundOp("coverMirror")). Changes
+  // nothing a release publishes; it only adds copies elsewhere.
+  async function runCoverMirrorFix(mirroring: CoverMirroring) {
+    if (activeOp !== null || mirroring.pending === 0) return;
+    const n = mirroring.pending;
+    const yes = await ask(
+      `Make ${n.toLocaleString()} cop${n === 1 ? "y" : "ies"} on ${mirroring.mirrors.join(", ")}?\n\n` +
+        `Each cover is read back from ${mirroring.primary}, checked against ` +
+        "its hash, and uploaded to every mirror that doesn't have it yet. " +
+        "Cover URLs stay as they are and nothing is published.\n\n" +
+        "A mirror can be slow — allow several seconds per cover. Safe to " +
+        "stop and run again; what has been copied is remembered.",
+      { title: "Mirror covers", kind: "info" },
+    );
+    if (!yes) return;
+
+    setActiveOp("coverMirror");
+    setOpSummary(null);
+    setOpProgress({ current: 0, total: n, currentDir: "" });
+    setError(null);
+
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<number>("cover-mirror:started", (e) => {
+          setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+        }),
+      );
+      unlisteners.push(
+        await listen<ImportProgress>("cover-mirror:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const data = await mirrorCoversToBlossom(blossomServers, true);
+      setOpSummary({ kind: "coverMirror", data });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
 
   async function runCoverGapFix(reconcile: PublishedCoverReconcile) {
     if (activeOp !== null || reconcile.gaps.length === 0) return;
@@ -641,6 +749,56 @@ export function ReleaseList({
       try {
         const data = await reconcilePublishedCovers(false);
         setOpSummary({ kind: "coverGap", data });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
+
+    // Blossom cover migration — CHECK pass. Read-only, no network: counts the
+    // covers already on the primary server and lists the rest. The summary
+    // panel then offers to move them (runCoverMigrateFix).
+    if (kind === "coverMigrate") {
+      if (blossomServers.length === 0) {
+        setError(
+          "No Blossom server is set yet — add one under “Blossom servers” in the Nostr panel first.",
+        );
+        return;
+      }
+      setActiveOp("coverMigrate");
+      setOpSummary(null);
+      setOpProgress(null);
+      setError(null);
+      try {
+        const data = await migrateCoversToBlossom(blossomServers, false);
+        setOpSummary({ kind: "coverMigrate", data });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
+      return;
+    }
+
+    // Blossom mirror — CHECK pass. Read-only, no network: counts the covers on
+    // the primary server and the copies the mirrors still lack. The summary
+    // panel then offers to make them (runCoverMirrorFix).
+    if (kind === "coverMirror") {
+      if (blossomServers.length < 2) {
+        setError(
+          "No mirror is set — add a second server under “Blossom servers” in the Nostr panel first.",
+        );
+        return;
+      }
+      setActiveOp("coverMirror");
+      setOpSummary(null);
+      setOpProgress(null);
+      setError(null);
+      try {
+        const data = await mirrorCoversToBlossom(blossomServers, false);
+        setOpSummary({ kind: "coverMirror", data });
       } catch (e) {
         setError(String(e));
       } finally {
@@ -1308,6 +1466,28 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<ImageUp size={14} />}
+                label="Move covers to Blossom"
+                detail="Check which covers are elsewhere, then move them"
+                active={activeOp === "coverMigrate"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("coverMigrate");
+                }}
+              />
+              <MaintMenuItem
+                icon={<Copy size={14} />}
+                label="Mirror covers"
+                detail="Copy the covers on Blossom to the mirror servers"
+                active={activeOp === "coverMirror"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("coverMirror");
+                }}
+              />
+              <MaintMenuItem
                 icon={<FolderSync size={14} />}
                 label="Rescan library folder"
                 detail="Find new folders + refresh existing"
@@ -1457,7 +1637,11 @@ export function ReleaseList({
                       ? "retracting stray events from relays"
                       : activeOp === "coverGap"
                         ? "materializing published covers"
-                        : activeOp === "contentAudit"
+                        : activeOp === "coverMigrate"
+                          ? "moving covers to Blossom"
+                          : activeOp === "coverMirror"
+                            ? "copying covers to the mirrors"
+                            : activeOp === "contentAudit"
                           ? "comparing published events with the catalogue"
                           : activeOp === "repressing"
                             ? "re-fetching pressings from Discogs"
@@ -1755,6 +1939,105 @@ export function ReleaseList({
                   )}
               </>
             )}
+            {opSummary.kind === "coverMigrate" && (
+              <>
+                {opSummary.data.migrated > 0 && (
+                  <span className="text-ok">
+                    moved{" "}
+                    <span className="font-mono">{opSummary.data.migrated}</span>
+                  </span>
+                )}
+                <span
+                  className={
+                    opSummary.data.pending.some((p) => p.status !== "ok")
+                      ? "text-warn"
+                      : "text-muted"
+                  }
+                >
+                  {opSummary.data.pending.some((p) => p.status !== null)
+                    ? "not moved"
+                    : "to move"}{" "}
+                  <span className="font-mono">
+                    {opSummary.data.pending.filter((p) => p.status !== "ok").length}
+                  </span>
+                </span>
+                <span className="text-muted">
+                  already on Blossom{" "}
+                  <span className="font-mono">{opSummary.data.already}</span>
+                </span>
+                <span className="text-muted">
+                  with a cover URL{" "}
+                  <span className="font-mono">{opSummary.data.considered}</span>
+                </span>
+                {opSummary.data.warnings.length > 0 && (
+                  <span className="text-warn">
+                    warnings{" "}
+                    <span className="font-mono">
+                      {opSummary.data.warnings.length}
+                    </span>
+                  </span>
+                )}
+                {opSummary.data.pending.some((p) => p.status !== "ok") && (
+                  <button
+                    onClick={() => runCoverMigrateFix(opSummary.data)}
+                    className="px-2 py-0.5 rounded bg-nostr/15 text-nostr
+                               hover:bg-nostr hover:text-bg text-[10px]
+                               font-medium transition-colors"
+                    title={`Upload each cover to ${opSummary.data.server} and point the release at it`}
+                  >
+                    {opSummary.data.pending.some((p) => p.status !== null)
+                      ? "Retry "
+                      : "Move "}
+                    {opSummary.data.pending.filter((p) => p.status !== "ok").length}{" "}
+                    cover
+                    {opSummary.data.pending.filter((p) => p.status !== "ok")
+                      .length === 1
+                      ? ""
+                      : "s"}
+                  </button>
+                )}
+              </>
+            )}
+            {opSummary.kind === "coverMirror" && (
+              <>
+                {opSummary.data.mirrored > 0 && (
+                  <span className="text-ok">
+                    copied{" "}
+                    <span className="font-mono">{opSummary.data.mirrored}</span>
+                  </span>
+                )}
+                <span
+                  className={
+                    opSummary.data.pending > 0 ? "text-warn" : "text-muted"
+                  }
+                >
+                  to copy{" "}
+                  <span className="font-mono">{opSummary.data.pending}</span>
+                </span>
+                <span className="text-muted">
+                  covers on Blossom{" "}
+                  <span className="font-mono">{opSummary.data.covers}</span>
+                </span>
+                <span className="text-muted">
+                  mirrors{" "}
+                  <span className="font-mono">
+                    {opSummary.data.mirrors.length}
+                  </span>
+                </span>
+                {opSummary.data.pending > 0 && (
+                  <button
+                    onClick={() => runCoverMirrorFix(opSummary.data)}
+                    className="px-2 py-0.5 rounded bg-nostr/15 text-nostr
+                               hover:bg-nostr hover:text-bg text-[10px]
+                               font-medium transition-colors"
+                    title={`Copy to ${opSummary.data.mirrors.join(", ")}`}
+                  >
+                    {opSummary.data.errors.length > 0 ? "Retry " : "Copy "}
+                    {opSummary.data.pending}
+                  </button>
+                )}
+              </>
+            )}
             {opSummary.kind === "reconcile" && (
               <>
                 <span className="text-ok">
@@ -1895,6 +2178,31 @@ export function ReleaseList({
           </ul>
         </details>
       )}
+
+      {!activeOp && opSummary?.kind === "coverMigrate" && (
+        <CoverMigrationDetails migration={opSummary.data} />
+      )}
+
+      {!activeOp &&
+        opSummary?.kind === "coverMirror" &&
+        opSummary.data.errors.length > 0 && (
+          <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+            <summary className="text-alert cursor-pointer text-xs">
+              {opSummary.data.errors.length} cop
+              {opSummary.data.errors.length === 1 ? "y" : "ies"} not made
+            </summary>
+            <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+              {opSummary.data.errors.map((e, i) => (
+                <li
+                  key={i}
+                  className="px-2 py-1 rounded bg-bg/50 text-muted break-words"
+                >
+                  {e}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
 
       {!activeOp &&
         opSummary?.kind === "coverGap" &&
@@ -2288,7 +2596,7 @@ export function ReleaseList({
                         if (r.id !== undefined) saveCover(r.id);
                       }
                     }}
-                    placeholder="https://i.nostr.build/…"
+                    placeholder="https://…/cover.jpg"
                     className="flex-1 px-2 py-1 rounded bg-surface text-fg
                                text-[10px] font-mono outline-none border
                                border-transparent focus:border-accent/50"
@@ -2719,6 +3027,82 @@ function RelayAuditPanel({
         </div>
       )}
     </div>
+  );
+}
+
+// What a Blossom cover migration has to say beyond its counts. Before a run:
+// a sample of what would move (the full list can be two thousand rows, and the
+// count already says how many). After a run: every cover that did not move,
+// with the reason, then the warnings — those are what needs a decision.
+const COVER_MIGRATION_PREVIEW = 100;
+
+function CoverMigrationDetails({ migration }: { migration: CoverMigration }) {
+  const ran = migration.pending.some((p) => p.status !== null);
+  const failed = migration.pending.filter(
+    (p) => p.status !== null && p.status !== "ok",
+  );
+  const rows = ran ? failed : migration.pending.slice(0, COVER_MIGRATION_PREVIEW);
+  const hidden = ran ? 0 : migration.pending.length - rows.length;
+
+  return (
+    <>
+      {ran && migration.migrated > 0 && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs text-muted">
+          {migration.migrated.toLocaleString()} release
+          {migration.migrated === 1 ? " is" : "s are"} now stale — readers keep
+          the old cover until you publish them from the Nostr panel.
+        </div>
+      )}
+      {rows.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary
+            className={cn(
+              "cursor-pointer text-xs",
+              ran ? "text-alert" : "text-warn",
+            )}
+          >
+            {ran
+              ? `${failed.length} cover${failed.length === 1 ? "" : "s"} not moved`
+              : `${migration.pending.length} cover${migration.pending.length === 1 ? "" : "s"} not on ${migration.server}`}
+          </summary>
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {rows.map((p) => (
+              <li key={p.id} className="px-2 py-1 rounded bg-bg/50">
+                <div className="text-fg">
+                  {p.artist} <span className="text-muted">·</span> {p.title}
+                </div>
+                <div className="text-muted font-mono break-all">{p.oldUrl}</div>
+                {ran && <div className="text-alert break-words">{p.status}</div>}
+              </li>
+            ))}
+            {hidden > 0 && (
+              <li className="px-2 py-1 text-muted">
+                … and {hidden.toLocaleString()} more
+              </li>
+            )}
+          </ul>
+        </details>
+      )}
+      {migration.warnings.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary className="text-warn cursor-pointer text-xs">
+            {migration.warnings.length} warning
+            {migration.warnings.length === 1 ? "" : "s"} — covers moved, worth a
+            look
+          </summary>
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {migration.warnings.map((w, i) => (
+              <li
+                key={i}
+                className="px-2 py-1 rounded bg-bg/50 text-muted break-words"
+              >
+                {w}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
   );
 }
 

@@ -161,7 +161,7 @@ export function AddReleaseForm({
               type="text"
               value={release.coverArtUrl ?? ""}
               onChange={(e) => set("coverArtUrl", e.target.value)}
-              placeholder="https://i.nostr.build/…"
+              placeholder="https://…/cover.jpg"
               className={`${INPUT_CLS} flex-1`}
               spellCheck={false}
             />

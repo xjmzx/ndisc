@@ -97,6 +97,29 @@ CREATE TABLE IF NOT EXISTS feed_notes (
     created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
+-- One row each time a release's published cover URL is replaced by a Blossom
+-- one (migrate_covers_to_blossom, upload_cover_to_blossom). It keeps the URL
+-- the release carried before, so a move can be audited or undone by hand: the
+-- old host's copy is never deleted.
+CREATE TABLE IF NOT EXISTS cover_migrations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    release_id  INTEGER NOT NULL,
+    old_url     TEXT    NOT NULL,
+    new_url     TEXT    NOT NULL,
+    sha256      TEXT    NOT NULL,
+    bytes       INTEGER NOT NULL,
+    migrated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+-- Which mirror servers hold which cover, by hash. A mirror cannot be asked
+-- reliably — a shared host answers "yes" for a blob some other key uploaded —
+-- so what this key has sent is remembered here, and mirror_covers_to_blossom
+-- sends only what is missing.
+CREATE TABLE IF NOT EXISTS cover_mirrors (
+    sha256      TEXT    NOT NULL,
+    server      TEXT    NOT NULL,
+    mirrored_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (sha256, server)
+);
 "#;
 
 #[derive(Serialize, Deserialize)]
@@ -474,8 +497,92 @@ fn rename_legacy_musicbrainz_column(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+mod blossom;
+
 #[cfg(test)]
 mod master_key;
+
+#[cfg(test)]
+mod cover_migration {
+    use super::*;
+
+    #[test]
+    fn origin_is_scheme_and_host_only() {
+        assert_eq!(
+            url_origin(" https://i.example.com/abc.jpg?x=1 ").as_deref(),
+            Some("https://i.example.com")
+        );
+        assert_eq!(
+            url_origin("http://127.0.0.1:3000/abc").as_deref(),
+            Some("http://127.0.0.1:3000")
+        );
+        assert_eq!(url_origin("not a url"), None);
+        assert_eq!(url_origin("data:image/png;base64,AAAA"), None);
+    }
+
+    #[test]
+    fn hash_is_read_from_a_primary_url_only() {
+        let s = "https://b.example";
+        let h = "bc804a45701773bc3ea2551b8168ff6d50348909dc814f5b9bc0f2c76a456392";
+        assert_eq!(blob_hash_in_url(&format!("{s}/{h}.jpg"), s).as_deref(), Some(h));
+        assert_eq!(blob_hash_in_url(&format!("{s}/{h}"), s).as_deref(), Some(h));
+        assert_eq!(
+            blob_hash_in_url(&format!("{s}/{}.PNG?x=1", h.to_uppercase()), s).as_deref(),
+            Some(h)
+        );
+        assert_eq!(blob_hash_in_url(&format!("https://other.example/{h}.jpg"), s), None);
+        assert_eq!(blob_hash_in_url(&format!("{s}/eVUUkHRvlNovRy7HQU4GpL.jpg"), s), None);
+        assert_eq!(blob_hash_in_url(&format!("{s}/sub/{h}.jpg"), s), None);
+    }
+
+    #[test]
+    fn schema_has_the_migration_record() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO cover_migrations (release_id, old_url, new_url, sha256, bytes)
+             VALUES (1, 'https://old.example/a.jpg', 'https://new.example/h.jpg', 'h', 10)",
+            [],
+        )
+        .unwrap();
+        let (old, at): (String, i64) = conn
+            .query_row(
+                "SELECT old_url, migrated_at FROM cover_migrations WHERE release_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(old, "https://old.example/a.jpg");
+        assert!(at > 0);
+    }
+
+    /// Against a real image host. Ignored by default.
+    ///
+    /// NDISC_PLACEHOLDER_TEST_ORIGIN=https://… [NDISC_PLACEHOLDER_TEST_REAL=<url of a real image there>] \
+    ///   cargo test cover_migration::live_placeholders -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_placeholders() {
+        let origin = std::env::var("NDISC_PLACEHOLDER_TEST_ORIGIN").expect("NDISC_PLACEHOLDER_TEST_ORIGIN");
+        tauri::async_runtime::block_on(async {
+            let http = cover_http_client().unwrap();
+            let started = std::time::Instant::now();
+            let learned = learn_placeholders(&http, &origin).await;
+            println!("{origin}: {} placeholder image(s) in {:?}", learned.len(), started.elapsed());
+
+            // A second batch of made-up ids should hit nothing new.
+            let again = learn_placeholders(&http, &origin).await;
+            let missed = again.difference(&learned).count();
+            println!("second pass: {} image(s), {missed} not seen the first time", again.len());
+
+            if let Ok(real) = std::env::var("NDISC_PLACEHOLDER_TEST_REAL") {
+                let body = fetch_bytes(&http, &real).await.unwrap();
+                assert!(blossom::sniff_image(&body).is_some());
+                assert!(!learned.contains(&blossom::sha256_hex(&body)), "a real image was taken for a placeholder");
+            }
+        });
+    }
+}
 
 mod bandcamp_id_migration {
     use rusqlite::Connection;
@@ -4246,6 +4353,671 @@ async fn sync_cover_to_disk(
         status: "ok".into(),
         written: Some(out_str),
         bytes: Some(bytes),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Covers on Blossom
+// ---------------------------------------------------------------------------
+//
+// A release's published cover is one URL (`cover_art_url`, the kind:31237
+// `image` tag). These commands put the image on the user's own Blossom servers,
+// where its address is its SHA-256, and point that URL there. The protocol is
+// in `blossom.rs`; this is the catalogue side.
+//
+// Servers arrive as an ordered list from the UI, like relays do. The first is
+// the primary: its URL is what gets published, and a failure there fails the
+// cover. The rest are mirrors, and copying to them is a separate step
+// (`mirror_covers_to_blossom`) — a mirror can be far slower than the primary,
+// and moving two thousand covers should not wait on it.
+
+/// One release's cover, as the Blossom migration sees it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverMigrationItem {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    /// The URL the release carried when the run started.
+    pub old_url: String,
+    /// Where the cover lives now — set once moved.
+    pub new_url: Option<String>,
+    pub sha256: Option<String>,
+    pub bytes: Option<u64>,
+    /// "ok" once moved, else the error. None in check-only mode.
+    pub status: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverMigration {
+    /// The primary server — the one the new URLs point at.
+    pub server: String,
+    /// Releases that carry a cover URL at all.
+    pub considered: usize,
+    /// Of those, how many already point at the primary (nothing to do).
+    pub already: usize,
+    /// The rest. Ordered artist/year.
+    pub pending: Vec<CoverMigrationItem>,
+    /// Releases whose URL was rewritten this run (0 in check-only mode).
+    pub migrated: usize,
+    pub errors: Vec<String>,
+    /// Things worth a look that did not stop a cover moving, such as two
+    /// releases sharing one image under different URLs.
+    pub warnings: Vec<String>,
+}
+
+/// A cover that is now on the primary server.
+#[derive(Clone)]
+struct StoredCover {
+    url: String,
+    sha256: String,
+    bytes: u64,
+    mime: &'static str,
+}
+
+fn cover_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .user_agent(concat!("ndisc/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+async fn fetch_bytes(http: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    let response = http
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("fetch {url}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("fetch {url}: {}", response.status()));
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| format!("read {url}: {e}"))?;
+    Ok(body.to_vec())
+}
+
+/// `scheme://host[:port]` of a URL, or None when it does not parse.
+fn url_origin(url: &str) -> Option<String> {
+    let parsed = Url::parse(url.trim()).ok()?;
+    let origin = parsed.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
+}
+
+/// Learn the images a host serves for covers that do not exist.
+///
+/// A well-behaved host answers 404 for an unknown id. Some image hosts answer
+/// 200 with a stock picture instead — one of a small rotating set — so neither
+/// the status nor the content type says whether a cover is still there. Moving
+/// such a response would publish the stock picture as the release's cover.
+///
+/// So ask for ids that cannot exist and remember what comes back. Probing stops
+/// once the host has clearly refused (the first few all fail) or once a long run
+/// of probes has produced no picture not already seen.
+async fn learn_placeholders(http: &reqwest::Client, origin: &str) -> HashSet<String> {
+    const MAX_PROBES: usize = 64;
+    const QUIET_RUN: usize = 16;
+    const REFUSALS_TO_TRUST: usize = 3;
+
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut quiet = 0usize;
+    let mut refused = 0usize;
+
+    for i in 0..MAX_PROBES {
+        let id = &blossom::sha256_hex(format!("ndisc-probe-{seed}-{i}").as_bytes())[..22];
+        match fetch_bytes(http, &format!("{origin}/{id}.jpg")).await {
+            Ok(body) if blossom::sniff_image(&body).is_some() => {
+                if seen.insert(blossom::sha256_hex(&body)) {
+                    quiet = 0;
+                } else {
+                    quiet += 1;
+                }
+            }
+            _ => {
+                refused += 1;
+                if seen.is_empty() && refused >= REFUSALS_TO_TRUST {
+                    break;
+                }
+                quiet += 1;
+            }
+        }
+        if quiet >= QUIET_RUN {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    seen
+}
+
+/// Put one image on the primary server and return its address there.
+async fn store_cover(
+    http: &reqwest::Client,
+    keys: &Keys,
+    primary: &str,
+    bytes: &[u8],
+) -> Result<StoredCover, String> {
+    let (ext, mime) = blossom::sniff_image(bytes)
+        .ok_or_else(|| "not a JPEG, PNG, WebP or GIF image".to_string())?;
+    let sha256 = blossom::sha256_hex(bytes);
+    blossom::upload(http, keys, primary, bytes, mime, &sha256).await?;
+    Ok(StoredCover {
+        url: blossom::blob_url(primary, &sha256, ext),
+        sha256,
+        bytes: bytes.len() as u64,
+        mime,
+    })
+}
+
+/// Copy one blob to each of `mirrors`, remembering every server that took it.
+/// Returns the failures — a mirror that refuses is reported, never fatal.
+async fn mirror_cover(
+    app: &tauri::AppHandle,
+    http: &reqwest::Client,
+    keys: &Keys,
+    mirrors: &[String],
+    bytes: &[u8],
+    mime: &str,
+    sha256: &str,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for mirror in mirrors {
+        let sent = blossom::upload(http, keys, mirror, bytes, mime, sha256)
+            .await
+            .and_then(|_| {
+                let conn = open(app)?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO cover_mirrors (sha256, server) VALUES (?1, ?2)",
+                    params![sha256, mirror],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            });
+        if let Err(e) = sent {
+            failures.push(e);
+        }
+    }
+    failures
+}
+
+/// Point a release at its Blossom cover, keeping a record of the URL it had.
+///
+/// One transaction per release, so a run that stops half-way leaves every
+/// release either fully moved or untouched. The URL is part of the kind:31237
+/// event, so a changed one marks the release stale for the next publish.
+fn record_cover_move(
+    app: &tauri::AppHandle,
+    release_id: i64,
+    old_url: Option<&str>,
+    stored: &StoredCover,
+) -> Result<(), String> {
+    let old = old_url.map(str::trim).filter(|s| !s.is_empty());
+    if old == Some(stored.url.as_str()) {
+        return Ok(());
+    }
+    let mut conn = open(app)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if let Some(old) = old {
+        tx.execute(
+            "INSERT INTO cover_migrations (release_id, old_url, new_url, sha256, bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![release_id, old, stored.url, stored.sha256, stored.bytes as i64],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "UPDATE releases
+         SET cover_art_url = ?1, updated_at = strftime('%s','now')
+         WHERE id = ?2",
+        params![stored.url, release_id],
+    )
+    .map_err(|e| e.to_string())?;
+    mark_unpublished(&tx, release_id)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Move every release's cover onto the user's Blossom servers.
+///
+/// With `fix = false` it only reports: how many releases carry a cover URL, how
+/// many already point at the primary server, and which are left. Nothing is
+/// fetched, signed or written.
+///
+/// With `fix = true` each remaining cover is downloaded from the URL it has
+/// now, checked, uploaded, and the release re-pointed. The bytes that are moved
+/// are the published ones — not the local `cover_art_path` file, which for some
+/// releases is a different rendition — so nothing changes for a reader except
+/// the address. Each release is committed on its own, and a release already on
+/// the primary is skipped, so an interrupted run is resumed by running it again.
+///
+/// It does not publish. Every moved release is left stale; sending the new
+/// events is the ordinary publish step, taken when the operator chooses.
+#[tauri::command]
+async fn migrate_covers_to_blossom(
+    app: tauri::AppHandle,
+    servers: Vec<String>,
+    fix: bool,
+) -> Result<CoverMigration, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+    let primary = servers[0].clone();
+
+    // Read candidates, then DROP the connection before any await — a rusqlite
+    // Connection is not Send and must never be held across one.
+    let rows: Vec<(i64, String, String, String)> = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, artist, title, cover_art_url
+                   FROM releases
+                  WHERE cover_art_url IS NOT NULL AND TRIM(cover_art_url) <> ''
+                  ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let considered = rows.len();
+    let mut already = 0usize;
+    let mut pending: Vec<CoverMigrationItem> = Vec::new();
+    for (id, artist, title, url) in rows {
+        if blossom::is_on_server(&url, &primary) {
+            already += 1;
+        } else {
+            pending.push(CoverMigrationItem {
+                id,
+                artist,
+                title,
+                old_url: url.trim().to_string(),
+                new_url: None,
+                sha256: None,
+                bytes: None,
+                status: None,
+            });
+        }
+    }
+
+    let mut result = CoverMigration {
+        server: primary,
+        considered,
+        already,
+        pending,
+        migrated: 0,
+        errors: Vec::new(),
+        warnings: Vec::new(),
+    };
+    if !fix || result.pending.is_empty() {
+        return Ok(result);
+    }
+
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+
+    let total = result.pending.len();
+    let _ = app.emit("cover-migrate:started", total);
+
+    // What each source host serves for a cover that is not there. Learned once
+    // per host, before anything is moved.
+    let mut placeholders: HashMap<String, HashSet<String>> = HashMap::new();
+    for item in &result.pending {
+        if let Some(origin) = url_origin(&item.old_url) {
+            if !placeholders.contains_key(&origin) {
+                // This can take most of a minute; say so rather than sit at 0.
+                let _ = app.emit(
+                    "cover-migrate:progress",
+                    ImportProgress {
+                        current: 0,
+                        total,
+                        current_dir: format!("checking {origin} for placeholder images"),
+                    },
+                );
+                let learned = learn_placeholders(&http, &origin).await;
+                placeholders.insert(origin, learned);
+            }
+        }
+    }
+
+    // A URL shared by several releases is fetched and uploaded once.
+    let mut by_url: HashMap<String, Result<StoredCover, String>> = HashMap::new();
+    // First release seen for each image, to notice two URLs with one picture.
+    let mut by_hash: HashMap<String, (i64, String)> = HashMap::new();
+
+    for (i, item) in result.pending.iter_mut().enumerate() {
+        let _ = app.emit(
+            "cover-migrate:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: format!("{} — {}", item.artist, item.title),
+            },
+        );
+
+        let outcome = match by_url.get(&item.old_url) {
+            Some(known) => known.clone(),
+            None => {
+                let fresh = match fetch_bytes(&http, &item.old_url).await {
+                    Err(e) => Err(e),
+                    Ok(body) => {
+                        let is_placeholder = url_origin(&item.old_url)
+                            .and_then(|o| placeholders.get(&o))
+                            .map(|set| set.contains(&blossom::sha256_hex(&body)))
+                            .unwrap_or(false);
+                        if is_placeholder {
+                            Err("the host returned its stock placeholder — the original is gone".to_string())
+                        } else {
+                            store_cover(&http, &keys, &servers[0], &body).await
+                        }
+                    }
+                };
+                if let Ok(stored) = &fresh {
+                    match by_hash.get(&stored.sha256) {
+                        Some((other_id, other_url)) => result.warnings.push(format!(
+                            "release {} and release {} have the same image at different URLs ({} / {})",
+                            other_id, item.id, other_url, item.old_url
+                        )),
+                        None => {
+                            by_hash.insert(stored.sha256.clone(), (item.id, item.old_url.clone()));
+                        }
+                    }
+                }
+                by_url.insert(item.old_url.clone(), fresh.clone());
+                // Gentle on both ends — only after real network work.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                fresh
+            }
+        };
+
+        let outcome = outcome.and_then(|stored| {
+            record_cover_move(&app, item.id, Some(&item.old_url), &stored).map(|_| stored)
+        });
+        match outcome {
+            Ok(stored) => {
+                item.new_url = Some(stored.url);
+                item.sha256 = Some(stored.sha256);
+                item.bytes = Some(stored.bytes);
+                item.status = Some("ok".into());
+                result.migrated += 1;
+            }
+            Err(e) => {
+                result.errors.push(format!("release {}: {}", item.id, e));
+                item.status = Some(e);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverUpload {
+    pub url: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub warnings: Vec<String>,
+}
+
+/// Upload one release's local cover file to Blossom and make it the published
+/// cover. The everyday path for a new release: no separate upload, no URL to
+/// paste. Leaves the release stale, like any edit to its cover URL.
+#[tauri::command]
+async fn upload_cover_to_blossom(
+    app: tauri::AppHandle,
+    release_id: i64,
+    servers: Vec<String>,
+) -> Result<CoverUpload, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+
+    let (cover_path, old_url): (Option<String>, Option<String>) = {
+        let conn = open(&app)?;
+        conn.query_row(
+            "SELECT cover_art_path, cover_art_url FROM releases WHERE id = ?1",
+            params![release_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("release {release_id} not found"))?
+    };
+    let cover_path = cover_path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| "this release has no local cover file".to_string())?;
+    let body = std::fs::read(&cover_path).map_err(|e| format!("read {cover_path}: {e}"))?;
+
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+
+    let stored = store_cover(&http, &keys, &servers[0], &body).await?;
+    record_cover_move(&app, release_id, old_url.as_deref(), &stored)?;
+
+    // One cover, so the mirrors are done here and now — a few seconds, against
+    // having to remember a second step for every new release.
+    let warnings = mirror_cover(
+        &app,
+        &http,
+        &keys,
+        &servers[1..],
+        &body,
+        stored.mime,
+        &stored.sha256,
+    )
+    .await
+    .into_iter()
+    .map(|e| format!("mirror {e}"))
+    .collect();
+
+    Ok(CoverUpload {
+        url: stored.url,
+        sha256: stored.sha256,
+        bytes: stored.bytes,
+        warnings,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverMirroring {
+    pub primary: String,
+    pub mirrors: Vec<String>,
+    /// Distinct covers on the primary server.
+    pub covers: usize,
+    /// Copies still to make — one per cover per mirror that lacks it.
+    pub pending: usize,
+    /// Copies made this run (0 in check-only mode).
+    pub mirrored: usize,
+    pub errors: Vec<String>,
+}
+
+/// The hash a primary-server cover URL names: `<server>/<sha256>[.ext]`.
+fn blob_hash_in_url(url: &str, server: &str) -> Option<String> {
+    let rest = url.trim().strip_prefix(server)?.strip_prefix('/')?;
+    let name = rest.split(['?', '#']).next()?;
+    let hash = name.split('.').next()?;
+    (hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| hash.to_ascii_lowercase())
+}
+
+/// Copy every cover on the primary Blossom server to the mirror servers.
+///
+/// With `fix = false` it reports how many copies are outstanding. With
+/// `fix = true` each missing one is fetched back from the primary, checked
+/// against its hash, and uploaded to the mirrors that lack it. What has been
+/// sent is recorded per server, so a later run sends only what is new — and an
+/// interrupted one is resumed by running it again.
+///
+/// Nothing a release publishes changes: its cover URL stays on the primary.
+#[tauri::command]
+async fn mirror_covers_to_blossom(
+    app: tauri::AppHandle,
+    servers: Vec<String>,
+    fix: bool,
+) -> Result<CoverMirroring, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+    let primary = servers[0].clone();
+    let mirrors: Vec<String> = servers[1..].to_vec();
+    if mirrors.is_empty() {
+        return Err("no mirror configured — add a second Blossom server first".into());
+    }
+
+    // (hash, url on the primary, mirrors that still lack it), in a stable order.
+    let todo: Vec<(String, String, Vec<String>)>;
+    let covers: usize;
+    {
+        let conn = open(&app)?;
+        let mut by_hash: BTreeMap<String, String> = BTreeMap::new();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT cover_art_url FROM releases
+                  WHERE cover_art_url IS NOT NULL AND TRIM(cover_art_url) <> ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let urls = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for url in urls.filter_map(|r| r.ok()) {
+            if let Some(hash) = blob_hash_in_url(&url, &primary) {
+                by_hash.entry(hash).or_insert_with(|| url.trim().to_string());
+            }
+        }
+        covers = by_hash.len();
+
+        let mut done: HashSet<(String, String)> = HashSet::new();
+        let mut stmt = conn
+            .prepare("SELECT sha256, server FROM cover_mirrors")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        done.extend(rows.filter_map(|r| r.ok()));
+
+        todo = by_hash
+            .into_iter()
+            .filter_map(|(hash, url)| {
+                let missing: Vec<String> = mirrors
+                    .iter()
+                    .filter(|m| !done.contains(&(hash.clone(), (*m).clone())))
+                    .cloned()
+                    .collect();
+                (!missing.is_empty()).then_some((hash, url, missing))
+            })
+            .collect();
+    }
+
+    let mut result = CoverMirroring {
+        primary,
+        mirrors,
+        covers,
+        pending: todo.iter().map(|(_, _, missing)| missing.len()).sum(),
+        mirrored: 0,
+        errors: Vec::new(),
+    };
+    if !fix || todo.is_empty() {
+        return Ok(result);
+    }
+
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+
+    let total = todo.len();
+    let _ = app.emit("cover-mirror:started", total);
+    for (i, (hash, url, missing)) in todo.iter().enumerate() {
+        let _ = app.emit(
+            "cover-mirror:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: url.clone(),
+            },
+        );
+        let body = match fetch_bytes(&http, url).await {
+            Ok(body) => body,
+            Err(e) => {
+                result.errors.push(e);
+                continue;
+            }
+        };
+        // The primary is ours, but a mirror must receive exactly the blob the
+        // URL names — never whatever came back.
+        let mime = match blossom::sniff_image(&body) {
+            Some((_, mime)) if blossom::sha256_hex(&body) == *hash => mime,
+            _ => {
+                result.errors.push(format!("{url}: the primary returned something else"));
+                continue;
+            }
+        };
+        let failures = mirror_cover(&app, &http, &keys, missing, &body, mime, hash).await;
+        result.mirrored += missing.len() - failures.len();
+        result.errors.extend(failures);
+    }
+    result.pending -= result.mirrored;
+
+    Ok(result)
+}
+
+/// Publish the user's Blossom server list (kind:10063, BUD-03).
+///
+/// A cover's URL names one server. This list names all of them, in order, so a
+/// client that cannot reach that server can ask the others for the same hash.
+/// Replaceable: each publish supersedes the last.
+#[tauri::command]
+async fn publish_blossom_servers(
+    servers: Vec<String>,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    if relays.is_empty() {
+        return Err("no relays configured".into());
+    }
+    let servers = blossom::normalize_servers(&servers)?;
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let mut tags = Vec::new();
+    for server in &servers {
+        tags.push(Tag::parse(["server", server.as_str()]).map_err(|e| e.to_string())?);
+    }
+    let event = EventBuilder::new(Kind::Custom(blossom::KIND_BLOSSOM_SERVERS), "")
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let event_id = event.id.to_string();
+
+    let client = build_client(keys, &relays).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+    if accepted_by.is_empty() {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id,
+        naddr: String::new(),
+        accepted_by,
+        rejected,
     })
 }
 
@@ -9505,6 +10277,10 @@ pub fn run() {
             export_published_manifest,
             sync_cover_to_disk,
             reconcile_published_covers,
+            migrate_covers_to_blossom,
+            upload_cover_to_blossom,
+            mirror_covers_to_blossom,
+            publish_blossom_servers,
             update_release_path,
             inspect_release_path,
             clear_release_path,

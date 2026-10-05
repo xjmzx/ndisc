@@ -9,6 +9,7 @@ import {
   FolderOpen,
   FolderPlus,
   ImageDown,
+  ImageUp,
   Image as ImageIcon,
   Loader2,
   Pencil,
@@ -56,6 +57,7 @@ import {
   setReleasePaired,
   setReleaseType,
   syncCoverToDisk,
+  uploadCoverToBlossom,
   unpublishRelease,
   updateReleasePath,
   inspectReleasePath,
@@ -133,6 +135,8 @@ const ACTION_ICON_BUTTON_CLS =
 interface Props {
   release: Release;
   relays: string[];
+  // Ordered Blossom servers (first = primary). Empty hides the cover upload.
+  blossomServers: string[];
   onDeleted: () => void;
   onChanged: (updated: Release) => void;
   showUndoToast?: (message: string, undo: () => void | Promise<void>) => void;
@@ -156,6 +160,7 @@ type LatestOp =
 export function ReleaseDetail({
   release,
   relays,
+  blossomServers,
   onDeleted,
   onChanged,
   showUndoToast,
@@ -226,6 +231,30 @@ export function ReleaseDetail({
       });
     } catch (e) {
       setLatestOp({ kind: "error", text: String(e) });
+    }
+  }
+
+  // Upload the local cover file to Blossom and make it the published cover —
+  // the one-step replacement for uploading elsewhere and pasting the URL.
+  const [uploadingCover, setUploadingCover] = useState(false);
+  async function onUploadCover() {
+    if (!release.id || uploadingCover) return;
+    setUploadingCover(true);
+    try {
+      const result = await uploadCoverToBlossom(release.id, blossomServers);
+      applyEdit({ coverArtUrl: result.url });
+      setLatestOp(
+        result.warnings.length > 0
+          ? {
+              kind: "warn",
+              text: `cover uploaded to Blossom — ${result.warnings.join("; ")}`,
+            }
+          : { kind: "info", text: "cover uploaded to Blossom" },
+      );
+    } catch (e) {
+      setLatestOp({ kind: "error", text: String(e) });
+    } finally {
+      setUploadingCover(false);
     }
   }
 
@@ -809,6 +838,12 @@ export function ReleaseDetail({
             value={release.coverArtUrl ?? ""}
             onCommit={commitCoverUrl}
             highlight={!coverSrc}
+            onUpload={
+              blossomServers.length > 0 && release.coverArtPath
+                ? onUploadCover
+                : undefined
+            }
+            uploading={uploadingCover}
           />
         </div>
       </div>
@@ -1824,9 +1859,19 @@ interface CoverUrlFieldProps {
   value: string;
   onCommit: (v: string | null) => Promise<void> | void;
   highlight?: boolean;
+  // Present only when there is a local cover file and a Blossom server to
+  // send it to; absent, the button is not drawn.
+  onUpload?: () => void;
+  uploading?: boolean;
 }
 
-function CoverUrlField({ value, onCommit, highlight }: CoverUrlFieldProps) {
+function CoverUrlField({
+  value,
+  onCommit,
+  highlight,
+  onUpload,
+  uploading = false,
+}: CoverUrlFieldProps) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
 
@@ -1871,7 +1916,7 @@ function CoverUrlField({ value, onCommit, highlight }: CoverUrlFieldProps) {
             (e.target as HTMLInputElement).blur();
           }
         }}
-        placeholder="https://i.nostr.build/…"
+        placeholder="https://…/cover.jpg"
         disabled={saving}
         className={
           "flex-1 min-w-0 px-2 py-1 rounded bg-surface/40 text-fg " +
@@ -1883,6 +1928,20 @@ function CoverUrlField({ value, onCommit, highlight }: CoverUrlFieldProps) {
         }
         spellCheck={false}
       />
+      {onUpload && (
+        <button
+          onClick={onUpload}
+          disabled={saving || uploading}
+          className={
+            "p-1 rounded hover:bg-surface text-muted hover:text-nostr " +
+            "disabled:opacity-50 " +
+            (uploading ? "animate-pulse" : "")
+          }
+          title="Upload the local cover file to Blossom and use it as the cover URL"
+        >
+          <ImageUp size={11} />
+        </button>
+      )}
       {value && (
         <button
           onClick={clear}

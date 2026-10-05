@@ -331,6 +331,26 @@ The shared data spine. `ndisc` publishes it; the others read and/or react.
 | **7** | NIP-25 | Reactions / ratings (shared `lib/rating.ts`, uniform aggregation) | ndisc, ntree, nsmpl, nview | all |
 | **1063** | `clip.v1` | NIP-94 file metadata for a clip/sample, with an `a`-ref to its release + a `track`/`disc` locator (schema/clip.v1.json) | ntree (clips), nsmpl (samples) | *(planned:* ntree/nsmpl, ndisc, glmps*)* |
 
+**Media (beside the spine).** A release's cover is one URL, in the `image` tag
+of its `release.v2` event. From ndisc 0.5.0 that URL can point at a **Blossom**
+server — a plain HTTP store where a file's address is its SHA-256
+(`https://<server>/<sha256>.jpg`), so any reader can check that what it fetched
+is what was published. The server holds bytes and nothing else: no events, no
+filenames, no link back to a release. Two kinds come with it, neither part of
+the catalogue contract:
+
+- **24242** — the upload authorization. Signed by the publisher, scoped to one
+  hash, expiring in minutes, and sent in an HTTP header to the Blossom server.
+  **It never goes to a relay.**
+- **10063** — the publisher's Blossom server list (BUD-03), replaceable,
+  published by ndisc to the relays. It names every server holding the
+  publisher's files, first one preferred, so a reader that cannot reach the
+  server in a cover's URL can ask the others for the same hash. **No suite
+  reader does that yet** — until one does, the list is a record, not a failover.
+
+`release.v2` is untouched by any of this: `image` is still a string, and a
+reader that follows the URL needs no change.
+
 **Messaging (outside the spine).** `nchat` speaks kinds **1059 / 13 / 14**
 (NIP-17 gift wrap) and reads legacy **4** (NIP-04, never written). These are
 not part of the catalogue contract — nothing publishes them for another app to

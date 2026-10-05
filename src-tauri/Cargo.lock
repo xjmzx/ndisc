@@ -2459,6 +2459,7 @@ dependencies = [
 name = "ndisc"
 version = "0.4.2"
 dependencies = [
+ "base64 0.22.1",
  "csv",
  "keyring",
  "lofty",

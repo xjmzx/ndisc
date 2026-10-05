@@ -904,6 +904,95 @@ export async function reconcilePublishedCovers(
   return invoke<PublishedCoverReconcile>("reconcile_published_covers", { fix });
 }
 
+// --- Covers on Blossom -------------------------------------------------------
+//
+// `servers` is the ordered Blossom server list: the first is the primary (the
+// URL that gets published), the rest are mirrors. Moving covers only involves
+// the primary; copying to the mirrors is its own step (mirrorCoversToBlossom).
+
+// One release's cover, as the Blossom migration sees it.
+export interface CoverMigrationItem {
+  id: number;
+  artist: string;
+  title: string;
+  oldUrl: string;
+  newUrl: string | null;
+  sha256: string | null;
+  bytes: number | null;
+  // "ok" once moved, else the error; null in check-only mode.
+  status: string | null;
+}
+
+export interface CoverMigration {
+  server: string;
+  considered: number;
+  already: number;
+  pending: CoverMigrationItem[];
+  migrated: number;
+  errors: string[];
+  warnings: string[];
+}
+
+// Move every release's cover onto the Blossom servers. fix=false only reports
+// what would move; fix=true downloads each cover from its current URL, uploads
+// it and re-points the release, leaving it stale — it never publishes. Safe to
+// re-run: releases already on the primary are skipped. Emits
+// `cover-migrate:started` / `cover-migrate:progress` (ImportProgress) while
+// fixing; the first progress events cover a check of the source host.
+export async function migrateCoversToBlossom(
+  servers: string[],
+  fix: boolean,
+): Promise<CoverMigration> {
+  return invoke<CoverMigration>("migrate_covers_to_blossom", { servers, fix });
+}
+
+export interface CoverUpload {
+  url: string;
+  sha256: string;
+  bytes: number;
+  warnings: string[];
+}
+
+// Upload a release's local cover file to Blossom and make it the published
+// cover. Leaves the release stale.
+export async function uploadCoverToBlossom(
+  releaseId: number,
+  servers: string[],
+): Promise<CoverUpload> {
+  return invoke<CoverUpload>("upload_cover_to_blossom", { releaseId, servers });
+}
+
+export interface CoverMirroring {
+  primary: string;
+  mirrors: string[];
+  // Distinct covers on the primary server.
+  covers: number;
+  // Copies still to make — one per cover per mirror that lacks it.
+  pending: number;
+  mirrored: number;
+  errors: string[];
+}
+
+// Copy every cover on the primary server to the mirrors. fix=false reports how
+// many copies are outstanding; fix=true makes them. What was sent is recorded,
+// so a re-run sends only what is new. Emits `cover-mirror:started` /
+// `cover-mirror:progress` (ImportProgress) while copying.
+export async function mirrorCoversToBlossom(
+  servers: string[],
+  fix: boolean,
+): Promise<CoverMirroring> {
+  return invoke<CoverMirroring>("mirror_covers_to_blossom", { servers, fix });
+}
+
+// Publish the Blossom server list (kind:10063) so clients can find a cover by
+// hash on any of the servers.
+export async function publishBlossomServers(
+  servers: string[],
+  relays: string[],
+): Promise<PublishResult> {
+  return invoke<PublishResult>("publish_blossom_servers", { servers, relays });
+}
+
 // --- Nostr identity ----------------------------------------------------------
 
 export interface Keypair {

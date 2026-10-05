@@ -42,6 +42,9 @@ nostr-sdk = "0.43"
 tokio = { version = "1", features = ["time"] }
 # HTTP client for downloading cover images from nostr.build / Blossom hosts.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Blossom authorization header: the signed kind:24242 event travels base64-
+# encoded. (Already in the tree via nostr; named here because it is used directly.)
+base64 = "0.22"
 
 # --- OS keychain backend, per platform --------------------------------------
 # Every platform must name its backend explicitly. With none for the platform

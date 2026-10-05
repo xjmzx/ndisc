@@ -21,6 +21,7 @@ import {
   publishByIds,
   unpublishByIds,
   type PublishLibrarySummary,
+  publishBlossomServers,
   type PublishProgress,
   type RelayHealth,
 } from "../lib/tauri";
@@ -30,6 +31,9 @@ import type { FilterContext } from "./ReleaseList";
 interface NostrPanelProps {
   relays: string[];
   setRelays: (next: string[]) => void;
+  // Blossom servers holding cover images, in order: first is the primary.
+  blossomServers: string[];
+  setBlossomServers: (next: string[]) => void;
   filterContext: FilterContext;
   npub: string | null;
   onIdentityChanged: (next: string | null) => void;
@@ -98,6 +102,8 @@ function describeFilter(f: FilterContext): string {
 export function NostrPanel({
   relays,
   setRelays,
+  blossomServers,
+  setBlossomServers,
   filterContext,
   npub,
   onIdentityChanged,
@@ -170,6 +176,47 @@ export function NostrPanel({
     if (!url || relays.includes(url)) return;
     setRelays([...relays, url]);
     setNewRelay("");
+  }
+
+  const [newBlossom, setNewBlossom] = useState("");
+  // Result of the last server-list publish (kind:10063), shown under the list.
+  const [blossomNote, setBlossomNote] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+  const [publishingBlossom, setPublishingBlossom] = useState(false);
+
+  function addBlossom() {
+    const typed = newBlossom.trim().replace(/\/+$/, "");
+    if (!typed) return;
+    // A bare hostname means https — the same rule the backend applies.
+    const url = typed.includes("://") ? typed : `https://${typed}`;
+    if (!/^https?:\/\/[^/]+/.test(url)) {
+      setBlossomNote({ ok: false, text: "a Blossom server is an http(s) address" });
+      return;
+    }
+    if (!blossomServers.includes(url)) {
+      setBlossomServers([...blossomServers, url]);
+    }
+    setNewBlossom("");
+    setBlossomNote(null);
+  }
+
+  async function onPublishBlossomServers() {
+    if (publishingBlossom) return;
+    setPublishingBlossom(true);
+    setBlossomNote(null);
+    try {
+      const r = await publishBlossomServers(blossomServers, relays);
+      setBlossomNote({
+        ok: true,
+        text: `server list published to ${r.acceptedBy.length}/${relays.length} relay${relays.length === 1 ? "" : "s"}`,
+      });
+    } catch (e) {
+      setBlossomNote({ ok: false, text: String(e) });
+    } finally {
+      setPublishingBlossom(false);
+    }
   }
 
   async function onGenerate() {
@@ -484,6 +531,89 @@ export function NostrPanel({
               </button>
             </div>
           </div>
+
+          {/* Blossom servers — where cover images live. Closed by default:
+              it is set once and rarely touched, and an open list here would
+              push the publish region down in the panel's tight (non-roomy)
+              layout. */}
+          <details className="max-w-md mt-3">
+            <summary className="text-xs text-muted cursor-pointer select-none">
+              Blossom servers{" "}
+              <span className="font-mono text-[10px]">
+                {blossomServers.length === 0 ? "none" : blossomServers.length}
+              </span>
+            </summary>
+            <p className="mt-1 mb-2 text-[10px] text-muted">
+              Cover images are stored here by their hash. The first server is
+              the one a release's cover URL points at; the others are mirrors.
+            </p>
+            <ul className="space-y-1 mb-2">
+              {blossomServers.map((s, i) => (
+                <li
+                  key={s}
+                  className="px-2 py-1 rounded bg-bg/50 font-mono text-xs flex
+                             items-center justify-between gap-2"
+                >
+                  <span className="min-w-0 flex-1 truncate">{s}</span>
+                  <span className="shrink-0 text-[10px] text-muted">
+                    {i === 0 ? "primary" : "mirror"}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setBlossomServers(blossomServers.filter((x) => x !== s))
+                    }
+                    className="shrink-0 text-muted hover:text-alert text-xs"
+                    aria-label={`Remove ${s}`}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newBlossom}
+                onChange={(e) => setNewBlossom(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addBlossom()}
+                placeholder="https://blossom.example.com"
+                className="flex-1 px-3 py-1.5 rounded-md bg-surface text-fg
+                           placeholder:text-muted outline-none border
+                           border-transparent focus:border-accent/50 text-xs
+                           font-mono"
+                spellCheck={false}
+              />
+              <button
+                onClick={addBlossom}
+                disabled={!newBlossom.trim()}
+                className={`${DB_BUTTON_CLS} disabled:opacity-50`}
+              >
+                Add
+              </button>
+            </div>
+            {blossomServers.length > 0 && (
+              <button
+                onClick={onPublishBlossomServers}
+                disabled={publishingBlossom || relays.length === 0}
+                className="mt-2 px-2 py-1 rounded bg-nostr/15 text-nostr
+                           hover:bg-nostr hover:text-bg text-[10px] font-medium
+                           transition-colors disabled:opacity-50"
+                title="Publish this list to your relays (kind:10063) so readers can find a cover by its hash on any of these servers"
+              >
+                {publishingBlossom ? "publishing…" : "Publish server list"}
+              </button>
+            )}
+            {blossomNote && (
+              <div
+                className={cn(
+                  "mt-1 text-[10px]",
+                  blossomNote.ok ? "text-ok" : "text-alert",
+                )}
+              >
+                {blossomNote.text}
+              </div>
+            )}
+          </details>
 
           {/* Publishing is a different KIND of act from relay configuration:
               the rows above edit local settings, this broadcasts to the
