@@ -135,6 +135,8 @@ interface Props {
   relays: string[];
   // Ordered Blossom servers (first = primary), for the cover migration.
   blossomServers: string[];
+  // Label-art URLs, so "Mirror covers" copies those along with the covers.
+  labelImageUrls: string[];
 }
 
 type MediumFilter = "" | "physical" | "digital";
@@ -163,6 +165,7 @@ export function ReleaseList({
   onFilterChange,
   relays,
   blossomServers,
+  labelImageUrls,
 }: Props) {
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
@@ -501,7 +504,11 @@ export function ReleaseList({
           setOpProgress(e.payload);
         }),
       );
-      const data = await mirrorCoversToBlossom(blossomServers, true);
+      const data = await mirrorCoversToBlossom(
+        blossomServers,
+        labelImageUrls,
+        true,
+      );
       setOpSummary({ kind: "coverMirror", data });
     } catch (e) {
       setError(String(e));
@@ -797,7 +804,11 @@ export function ReleaseList({
       setOpProgress(null);
       setError(null);
       try {
-        const data = await mirrorCoversToBlossom(blossomServers, false);
+        const data = await mirrorCoversToBlossom(
+          blossomServers,
+          labelImageUrls,
+          false,
+        );
         setOpSummary({ kind: "coverMirror", data });
       } catch (e) {
         setError(String(e));
@@ -1479,7 +1490,7 @@ export function ReleaseList({
               <MaintMenuItem
                 icon={<Copy size={14} />}
                 label="Mirror covers"
-                detail="Copy the covers on Blossom to the mirror servers"
+                detail="Copy covers and label art on Blossom to the mirrors"
                 active={activeOp === "coverMirror"}
                 disabled={activeOp !== null}
                 onClick={() => {
@@ -2015,7 +2026,7 @@ export function ReleaseList({
                   <span className="font-mono">{opSummary.data.pending}</span>
                 </span>
                 <span className="text-muted">
-                  covers on Blossom{" "}
+                  images on Blossom{" "}
                   <span className="font-mono">{opSummary.data.covers}</span>
                 </span>
                 <span className="text-muted">

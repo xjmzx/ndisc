@@ -965,7 +965,7 @@ export async function uploadCoverToBlossom(
 export interface CoverMirroring {
   primary: string;
   mirrors: string[];
-  // Distinct covers on the primary server.
+  // Distinct images on the primary server — covers plus label art.
   covers: number;
   // Copies still to make — one per cover per mirror that lacks it.
   pending: number;
@@ -975,13 +975,49 @@ export interface CoverMirroring {
 
 // Copy every cover on the primary server to the mirrors. fix=false reports how
 // many copies are outstanding; fix=true makes them. What was sent is recorded,
-// so a re-run sends only what is new. Emits `cover-mirror:started` /
-// `cover-mirror:progress` (ImportProgress) while copying.
+// so a re-run sends only what is new. `extraUrls` are other images on the
+// primary to mirror alongside — the label art, which lives in the UI's store.
+// Emits `cover-mirror:started` / `cover-mirror:progress` (ImportProgress).
 export async function mirrorCoversToBlossom(
   servers: string[],
+  extraUrls: string[],
   fix: boolean,
 ): Promise<CoverMirroring> {
-  return invoke<CoverMirroring>("mirror_covers_to_blossom", { servers, fix });
+  return invoke<CoverMirroring>("mirror_covers_to_blossom", {
+    servers,
+    extraUrls,
+    fix,
+  });
+}
+
+export interface LabelArtMove {
+  name: string;
+  oldUrl: string;
+  newUrl: string | null;
+  // "ok" once moved, else the error.
+  status: string;
+}
+
+export interface LabelArtMigration {
+  server: string;
+  skipped: number;
+  moves: LabelArtMove[];
+  migrated: number;
+  errors: string[];
+}
+
+// Move record-label images onto the primary Blossom server. The labels are
+// the UI's, so they go in and the new addresses come back — the caller stores
+// them. Does not publish the labels manifest. Emits `label-art:started` /
+// `label-art:progress` (ImportProgress).
+export async function migrateLabelArtToBlossom(
+  servers: string[],
+  labels: Array<{ name: string; imageUrl: string }>,
+): Promise<LabelArtMigration> {
+  return invoke<LabelArtMigration>("migrate_label_art_to_blossom", {
+    servers,
+    labels,
+  });
 }
 
 // Publish the Blossom server list (kind:10063) so clients can find a cover by

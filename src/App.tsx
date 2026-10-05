@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   RotateCw,
   FolderOpen,
@@ -271,6 +271,12 @@ export default function App() {
     }
     return [];
   });
+
+  // Label art that "Mirror covers" should copy along with the covers.
+  const labelImageUrls = useMemo(
+    () => labels.map((l) => l.imageUrl).filter((u) => u.startsWith("http")),
+    [labels],
+  );
 
   const [filterContext, setFilterContext] = useState<FilterContext>({
     query: "",
@@ -635,6 +641,7 @@ export default function App() {
               onFilterChange={setFilterContext}
               relays={relays}
               blossomServers={blossomServers}
+              labelImageUrls={labelImageUrls}
             />
           </div>
           <div
@@ -695,6 +702,7 @@ export default function App() {
                 selected={selected}
                 onClearAll={clearAllLabels}
                 relays={relays}
+                blossomServers={blossomServers}
                 formOpen={labelFormOpen}
                 setFormOpen={setLabelFormOpen}
                 formName={labelFormName}

@@ -20,8 +20,9 @@ interface Props {
 const MAX_DISPLAY = 36;
 // Safety cap on how many label rows we render at once. The list scrolls,
 // so this only guards against a pathological label count; if a library
-// ever exceeds it, pagination would be the next step.
-const MAX_ROWS = 500;
+// ever exceeds it, pagination would be the next step. It caps what is DRAWN
+// only — orphan detection and the artwork count use the full list.
+const MAX_ROWS = 5000;
 
 type Mode = "library" | "orphans";
 

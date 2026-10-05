@@ -114,6 +114,18 @@ CREATE TABLE IF NOT EXISTS cover_migrations (
 -- reliably — a shared host answers "yes" for a blob some other key uploaded —
 -- so what this key has sent is remembered here, and mirror_covers_to_blossom
 -- sends only what is missing.
+-- The same record for record-label images. Labels live in the UI's own store
+-- (ndisc.labels), not in a table, so this is keyed by the label's name as it
+-- was when its image moved (migrate_label_art_to_blossom).
+CREATE TABLE IF NOT EXISTS label_image_migrations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    label       TEXT    NOT NULL,
+    old_url     TEXT    NOT NULL,
+    new_url     TEXT    NOT NULL,
+    sha256      TEXT    NOT NULL,
+    bytes       INTEGER NOT NULL,
+    migrated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 CREATE TABLE IF NOT EXISTS cover_mirrors (
     sha256      TEXT    NOT NULL,
     server      TEXT    NOT NULL,
@@ -503,6 +515,42 @@ mod blossom;
 mod master_key;
 
 #[cfg(test)]
+mod distinct_label_list {
+    use super::*;
+
+    /// The label panel decides "in use or orphan" from this list, so it must
+    /// hold every label however many there are.
+    #[test]
+    fn every_label_is_listed_past_five_hundred() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        // The genre slots postdate SCHEMA; `open` adds them the same way.
+        for col in ["genre_primary", "genre_secondary", "genre_tertiary"] {
+            ensure_column(&conn, "releases", col, "TEXT").unwrap();
+        }
+        for i in 0..620 {
+            conn.execute(
+                "INSERT INTO releases (artist, title, label) VALUES ('a', ?1, ?2)",
+                params![format!("t{i}"), format!("Label {i:04}")],
+            )
+            .unwrap();
+        }
+        // One label with two releases sorts first; the rest tie on one each.
+        conn.execute(
+            "INSERT INTO releases (artist, title, label) VALUES ('a', 'extra', 'Label 0619')",
+            [],
+        )
+        .unwrap();
+
+        let labels = distinct_labels(&conn).unwrap();
+        assert_eq!(labels.len(), 620);
+        assert_eq!(labels[0].name, "Label 0619");
+        assert_eq!(labels[0].count, 2);
+        assert!(labels.iter().any(|l| l.name == "Label 0618"));
+    }
+}
+
+#[cfg(test)]
 mod cover_migration {
     use super::*;
 
@@ -554,6 +602,17 @@ mod cover_migration {
             .unwrap();
         assert_eq!(old, "https://old.example/a.jpg");
         assert!(at > 0);
+
+        conn.execute(
+            "INSERT INTO label_image_migrations (label, old_url, new_url, sha256, bytes)
+             VALUES ('Tamla', 'https://old.example/t.jpg', 'https://new.example/h.jpg', 'h', 10)",
+            [],
+        )
+        .unwrap();
+        let label: String = conn
+            .query_row("SELECT label FROM label_image_migrations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(label, "Tamla");
     }
 
     /// Against a real image host. Ignored by default.
@@ -1600,14 +1659,22 @@ fn get_label_overview(
     })
 }
 
-// All distinct labels, ordered by release count desc (then alphabetical),
-// capped at 500 rows as a defensive ceiling. The UI applies its own display
-// cap and search filter on top of this — including single-release labels so
-// the user can assign an image to anything they own. Each row is paired with
-// its release count so the panel can render a per-label chip.
+// All distinct labels, ordered by release count desc (then alphabetical) —
+// including single-release labels so the user can assign an image to anything
+// they own. Each row is paired with its release count so the panel can render
+// a per-label chip.
+//
+// Every label, with no row cap. This list is also what the label panel tests
+// "is this label in use?" against, so a cap here does not just shorten a
+// display: it made every label past the cut look unused. With 548 labels and a
+// cap of 500, the panel offered nine in-use labels for deletion as orphans.
 #[tauri::command]
 fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String> {
     let conn = open(&app)?;
+    distinct_labels(&conn)
+}
+
+fn distinct_labels(conn: &Connection) -> Result<Vec<LabelCount>, String> {
     // Aggregate label rows + top-3 most-tagged genres per label, across
     // ALL slots (primary/secondary/tertiary treated as equivalent tallies).
     // Each release contributes 1-3 slot-tags to its label's pool; we tally,
@@ -1656,8 +1723,7 @@ fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String
              LEFT JOIN top3 t ON t.label = r.label
              WHERE r.label IS NOT NULL AND r.label <> ''
              GROUP BY r.label, t.g1, t.g2, t.g3
-             ORDER BY n DESC, r.label COLLATE NOCASE
-             LIMIT 500",
+             ORDER BY n DESC, r.label COLLATE NOCASE",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -4515,6 +4581,29 @@ async fn store_cover(
     })
 }
 
+/// Fetch the image at `url` and put it on the primary server.
+///
+/// Refuses what the source host is known to serve for images that are not
+/// there (`placeholders`, per origin — see `learn_placeholders`): moving that
+/// would publish the host's stock picture in place of the real one.
+async fn move_image(
+    http: &reqwest::Client,
+    keys: &Keys,
+    primary: &str,
+    placeholders: &HashMap<String, HashSet<String>>,
+    url: &str,
+) -> Result<StoredCover, String> {
+    let body = fetch_bytes(http, url).await?;
+    let is_placeholder = url_origin(url)
+        .and_then(|o| placeholders.get(&o))
+        .map(|set| set.contains(&blossom::sha256_hex(&body)))
+        .unwrap_or(false);
+    if is_placeholder {
+        return Err("the host returned its stock placeholder — the original is gone".to_string());
+    }
+    store_cover(http, keys, primary, &body).await
+}
+
 /// Copy one blob to each of `mirrors`, remembering every server that took it.
 /// Returns the failures — a mirror that refuses is reported, never fatal.
 async fn mirror_cover(
@@ -4710,20 +4799,8 @@ async fn migrate_covers_to_blossom(
         let outcome = match by_url.get(&item.old_url) {
             Some(known) => known.clone(),
             None => {
-                let fresh = match fetch_bytes(&http, &item.old_url).await {
-                    Err(e) => Err(e),
-                    Ok(body) => {
-                        let is_placeholder = url_origin(&item.old_url)
-                            .and_then(|o| placeholders.get(&o))
-                            .map(|set| set.contains(&blossom::sha256_hex(&body)))
-                            .unwrap_or(false);
-                        if is_placeholder {
-                            Err("the host returned its stock placeholder — the original is gone".to_string())
-                        } else {
-                            store_cover(&http, &keys, &servers[0], &body).await
-                        }
-                    }
-                };
+                let fresh =
+                    move_image(&http, &keys, &servers[0], &placeholders, &item.old_url).await;
                 if let Ok(stored) = &fresh {
                     match by_hash.get(&stored.sha256) {
                         Some((other_id, other_url)) => result.warnings.push(format!(
@@ -4831,12 +4908,154 @@ async fn upload_cover_to_blossom(
     })
 }
 
+/// One label's image, as the Blossom move sees it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtMove {
+    pub name: String,
+    pub old_url: String,
+    /// Set once moved.
+    pub new_url: Option<String>,
+    /// "ok" once moved, else the error.
+    pub status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtMigration {
+    pub server: String,
+    /// Labels that already pointed at the primary, or had no web image.
+    pub skipped: usize,
+    /// One entry per label that needed moving, in the order given.
+    pub moves: Vec<LabelArtMove>,
+    pub migrated: usize,
+    pub errors: Vec<String>,
+}
+
+/// Move record-label images onto the primary Blossom server.
+///
+/// The labels are the UI's (`ndisc.labels`), so they are passed in and the new
+/// addresses handed back: this command uploads and reports, and the caller
+/// stores the result. Each image is fetched from the address it has now and
+/// goes through the same checks as a cover. Every move is also written to
+/// `label_image_migrations`, so the old address survives even if the caller
+/// never gets to store the new one.
+///
+/// It does not publish. The labels manifest (kind:31238) carries these URLs,
+/// and sending the new one is the ordinary publish-labels step.
+#[tauri::command]
+async fn migrate_label_art_to_blossom(
+    app: tauri::AppHandle,
+    servers: Vec<String>,
+    labels: Vec<LabelInput>,
+) -> Result<LabelArtMigration, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+    let primary = servers[0].clone();
+
+    let mut skipped = 0usize;
+    let mut moves: Vec<LabelArtMove> = Vec::new();
+    for label in labels {
+        let url = label.image_url.trim();
+        let is_web = url.starts_with("https://") || url.starts_with("http://");
+        if !is_web || blossom::is_on_server(url, &primary) {
+            skipped += 1;
+        } else {
+            moves.push(LabelArtMove {
+                name: label.name,
+                old_url: url.to_string(),
+                new_url: None,
+                status: String::new(),
+            });
+        }
+    }
+    let mut result = LabelArtMigration {
+        server: primary.clone(),
+        skipped,
+        moves,
+        migrated: 0,
+        errors: Vec::new(),
+    };
+    if result.moves.is_empty() {
+        return Ok(result);
+    }
+
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+
+    let total = result.moves.len();
+    let _ = app.emit("label-art:started", total);
+
+    let mut placeholders: HashMap<String, HashSet<String>> = HashMap::new();
+    for item in &result.moves {
+        if let Some(origin) = url_origin(&item.old_url) {
+            if !placeholders.contains_key(&origin) {
+                let _ = app.emit(
+                    "label-art:progress",
+                    ImportProgress {
+                        current: 0,
+                        total,
+                        current_dir: format!("checking {origin} for placeholder images"),
+                    },
+                );
+                let learned = learn_placeholders(&http, &origin).await;
+                placeholders.insert(origin, learned);
+            }
+        }
+    }
+
+    // Several labels can share one image (an imprint and its parent).
+    let mut by_url: HashMap<String, Result<StoredCover, String>> = HashMap::new();
+    for (i, item) in result.moves.iter_mut().enumerate() {
+        let _ = app.emit(
+            "label-art:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: item.name.clone(),
+            },
+        );
+        let outcome = match by_url.get(&item.old_url) {
+            Some(known) => known.clone(),
+            None => {
+                let fresh = move_image(&http, &keys, &primary, &placeholders, &item.old_url).await;
+                by_url.insert(item.old_url.clone(), fresh.clone());
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                fresh
+            }
+        };
+        let outcome = outcome.and_then(|stored| {
+            let conn = open(&app)?;
+            conn.execute(
+                "INSERT INTO label_image_migrations (label, old_url, new_url, sha256, bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![item.name, item.old_url, stored.url, stored.sha256, stored.bytes as i64],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(stored)
+        });
+        match outcome {
+            Ok(stored) => {
+                item.new_url = Some(stored.url);
+                item.status = "ok".into();
+                result.migrated += 1;
+            }
+            Err(e) => {
+                result.errors.push(format!("{}: {}", item.name, e));
+                item.status = e;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoverMirroring {
     pub primary: String,
     pub mirrors: Vec<String>,
-    /// Distinct covers on the primary server.
+    /// Distinct images on the primary server — covers plus label art.
     pub covers: usize,
     /// Copies still to make — one per cover per mirror that lacks it.
     pub pending: usize,
@@ -4867,6 +5086,9 @@ fn blob_hash_in_url(url: &str, server: &str) -> Option<String> {
 async fn mirror_covers_to_blossom(
     app: tauri::AppHandle,
     servers: Vec<String>,
+    // Other images on the primary to mirror alongside the covers — the label
+    // art, whose URLs live in the UI's store and so have to be handed in.
+    extra_urls: Vec<String>,
     fix: bool,
 ) -> Result<CoverMirroring, String> {
     let servers = blossom::normalize_servers(&servers)?;
@@ -4891,7 +5113,7 @@ async fn mirror_covers_to_blossom(
         let urls = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
-        for url in urls.filter_map(|r| r.ok()) {
+        for url in urls.filter_map(|r| r.ok()).chain(extra_urls) {
             if let Some(hash) = blob_hash_in_url(&url, &primary) {
                 by_hash.entry(hash).or_insert_with(|| url.trim().to_string());
             }
@@ -10280,6 +10502,7 @@ pub fn run() {
             migrate_covers_to_blossom,
             upload_cover_to_blossom,
             mirror_covers_to_blossom,
+            migrate_label_art_to_blossom,
             publish_blossom_servers,
             update_release_path,
             inspect_release_path,
