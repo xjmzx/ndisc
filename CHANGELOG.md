@@ -21,6 +21,47 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.5.0 — 2026-10-05
+
+### Added — covers on Blossom
+
+A release's published cover is one URL. Until now that URL came from uploading
+the image somewhere by hand and pasting the address in. ndisc can now put the
+image on your own **Blossom** servers — plain HTTP stores where a file's address
+is its SHA-256 — and point the release there itself. **No contract change:**
+`image` is still a URL, and readers follow it as before.
+
+- **Blossom servers** (Nostr panel, under the relays). An ordered list: the
+  first is the primary, whose address is what a release publishes; the rest are
+  mirrors. Empty by default — a Blossom server accepts uploads only from keys it
+  knows, so there is no shared default the way there is for a relay.
+- **Upload a cover** (release detail, beside the cover URL). Sends the release's
+  local cover file to the primary and the mirrors and makes it the cover URL.
+- **Move covers to Blossom** (maintenance menu). First a read-only count of the
+  covers that live elsewhere; then, on confirmation, each one is downloaded from
+  the address it has now, checked, uploaded, and the release re-pointed. It moves
+  the published image, not the local file, so nothing changes for a reader but
+  the address. One release at a time, so it can be stopped and run again.
+- **Mirror covers** (maintenance menu). Copies the covers on the primary to the
+  mirrors, remembering what it has sent. Separate from the move because a mirror
+  can be many times slower than your own server.
+- **Publish server list** (Nostr panel). A kind:10063 event naming your Blossom
+  servers, so a reader can look a cover up by hash on any of them.
+
+Moving or uploading a cover changes the release's URL, so the release goes
+stale like any other edit. **Nothing here publishes a release** — that stays the
+ordinary publish step, taken when you choose. The address a release had before
+is kept in a new `cover_migrations` table; nothing is deleted from the old host.
+
+Two guards on the move. An image is identified by its bytes, never by the URL or
+the content type a host claimed. And some image hosts answer a request for a
+cover that no longer exists with a stock picture and a 200 — so before anything
+moves, ndisc asks each source host for ids that cannot exist, learns what comes
+back, and refuses to move a cover that matches.
+
+See SUITE.md → "Media (beside the spine)" for the two kinds involved (24242,
+the upload authorization, which never reaches a relay; 10063, the server list).
+
 ## 0.4.2 — 2026-10-04
 
 ### Added — a "has lyrics" marker on the release list
