@@ -1421,6 +1421,31 @@ export function ReleaseList({
         >
           <ImageOff size={14} />
         </button>
+        {dupCount > 0 && (
+          <button
+            onClick={() => setDupOpen(true)}
+            className="relative p-2 rounded-md bg-surface hover:bg-surfaceHover text-fg"
+            title={`Review ${dupCount} suspected duplicate group${dupCount === 1 ? "" : "s"}`}
+          >
+            <Combine size={14} />
+            <span
+              className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5
+                         rounded-full bg-warn text-bg text-[9px] font-medium
+                         grid place-items-center"
+            >
+              {dupCount}
+            </span>
+          </button>
+        )}
+        <button
+          onClick={reload}
+          disabled={loading}
+          className="p-2 rounded-md bg-surface hover:bg-surfaceHover text-fg
+                     disabled:opacity-50"
+          title="Reload"
+        >
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+        </button>
         <div className="relative" ref={maintMenuRef}>
           <button
             onClick={() => setMaintMenuOpen((v) => !v)}
@@ -1611,31 +1636,6 @@ export function ReleaseList({
             </div>
           )}
         </div>
-        {dupCount > 0 && (
-          <button
-            onClick={() => setDupOpen(true)}
-            className="relative p-2 rounded-md bg-surface hover:bg-surfaceHover text-fg"
-            title={`Review ${dupCount} suspected duplicate group${dupCount === 1 ? "" : "s"}`}
-          >
-            <Combine size={14} />
-            <span
-              className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5
-                         rounded-full bg-warn text-bg text-[9px] font-medium
-                         grid place-items-center"
-            >
-              {dupCount}
-            </span>
-          </button>
-        )}
-        <button
-          onClick={reload}
-          disabled={loading}
-          className="p-2 rounded-md bg-surface hover:bg-surfaceHover text-fg
-                     disabled:opacity-50"
-          title="Reload"
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-        </button>
       </div>
 
       {dupOpen && (
@@ -3193,15 +3193,17 @@ function MaintMenuItem({
       // window once every item carried one.
       title={detail}
       className={cn(
-        "w-full flex items-center gap-2.5 px-3 py-1.5 text-left",
-        "border-b border-surface/60 last:border-b-0",
+        "group w-full flex items-center gap-2.5 px-3 py-2.5 text-left",
+        "border-b border-muted/20 last:border-b-0",
         "hover:bg-surface/60 disabled:opacity-50 disabled:cursor-not-allowed",
       )}
     >
       <span
         className={cn(
           "shrink-0",
-          active ? "text-accent animate-pulse" : "text-muted",
+          active
+            ? "text-accent animate-pulse"
+            : "text-muted group-hover:text-fg group-disabled:text-muted",
         )}
       >
         {icon}
