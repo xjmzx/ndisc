@@ -11,6 +11,7 @@ import {
   FolderCog,
   FolderSearch,
   FolderSync,
+  FolderX,
   ImageDown,
   ImageOff,
   ImageUp,
@@ -96,6 +97,7 @@ import { DuplicatesDialog } from "./DuplicatesDialog";
 import { DriftDialog } from "./DriftDialog";
 import { ContentAuditDialog } from "./ContentAuditDialog";
 import { NotesReviewDialog } from "./NotesReviewDialog";
+import { IgnoredFoldersDialog } from "./IgnoredFoldersDialog";
 import {
   SOURCE_PLATFORMS,
   releaseSourceColor,
@@ -195,6 +197,7 @@ export function ReleaseList({
   // whether the review dialog is open.
   const [dupCount, setDupCount] = useState(0);
   const [dupOpen, setDupOpen] = useState(false);
+  const [ignoredOpen, setIgnoredOpen] = useState(false);
 
   // Scroll container, for the index-rail jump-to-letter chevrons.
   const listRef = useRef<HTMLUListElement>(null);
@@ -1516,6 +1519,17 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<FolderX size={14} />}
+                label="Ignored folders…"
+                detail="Folders the rescan skips — review and un-ignore"
+                active={false}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  setIgnoredOpen(true);
+                }}
+              />
+              <MaintMenuItem
                 icon={<FolderCog size={14} />}
                 label="Set library folder…"
                 detail="Choose the root the rescan walks"
@@ -1633,6 +1647,10 @@ export function ReleaseList({
             reload();
           }}
         />
+      )}
+
+      {ignoredOpen && (
+        <IgnoredFoldersDialog onClose={() => setIgnoredOpen(false)} />
       )}
 
       {notesOpen && (
@@ -1874,6 +1892,17 @@ export function ReleaseList({
                     no audio{" "}
                     <span className="font-mono">{opSummary.data.noAudio}</span>
                   </span>
+                )}
+                {opSummary.data.ignored > 0 && (
+                  <button
+                    onClick={() => setIgnoredOpen(true)}
+                    className="text-muted underline decoration-dotted underline-offset-2
+                      cursor-pointer hover:text-fg hover:decoration-solid"
+                    title="Folders on disk the rescan skipped because they are ignored — click to review"
+                  >
+                    ignored{" "}
+                    <span className="font-mono">{opSummary.data.ignored}</span>
+                  </button>
                 )}
               </>
             )}

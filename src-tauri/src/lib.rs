@@ -3738,6 +3738,8 @@ pub struct LibraryReconcileSummary {
     // Discovery phase (import_directory) — new album folders found on disk.
     pub imported: usize,
     pub skipped: usize,
+    /// Folders on disk held back by `merged_paths` (see `list_merged_paths`).
+    pub ignored: usize,
     // Refresh phase (scan_library_changes) — existing releases re-read.
     pub refreshed: usize,
     /// Curated fields disagreeing with disk. Reported, never applied.
@@ -3804,6 +3806,7 @@ fn reconcile_library_blocking(
         root,
         imported: import.imported,
         skipped: import.skipped,
+        ignored: import.ignored,
         refreshed: scan.refreshed,
         drifted: scan.drifted,
         drifts: scan.drifts,
@@ -6388,6 +6391,105 @@ fn delete_release_ignore_path(
     Ok(dir)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergedPath {
+    pub path: String,
+    pub survivor_id: Option<i64>,
+    /// The survivor's artist/title, when that release still exists.
+    pub survivor_artist: Option<String>,
+    pub survivor_title: Option<String>,
+    pub trashed: bool,
+    pub merged_at: i64,
+    pub exists: bool,
+    /// The folder has audio a rescan would import as this path — directly, or
+    /// in disc subfolders (CD1, Disc 2…) that collapse onto it. These are the
+    /// rows actively hiding music.
+    pub has_audio: bool,
+}
+
+/// Does `dir` hold audio that the importer would key on `dir` itself? Mirrors
+/// `import_directory_blocking`: audio directly inside, or inside disc-named
+/// subfolders (which `release_dir` collapses onto the parent).
+fn dir_has_release_audio(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for e in entries.filter_map(|e| e.ok()) {
+        let p = e.path();
+        if p.is_file() && is_audio(&p) {
+            return true;
+        }
+        let is_disc = p.is_dir()
+            && p.file_name()
+                .and_then(|n| n.to_str())
+                .map(is_disc_dir_name)
+                .unwrap_or(false);
+        if is_disc {
+            if let Ok(sub) = std::fs::read_dir(&p) {
+                if sub
+                    .filter_map(|e| e.ok())
+                    .any(|e| e.path().is_file() && is_audio(&e.path()))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Every folder a rescan is told to skip, newest first, with whether it is
+/// still on disk with audio in it. Read-only.
+#[tauri::command]
+async fn list_merged_paths(app: tauri::AppHandle) -> Result<Vec<MergedPath>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.path, m.survivor_id, r.artist, r.title, m.trashed, m.merged_at
+                 FROM merged_paths m
+                 LEFT JOIN releases r ON r.id = m.survivor_id
+                 ORDER BY m.merged_at DESC, m.path",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, i64>(4)? != 0,
+                    r.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(path, survivor_id, artist, title, trashed, merged_at)| {
+                let dir = Path::new(&path);
+                let exists = dir.is_dir();
+                let has_audio = exists && dir_has_release_audio(dir);
+                MergedPath {
+                    path,
+                    survivor_id,
+                    survivor_artist: artist,
+                    survivor_title: title,
+                    trashed,
+                    merged_at,
+                    exists,
+                    has_audio,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Un-ignore a folder: drop its `merged_paths` row so a rescan imports it again.
 /// Undoes delete-and-ignore, and is the general escape hatch for a path that was
 /// merged/ignored and is now wanted back.
@@ -8829,7 +8931,11 @@ fn rescan_local_covers_blocking(app: tauri::AppHandle) -> Result<RescanSummary, 
 pub struct ImportSummary {
     pub scanned: usize,
     pub imported: usize,
+    /// Already in the catalogue.
     pub skipped: usize,
+    /// Held back by a `merged_paths` row (deleted-and-ignored or a resolved
+    /// duplicate). Counted apart from `skipped` so a hidden folder is visible.
+    pub ignored: usize,
     pub errors: Vec<String>,
 }
 
@@ -9101,6 +9207,7 @@ fn import_directory_blocking(app: tauri::AppHandle, root: String) -> Result<Impo
         scanned: total,
         imported: 0,
         skipped: 0,
+        ignored: 0,
         errors: Vec::new(),
     };
 
@@ -9145,7 +9252,7 @@ fn import_directory_blocking(app: tauri::AppHandle, root: String) -> Result<Impo
             )
             .unwrap_or(false);
         if resolved {
-            summary.skipped += 1;
+            summary.ignored += 1;
             continue;
         }
 
@@ -9469,6 +9576,7 @@ fn import_discogs_csv(
         scanned: total,
         imported: 0,
         skipped: 0,
+        ignored: 0,
         errors: Vec::new(),
     };
     let _ = app.emit("import:started", total);
@@ -10675,6 +10783,7 @@ pub fn run() {
             delete_release_with_files,
             delete_release_ignore_path,
             forget_merged_path,
+            list_merged_paths,
             find_duplicate_groups,
             recount_tracks,
             publish_reaction,

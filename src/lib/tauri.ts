@@ -112,6 +112,8 @@ export interface ImportSummary {
   scanned: number;
   imported: number;
   skipped: number;
+  /** Held back by an ignored-folder row (see listMergedPaths). */
+  ignored: number;
   errors: string[];
 }
 
@@ -737,6 +739,7 @@ export interface LibraryReconcileSummary {
   root: string;
   imported: number;
   skipped: number;
+  ignored: number;
   refreshed: number;
   drifted: number;
   drifts: ReleaseDrift[];
@@ -1327,6 +1330,26 @@ export async function deleteReleaseWithFiles(
  *  Returns the ignored path. Undo with restoreRelease + forgetMergedPath. */
 export async function deleteReleaseIgnorePath(releaseId: number): Promise<string> {
   return invoke<string>("delete_release_ignore_path", { releaseId });
+}
+
+/** A folder a rescan is told to skip (a `merged_paths` row). */
+export interface MergedPath {
+  path: string;
+  /** Set when it lost a duplicate resolution; null for delete-and-ignore. */
+  survivorId: number | null;
+  survivorArtist: string | null;
+  survivorTitle: string | null;
+  /** The folder was moved to the Trash at the time. */
+  trashed: boolean;
+  mergedAt: number;
+  exists: boolean;
+  /** On disk with audio a rescan would import — i.e. currently hidden. */
+  hasAudio: boolean;
+}
+
+/** Every ignored folder, newest first, checked against disk. */
+export async function listMergedPaths(): Promise<MergedPath[]> {
+  return invoke<MergedPath[]>("list_merged_paths");
 }
 
 /** Un-ignore a folder so a rescan imports it again (undoes delete-and-ignore). */

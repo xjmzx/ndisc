@@ -576,10 +576,18 @@ export function LibraryFlowPanel({ lib }: { lib: LibraryController }) {
           <div className="text-[10px] font-mono text-muted break-all">
             {pickedPath}
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+          <div
+            className={cn(
+              "mt-2 grid gap-2 text-xs",
+              last.ignored > 0 ? "grid-cols-4" : "grid-cols-3",
+            )}
+          >
             <ScanStat label="scanned" value={last.scanned.toLocaleString()} />
             <ScanStat label="imported" value={last.imported.toLocaleString()} tone="ok" />
             <ScanStat label="skipped" value={last.skipped.toLocaleString()} tone="muted" />
+            {last.ignored > 0 && (
+              <ScanStat label="ignored" value={last.ignored.toLocaleString()} tone="muted" />
+            )}
           </div>
           {last.errors.length > 0 && (
             <details className="mt-2">
