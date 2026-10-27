@@ -21,6 +21,33 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.5.3 — 2026-10-27
+
+### Added — see and undo ignored folders
+
+A folder deleted with "keep files, don't re-import", or the losing copy of a
+resolved duplicate, is skipped by every rescan. The only way back was the undo
+toast right after the delete, so a folder later re-ripped into the same path
+was skipped silently.
+
+- **Ignored folders** (maintenance menu). Every skipped folder, newest first,
+  with how it got there (deleted, or which release it was a duplicate of) and
+  whether it is still on disk with audio. Those are highlighted and listed
+  first. Filter by path or artist/title; **Un-ignore** drops the folder from
+  the list, and the next rescan imports it.
+- **Rescans count ignored folders on their own.** The rescan summary shows
+  "ignored N" (click to open the list); folder imports show an "ignored"
+  figure. `skipped` now means "already in the catalogue" only.
+
+### Changed — a shorter maintenance menu
+
+- One line per item; the explanation moved to a hover tooltip. Rows are
+  divided, and an item's icon lights with its label on hover.
+- The menu button is now the last in the toolbar, so the dropdown covers the
+  status dots rather than sitting beside them.
+
+No wire-contract change.
+
 ## 0.5.2 — 2026-10-06
 
 ### Changed — notes are the owner's words, not a file's comment
