@@ -1437,7 +1437,7 @@ export function ReleaseList({
           {maintMenuOpen && (
             <div
               role="menu"
-              className="absolute right-0 top-full mt-1 z-20 w-72
+              className="absolute right-0 top-full mt-1 z-20 w-60
                          rounded-md bg-panel border border-surface/60
                          shadow-lg overflow-hidden text-xs"
             >
@@ -3189,26 +3189,24 @@ function MaintMenuItem({
       role="menuitem"
       onClick={onClick}
       disabled={disabled}
+      // The explanation is a hover, not a second line: the menu outgrew the
+      // window once every item carried one.
+      title={detail}
       className={cn(
-        "w-full flex items-start gap-2.5 px-3 py-2 text-left",
+        "w-full flex items-center gap-2.5 px-3 py-1.5 text-left",
         "border-b border-surface/60 last:border-b-0",
         "hover:bg-surface/60 disabled:opacity-50 disabled:cursor-not-allowed",
       )}
     >
       <span
         className={cn(
-          "mt-0.5 shrink-0",
+          "shrink-0",
           active ? "text-accent animate-pulse" : "text-muted",
         )}
       >
         {icon}
       </span>
-      <span className="min-w-0">
-        <span className="block text-fg">{label}</span>
-        <span className="block text-[10px] text-muted leading-snug mt-0.5">
-          {detail}
-        </span>
-      </span>
+      <span className="min-w-0 truncate text-fg">{label}</span>
     </button>
   );
 }
