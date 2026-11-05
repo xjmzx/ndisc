@@ -899,7 +899,12 @@ export function ReleaseDetail({
           placeholder="label"
           width="w-40"
         />
+        {/* Keyed by release: this editor stays open after a commit (for the
+            colour/digital controls), and ReleaseDetail is reused across
+            selections, so without a key its draft carried to the next release
+            and a blur there saved the previous release's source onto it. */}
         <EditableSource
+          key={release.id ?? "new"}
           value={release.sourceLabel ?? null}
           onChange={onChangeSource}
         />

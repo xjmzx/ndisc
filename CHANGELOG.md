@@ -21,6 +21,17 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.1 — 2026-11-06
+
+### Fixed — a source carried over to the next release you clicked
+
+The acquisition-source editor stays open after you set a source, so the
+colour and "digital" controls are at hand. The detail panel is reused when you
+select another release, and the open editor kept the previous release's text:
+the next release showed the old source, and clicking into the box and away
+saved it there. The editor now starts fresh for each release. The bug dates
+from the source dimension's introduction.
+
 ## 0.6.0 — 2026-11-05
 
 ### Changed — relay.fizx.uk is gone; relay.nfunc.xyz is the only default
