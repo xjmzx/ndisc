@@ -112,10 +112,11 @@ developed on a separate **macOS device** and mirrored to the **`adjmx`** and
 but are first-class **consumers** of the same Nostr data — and they'll grow
 alongside the project as its public face.
 
-- **fizx.uk / upleb.uk** — the two Nostr-based personal sites. They *are* the two
-  themes the whole suite's palette mirrors: **fizx** (default) and **upleb**
-  (orange). Expected to expand with the projects.
-- **glmps.fizx.uk / glmps.upleb.uk** — `glmps`, the **web-consumption
+- **upleb.uk / nfunc.xyz** — the Nostr-based personal sites. **fizx.uk was
+  decommissioned on 2026-11-05** (the box and its DNS are gone); its palette
+  lives on as the suite's `fizx` colour theme, beside **upleb** (orange) and
+  **mono** (the default for new work).
+- **glmps.upleb.uk / glmps.nfunc.xyz** — `glmps`, the **web-consumption
   demonstration reader**, served under each theme's domain. It renders the
   releases `ndisc` publishes against the shared contract — the canonical proof
   that a published release reads back correctly — and holds the **reader-side
@@ -363,7 +364,7 @@ than it is, and there is no relay-authoritative time to fall back on.
 
 The second wrap property is operational: every 1059 is signed by a **fresh
 throwaway key**, so wraps cannot be filtered by sender and cannot pass a
-pubkey allowlist. `relay.fizx.uk` runs `restricted_writes` (nostr-rs-relay
+pubkey allowlist. `relay.nfunc.xyz` runs `restricted_writes` (nostr-rs-relay
 whitelists by author pubkey), and therefore **can never carry nchat traffic** —
 not a misconfiguration but a structural incompatibility, worth knowing before
 anyone points the suite's own hub at the messenger.
@@ -390,11 +391,14 @@ apps that consume it*.
 
 **Relay notes.** `ndisc`'s relay set must be a **superset** of the website's
 read set. Primal doesn't enforce `kind:5` deletions, so deletes are filtered
-client-side. **Discovery = shared hub (decided 2026-07-19):** `relay.fizx.uk`
-stays in every app's read set as the union point, so cross-user discovery works
+client-side. **Discovery = shared hub (decided 2026-07-19):** the hub stays in
+every app's read set as the union point, so cross-user discovery works
 without per-user relay lists. NIP-65 / outbox (each user advertising their own
 relays — the real "a relay each" model) is the eventual vision but **deferred**;
-relays stay manually configured for now.
+relays stay manually configured for now. **The hub is `relay.nfunc.xyz`**, and
+since 2026-11-05 it is the **only** default relay in every app: `relay.fizx.uk`
+went with the fizx box, and each app that saves a relay list carries a one-shot
+migration that rewrites it out.
 
 **`CLAUDE.md` lives in three tiers, and only one of them is publishable.**
 Every repo here is public or may become public, so the split is a safety
@@ -507,10 +511,11 @@ These hold whatever gets built, on every platform.
 - **App ⇄ signer (NIP-46, kind 24133).** Apps make a fresh client key per login, so
   no whitelist can hold them: this goes over a small, open relay that accepts **only
   kind 24133**, stores nothing (the kind is ephemeral) and has its own memory cap —
-  a second nostr-rs-relay beside `relay.fizx.uk`. Its address travels in the
+  a second nostr-rs-relay beside `relay.nfunc.xyz` (`cos.nfunc.xyz`; it was
+  `cos.fizx.uk` until the fizx box went). Its address travels in the
   `bunker://` string; `git.upleb.uk` refuses the kind.
 - **Signer ⇄ monitors (the approval channel, kind 4133).** Every key is stable, so
-  it goes over `relay.fizx.uk`, with the service key and each monitor key on its
+  it goes over `relay.nfunc.xyz`, with the service key and each monitor key on its
   `pubkey_whitelist`. The events are **stored**, so a monitor that was closed
   catches up when it opens.
 - **Phones need `wss://`:** Capacitor serves nview over https, and iOS allows no
@@ -1006,7 +1011,7 @@ own items are in its `DIRECTION.md`.
 - **Reconcile test rig (to-do).** "Relays are truth" needs multi-relay /
   partial-availability testing — a local relay (strfry / nostr-rs-relay) plus a
   throwaway test key — so reconcile and best-effort `kind:5` retraction are
-  exercised without publishing test data to `relay.fizx.uk`.
+  exercised without publishing test data to `relay.nfunc.xyz`.
 
 **Ultimate aim**
 - Samples as first-class objects for **collaboration** → track construction →
@@ -1014,7 +1019,7 @@ own items are in its `DIRECTION.md`.
 
 **Homes & devices.** Schema + contracts live in `ndisc/schema`; the reader spec
 lives in `glmps`. The `n` apps are developed here (Linux) under
-`github.com/xjmzx/*`; the web sites (`fizx.uk` / `upleb.uk` and the `glmps.*`
+`github.com/xjmzx/*`; the web sites (`upleb.uk`, the `nfunc.xyz` set and the `glmps.*`
 readers) are developed on a **macOS device** and mirrored to the **`adjmx`** and
 **`macos-node`** GitHub users. `nview` (mobile) builds on its own device. The
 suite is being formalised as coordinated repos across all three.

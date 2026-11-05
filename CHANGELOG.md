@@ -23,6 +23,16 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+### Changed — relay.fizx.uk is gone; relay.nfunc.xyz is the only default
+
+The fizx box was decommissioned on 2026-11-05 and `relay.fizx.uk` no longer
+resolves. It is dropped from the default relay list and from the reaction
+relays (frontend and backend), leaving `wss://relay.nfunc.xyz` alone. Saved
+relay lists are migrated on launch: a stored `relay.fizx.uk` (or the old
+`relay.damus.io`) becomes `relay.nfunc.xyz`, keeping its place, with no
+duplicates. This replaces the old damus → fizx swap, which would have put the
+dead relay back. The minimum-relay floor is now 1, since one default exists.
+
 ### Contract — 2026-11 genre round (release.v2, additive)
 
 - **Three new genres:** `minimal` (electronic), `abstract` and `world`

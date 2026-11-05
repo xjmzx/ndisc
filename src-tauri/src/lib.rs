@@ -451,7 +451,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "publish_state", "TEXT")?;
     // Event id of the last kind:31237 we published for this release. Needed so
     // an unpublish can carry an `e` tag alongside the `a` coordinate: relays
-    // running nostr-rs-relay (relay.fizx.uk) only honour NIP-09 deletion by
+    // running nostr-rs-relay (relay.nfunc.xyz) only honour NIP-09 deletion by
     // event id and silently ignore `a`-tag deletion of addressable events.
     // NULL for rows published before this column existed — "Reconcile relays"
     // recovers those ids from the relays themselves.
@@ -5680,7 +5680,7 @@ fn release_d_tag(release_id: i64) -> String {
     format!("disco-vault:{}", release_id)
 }
 
-const REACTION_RELAYS_DEFAULT: &[&str] = &["wss://relay.fizx.uk", "wss://relay.nfunc.xyz"];
+const REACTION_RELAYS_DEFAULT: &[&str] = &["wss://relay.nfunc.xyz"];
 
 /// Publish a kind:7 reaction targeting one of the user's own releases.
 /// Builds the replaceable address `31237:<my_pk>:disco-vault:<release_id>`
@@ -6022,7 +6022,7 @@ fn release_address(keys: &Keys, release_id: i64) -> String {
 /// Build the kind:5 that retracts a release.
 ///
 /// Carries BOTH the `a` coordinate and an `e` tag per known event id. The `a`
-/// tag alone is not enough: nostr-rs-relay (which relay.fizx.uk runs) only
+/// tag alone is not enough: nostr-rs-relay (which relay.nfunc.xyz runs) only
 /// implements NIP-09 deletion by event id, so an `a`-only deletion is stored
 /// and never applied — the release stays live forever. strfry (nos.lol) honours
 /// `a`. Sending both satisfies each without a second event.
@@ -7827,7 +7827,7 @@ async fn reconcile_published(
 // see:
 //
 //   * ghosts  — a release we retracted (or never published) that a relay still
-//     serves, because it ignored our kind:5. relay.fizx.uk runs nostr-rs-relay,
+//     serves, because it ignored our kind:5. relay.nfunc.xyz runs nostr-rs-relay,
 //     which only honours deletion by `e` tag; every `a`-only deletion we ever
 //     sent it was stored and never applied.
 //   * orphans — an event whose d-tag points at a release id that no longer

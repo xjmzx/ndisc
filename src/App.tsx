@@ -97,19 +97,17 @@ function loadTheme(): Theme {
 
 const DB_FILTERS = [{ name: "SQLite", extensions: ["db", "sqlite"] }];
 
-const DEFAULT_RELAYS = [
-  "wss://relay.fizx.uk",
-  "wss://relay.nfunc.xyz",
-];
+// relay.nfunc.xyz is the suite's only default relay since relay.fizx.uk went
+// with the fizx box (2026-11-05).
+const DEFAULT_RELAYS = ["wss://relay.nfunc.xyz"];
 
 // Minimum relays required for ndisc to publish/read meaningfully. If the
-// saved relay list ever falls below this on startup (user cleared most of
-// it, persisted state corrupted), top up from the tail of DEFAULT_RELAYS —
-// the hub and its mirror (relay.fizx.uk + relay.nfunc.xyz) — so even a
-// totally empty saved state recovers to something functional on next launch.
+// saved relay list ever falls below this on startup (user cleared it,
+// persisted state corrupted), top up from DEFAULT_RELAYS so even a totally
+// empty saved state recovers to something functional on next launch.
 // The public pair that used to sit here (nos.lol + primal) does not keep the
 // catalogue: on 2026-10-02 both held nothing older than two days for this key.
-const MIN_RELAYS = 2;
+const MIN_RELAYS = 1;
 const RELAY_FALLBACKS = DEFAULT_RELAYS.slice(-MIN_RELAYS);
 
 function ensureMinRelays(relays: string[]): string[] {
@@ -130,14 +128,22 @@ const RELAYS_STORAGE_KEY = "ndisc.relays";
 const BLOSSOM_STORAGE_KEY = "ndisc.blossomServers";
 const LEGACY_RELAYS_STORAGE_KEY = "disco-vault.relays";
 
-// One-shot relay migration: damus rate-limits batch publish. Swap it for the
-// self-hosted fizx.uk relay if the user has damus stored and hasn't already
-// added fizx themselves. Idempotent: after the swap neither condition matches.
-function migrateDamusToFizx(relays: string[]): string[] {
-  const damus = "wss://relay.damus.io";
-  const fizx = "wss://relay.fizx.uk";
-  if (!relays.includes(damus) || relays.includes(fizx)) return relays;
-  return relays.map((r) => (r === damus ? fizx : r));
+// One-shot relay migration for saved lists. Each retired relay is replaced by
+// relay.nfunc.xyz, keeping its position, and duplicates are dropped:
+// - relay.fizx.uk: the host is gone (2026-11-05), so it fails at DNS;
+// - relay.damus.io: rate-limits batch publish (an older swap sent it to fizx).
+// Idempotent: once rewritten nothing matches. The saved list is re-persisted
+// by the effect that writes RELAYS_STORAGE_KEY.
+const RETIRED_RELAYS = ["wss://relay.fizx.uk", "wss://relay.damus.io"];
+function migrateRetiredRelays(relays: string[]): string[] {
+  const replacement = "wss://relay.nfunc.xyz";
+  const bare = (r: string) => r.trim().replace(/\/+$/, "");
+  const out: string[] = [];
+  for (const r of relays) {
+    const next = RETIRED_RELAYS.includes(bare(r)) ? replacement : r;
+    if (!out.some((o) => bare(o) === bare(next))) out.push(next);
+  }
+  return out;
 }
 
 // Suite rule (n-suite headers): the version chip shows only
@@ -251,7 +257,7 @@ export default function App() {
               /* ignore */
             }
           }
-          return ensureMinRelays(migrateDamusToFizx(parsed));
+          return ensureMinRelays(migrateRetiredRelays(parsed));
         }
       } catch {
         /* try next key */
