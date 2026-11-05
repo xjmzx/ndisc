@@ -21,7 +21,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
+## 0.6.0 — 2026-11-05
 
 ### Changed — relay.fizx.uk is gone; relay.nfunc.xyz is the only default
 
