@@ -36,7 +36,7 @@ import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
-import { genreDisplay, GENRE_ORDER } from "../lib/genre";
+import { genreDisplay, GENRE_ORDER, GENRE_SLOT_CAP } from "../lib/genre";
 import {
   clearReleasePath,
   enrichDiscogsRelease,
@@ -54,6 +54,8 @@ import {
   setReleaseCategory,
   setReleaseCountry,
   setReleaseGenres,
+  genreSlots,
+  GENRE_SLOT_FIELDS,
   setReleaseLabel,
   setReleaseSource,
   setReleasePaired,
@@ -98,7 +100,7 @@ const CATEGORY_OPTIONS = [
   "miscellaneous",
 ];
 
-// Flat, alphabetical genre options for one slot — the 35 active slugs (from
+// Flat, alphabetical genre options for one slot — the 41 active slugs (from
 // lib/genre, so a retired compound pair can never be offered) minus anything
 // already chosen in an earlier slot. The release-viewer dropdown lists genres
 // only: no family grouping. Sorted by display label (case-insensitive), so
@@ -116,6 +118,9 @@ function genreOptionsForSlot(
     }),
   );
 }
+
+// Placeholder suffixes for the empty genre slots ("+ 2nd", …).
+const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th"];
 
 // Compact display form for a NIP-19 naddr: first 12 + last 8 around an ellipsis.
 // The full string is still available for selection (DOM has the abbreviated
@@ -613,37 +618,26 @@ export function ReleaseDetail({
     onChanged({ ...release, pairedOverride: v });
   }
 
-  // Changes a single genre slot. Cascade-clears later slots that are no
-  // longer valid given the new value (e.g. swap primary to `electronic` and
-  // any electronic-sub in slot 2/3 becomes invalid → cleared). Then
-  // compacts to keep density (no holes). Writes all three slots atomically
-  // via setReleaseGenres.
+  // Changes a single genre slot. Clears any later slot that now repeats an
+  // earlier one (pick `dub` in slot 1 when slot 3 was `dub`), then compacts
+  // to keep density (no holes) — clearing a slot shifts the later ones up.
+  // Writes all five slots at once via setReleaseGenres.
   async function onChangeGenreSlot(slot: number, newValue: string | null) {
     if (!release.id) return;
-    const slots: (string | null)[] = [
-      release.genrePrimary ?? null,
-      release.genreSecondary ?? null,
-      release.genreTertiary ?? null,
-    ];
+    const slots = genreSlots(release);
     slots[slot] = newValue;
-    for (let i = slot + 1; i < 3; i++) {
+    for (let i = slot + 1; i < GENRE_SLOT_CAP; i++) {
       if (slots[i]) {
         const allowed = new Set(genreOptionsForSlot(i, slots));
         if (!allowed.has(slots[i] as string)) slots[i] = null;
       }
     }
     const present = slots.filter((s): s is string => !!s);
-    const dense: [string | null, string | null, string | null] = [
-      present[0] ?? null,
-      present[1] ?? null,
-      present[2] ?? null,
-    ];
-    await setReleaseGenres(release.id, dense[0], dense[1], dense[2]);
-    applyEdit({
-      genrePrimary: dense[0],
-      genreSecondary: dense[1],
-      genreTertiary: dense[2],
-    });
+    const dense = GENRE_SLOT_FIELDS.map((_, i) => present[i] ?? null);
+    await setReleaseGenres(release.id, dense);
+    applyEdit(
+      Object.fromEntries(GENRE_SLOT_FIELDS.map((f, i) => [f, dense[i]])),
+    );
   }
 
   async function onChangeCatalogNumber(v: string | null) {
@@ -1002,39 +996,27 @@ export function ReleaseDetail({
           )}
         </div>
         {(() => {
-          const slots = [
-            release.genrePrimary ?? null,
-            release.genreSecondary ?? null,
-            release.genreTertiary ?? null,
-          ];
+          const slots = genreSlots(release);
+          // Progressive disclosure — each slot appears once the one before it
+          // is set, so an untagged release shows one picker and a full one
+          // five. Grouped so the slots wrap together, not between other fields.
           return (
-            <>
-              <EditableEnum
-                value={slots[0]}
-                options={genreOptionsForSlot(0, slots)}
-                onChange={(v) => onChangeGenreSlot(0, v)}
-                ariaLabel="primary genre"
-                displayFn={genreDisplay}
-                placeholder="genre"
-                width="w-32"
-              />
-              {/* Progressive disclosure — slot 2 only when slot 1 is set. The
-                  detail editor shows at most TWO slots; the third genre still
-                  exists in the schema (0–3) and is editable in the bulk-edit
-                  view, but is not surfaced here. `slots` still carries all three
-                  so option-filtering excludes an existing tertiary. */}
-              {slots[0] && (
-                <EditableEnum
-                  value={slots[1]}
-                  options={genreOptionsForSlot(1, slots)}
-                  onChange={(v) => onChangeGenreSlot(1, v)}
-                  ariaLabel="secondary genre"
-                  displayFn={genreDisplay}
-                  placeholder="+ 2nd"
-                  width="w-28"
-                />
+            <div className="inline-flex flex-wrap items-center gap-1.5">
+              {slots.map((value, i) =>
+                i === 0 || slots[i - 1] ? (
+                  <EditableEnum
+                    key={i}
+                    value={value}
+                    options={genreOptionsForSlot(i, slots)}
+                    onChange={(v) => onChangeGenreSlot(i, v)}
+                    ariaLabel={`genre ${i + 1}`}
+                    displayFn={genreDisplay}
+                    placeholder={i === 0 ? "genre" : `+ ${ORDINALS[i]}`}
+                    width={i === 0 ? "w-28" : "w-24"}
+                  />
+                ) : null,
               )}
-            </>
+            </div>
           );
         })()}
       </div>

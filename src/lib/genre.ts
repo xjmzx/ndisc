@@ -3,7 +3,7 @@
  *
  * Source of truth: schema/release.v2.json — keep this in sync with the grouped
  * `genreSlugs` (acoustic / electronic / bridge / tertiary). The grouping is
- * semantic + palette ONLY — not a hierarchy; all 38 active slugs are pure
+ * semantic + palette ONLY — not a hierarchy; all 41 active slugs are pure
  * peers and may be freely combined. The canonical emittable-slug list also
  * lives Rust-side (src-tauri/src/lib.rs) for publish validation; these two
  * must agree.
@@ -49,6 +49,7 @@ export const GENRE_ELECTRONIC = [
   "garage",
   "house",
   "jungle",
+  "minimal",
   "techno",
 ] as const;
 
@@ -57,13 +58,19 @@ export const GENRE_BRIDGE = ["dub", "noise"] as const;
 
 // Tertiary / optional — cross-cutting styles.
 export const GENRE_TERTIARY = [
+  "abstract",
   "boom-bap",
   "conscious",
   "lo-fi",
   "trance",
   "trap",
   "turntablism",
+  "world",
 ] as const;
+
+// Genre slots per release — release.v2 `genreInvariants.slotCap` (3 → 5 in
+// the 2026-11 round). Must match GENRE_SLOT_CAP in src-tauri/src/lib.rs.
+export const GENRE_SLOT_CAP = 5;
 
 // Retired slugs — never emitted; valid for legacy reads only. The four compound
 // slash-pairs (display with a slash) plus the 2026-06b 1:1 renames poetry and

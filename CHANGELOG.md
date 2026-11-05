@@ -1,7 +1,7 @@
 # Changelog
 
-**Contract:** `release.v2` @ `91e16cf1da861ad3116d7d15ad13d7ae32fbdf26c367e2701236cb10cfc38962`
-(2026-06b genre round — 38 active slugs + additive `discs` tag)
+**Contract:** `release.v2` @ `03f312cfc5f9b4906211de41d7d0142e34330925cd56a8808ed119d4fd34fb42`
+(2026-11 genre round — 41 active slugs, up to 5 genre slots)
 
 **Feed contract:** `feed.v1` @ `077fe7a6f70831ccf7c9640185c29e0b9c289ea22a1e4283064a1803ed1ea50c`
 (kind:31239 feed-note channel — frozen 2026-06-23, pinned by `mod schema_feed_v1`)
@@ -20,6 +20,33 @@ ndisc uses two version axes — this app's semver (below) and the shared
 `release.vN` contract (above). A contract change moves the whole suite in one
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
+
+## Unreleased
+
+### Contract — 2026-11 genre round (release.v2, additive)
+
+- **Three new genres:** `minimal` (electronic), `abstract` and `world`
+  (tertiary). 38 → 41 active slugs. Colours: `--c-g-minimal 255 240 140`,
+  `--c-g-abstract 210 140 230`, `--c-g-world 140 170 80`.
+- **Up to five genres per release.** `genreInvariants.slotCap` 3 → 5. A
+  relaxation, not a v3 bump: every earlier event stays valid, and a reader
+  still on the old cap keeps the first three (the highest-priority ones).
+- SHA re-pinned `91e16cf1…` → `03f312cf…`. The full v2 fixture now carries
+  five genre tags, one per genre family, and the additive `tracks` / `discs` /
+  `video` tags it had been missing (glmps's copy already had them); all v2
+  fixtures are now byte-identical across ndisc and the three glmps sites. Readers re-vendored in the same wave: glmps (fizx, upleb,
+  nfunc) and nview.
+
+### Changed — five genre slots in the release editor
+
+The release detail editor showed two genre pickers (the third slot existed
+but wasn't editable anywhere). It now shows up to five: each picker appears
+once the one before it is set, so an untagged release still shows one. The
+slots are grouped so they wrap together.
+
+Storage: two new columns, `genre_quaternary` and `genre_quinary`, added on
+launch; nothing to migrate. Stats and the label genre tally count all five
+slots. `set_release_genres` now takes an ordered list.
 
 ## 0.5.3 — 2026-10-27
 

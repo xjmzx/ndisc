@@ -1,5 +1,5 @@
 {
-  "_comment": "Reference kind:31237 release event conforming to release.v2.json — every optional tag populated, all three genre slots used. Slot order = priority: techno is primary, dub is secondary, downtempo is tertiary. All 35 active slugs are pure peers — `electronic` + `techno` would also be valid here; meaning composes by stacking slugs.",
+  "_comment": "Reference kind:31237 release event conforming to release.v2.json — every optional tag populated, including the additive `tracks`, `discs` and `video` tags (2026-06), and all five genre slots (cap raised 3 → 5 in the 2026-11 round). The slots cover every genre family: ambient (acoustic), techno (electronic), dub (bridge), minimal (electronic, 2026-11) and abstract (tertiary, 2026-11). Slot order = priority, first = primary. All 41 active slugs are pure peers — any combination across families is valid; meaning composes by stacking slugs.",
   "kind": 31237,
   "content": "First three albums, remastered.",
   "tags": [
@@ -11,6 +11,9 @@
     ["medium", "digital"],
     ["format", "FLAC"],
     ["year", "1992"],
+    ["tracks", "12"],
+    ["discs", "2"],
+    ["video", "1"],
     ["label", "Apollo"],
     ["catalog", "AMB3922"],
     ["country", "UK"],
@@ -19,9 +22,11 @@
     ["i", "discogs:release:12345"],
     ["i", "musicbrainz:release:0000-aphex-saw8592"],
     ["image", "https://i.nostr.build/example.jpg"],
+    ["genre", "ambient"],
     ["genre", "techno"],
     ["genre", "dub"],
-    ["genre", "downtempo"]
+    ["genre", "minimal"],
+    ["genre", "abstract"]
   ],
   "id": "<illustrative — 64-hex event id>",
   "pubkey": "<illustrative — 64-hex author pubkey>",

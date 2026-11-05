@@ -38,9 +38,9 @@
           "required": false,
           "type": "string",
           "repeatable": true,
-          "occurrences": "0-3",
+          "occurrences": "0-5",
           "ordered": true,
-          "note": "NEW IN v2. Up to three ordered genre slots: first = primary, second = secondary, third = tertiary. Each slug is one of the active values in `genreSlugs` (38 after the 2026-06b genre round; six deprecated slugs — four compound pairs plus poetry/spiritual — remain valid for legacy reads). Order of `genre` tags in the emitted event IS the priority order — emitters MUST preserve it, consumers MUST treat it as authoritative. Invariants enforced by the emitter and validated by conformant consumers (see `genreInvariants`).",
+          "note": "NEW IN v2. Up to five ordered genre slots: first = primary, second = secondary, and so on (the cap was 3 until the 2026-11 round raised it to 5 — a relaxation: a reader still on the old cap keeps the first three). Each slug is one of the active values in `genreSlugs` (41 after the 2026-11 genre round; six deprecated slugs — four compound pairs plus poetry/spiritual — remain valid for legacy reads). Order of `genre` tags in the emitted event IS the priority order — emitters MUST preserve it, consumers MUST treat it as authoritative. Invariants enforced by the emitter and validated by conformant consumers (see `genreInvariants`).",
           "valuesEnum": "see genreSlugs below"
         }
       },
@@ -66,7 +66,7 @@
     }
   },
   "genreSlugs": {
-    "_comment": "Grouped for semantics + palette ONLY — NOT a hierarchy; all active slugs are pure peers (see genreInvariants). The groups map to three colour tiers: `acoustic` (primary, muted/earthy), `electronic` (secondary, vivid), `tertiary` (optional/cross-cutting). `bridge` slugs (dub, noise) sit between the acoustic and electronic families and carry standalone hues. A zero-count slug renders no chip in data but stays selectable in pickers. Adding a slug is additive (re-pin the SHA, no v3 bump) provided existing slugs stay stable. A rename is done ADDITIVELY too — add the new slug to active and retire the old one to `deprecated` (kept valid for legacy reads), with a backfill remapping local rows; only an in-place rename/removal that would break legacy reads is a v3 bump. The 2026-06b round did exactly this: poetry→spoken, spiritual→conscious, plus new disco/garage/turntablism. Display is verbatim except `rnb` → 'R&B' and the glmps-side cosmetic `soundtrack` → 'film'.",
+    "_comment": "Grouped for semantics + palette ONLY — NOT a hierarchy; all active slugs are pure peers (see genreInvariants). The groups map to three colour tiers: `acoustic` (primary, muted/earthy), `electronic` (secondary, vivid), `tertiary` (optional/cross-cutting). `bridge` slugs (dub, noise) sit between the acoustic and electronic families and carry standalone hues. A zero-count slug renders no chip in data but stays selectable in pickers. Adding a slug is additive (re-pin the SHA, no v3 bump) provided existing slugs stay stable. A rename is done ADDITIVELY too — add the new slug to active and retire the old one to `deprecated` (kept valid for legacy reads), with a backfill remapping local rows; only an in-place rename/removal that would break legacy reads is a v3 bump. The 2026-06b round did exactly this: poetry→spoken, spiritual→conscious, plus new disco/garage/turntablism. The 2026-11 round added minimal (electronic) plus abstract and world (tertiary). Display is verbatim except `rnb` → 'R&B' and the glmps-side cosmetic `soundtrack` → 'film'.",
     "acoustic": [
       "ambient",
       "blues",
@@ -99,6 +99,7 @@
       "garage",
       "house",
       "jungle",
+      "minimal",
       "techno"
     ],
     "bridge": [
@@ -106,12 +107,14 @@
       "noise"
     ],
     "tertiary": [
+      "abstract",
       "boom-bap",
       "conscious",
       "lo-fi",
       "trance",
       "trap",
-      "turntablism"
+      "turntablism",
+      "world"
     ],
     "deprecated": {
       "_comment": "Retired slugs — NEVER emitted on new events, retained as VALID for reading legacy events and cross-relay NIP-77 copies. Two kinds: (1) original compound slash-pairs from the v2 set, split/collapsed in the 2026-06 restructure, which display WITH a slash — classical-folk→classical+folk, dnb-jungle→dnb+jungle, drone-noise→noise, footwork-trap→footwork; (2) 1:1 renames from the 2026-06b round, which display VERBATIM — poetry→spoken, spiritual→conscious.",
@@ -126,8 +129,8 @@
     }
   },
   "genreInvariants": {
-    "_comment": "Cross-slot constraints. The emitter enforces these at capture time; conformant consumers SHOULD validate on read with strict-but-recoverable handling (silently drop the offending slot, keep the rest). All 38 active slugs are pure peers — the acoustic / electronic / bridge / tertiary groups are palette + semantic groupings, not a hierarchy; any combination across groups is permitted in the same event. Meaning composes by stacking slugs rather than implying parent semantics.",
-    "slotCap": 3,
+    "_comment": "Cross-slot constraints. The emitter enforces these at capture time; conformant consumers SHOULD validate on read with strict-but-recoverable handling (silently drop the offending slot, keep the rest). All 41 active slugs are pure peers — the acoustic / electronic / bridge / tertiary groups are palette + semantic groupings, not a hierarchy; any combination across groups is permitted in the same event. Meaning composes by stacking slugs rather than implying parent semantics.",
+    "slotCap": 5,
     "distinct": "All emitted `genre` slugs in a single event MUST be distinct.",
     "denseOrdering": "Slots are dense on the wire — present slugs occupy the lowest indices. A consumer receiving a sparse sequence (e.g. via a non-canonical re-emitter) SHOULD compact before indexing."
   },
@@ -147,6 +150,6 @@
     "spec": "NIP-19 naddr",
     "coordinate": { "kind": 31237, "pubkey": "<author pubkey>", "identifier": "disco-vault:<integer release id>" }
   },
-  "changePolicy": "FROZEN once shipped, with two convention-permitted ADDITIVE exceptions that do NOT force a v3 bump (the `d`-only structural rule guarantees old consumers stay compatible): (1) new optional slugs inside `genreSlugs`, existing slugs stable; (2) new OPTIONAL tags that consumers may ignore — e.g. the additive `tracks`, `discs`, and `video` tags (2026-06). Any BREAKING change — renaming/removing slugs or tags, changing tag semantics, breaking ordering, or making a previously-optional tag required — is a coordinated v3 bump: add release.v3.json and migrate consumers, never edit this file. When an additive amendment lands, re-vendor this file into the glmps + ndisc.view consumers and re-pin their SHA.",
+  "changePolicy": "FROZEN once shipped, with two convention-permitted ADDITIVE exceptions that do NOT force a v3 bump (the `d`-only structural rule guarantees old consumers stay compatible): (1) new optional slugs inside `genreSlugs`, existing slugs stable; (2) new OPTIONAL tags that consumers may ignore — e.g. the additive `tracks`, `discs`, and `video` tags (2026-06); (3) strictly more permissive constraints, where every earlier emitter stays valid — e.g. the 2026-11 `slotCap` raise 3 → 5 (a reader on the old cap keeps the first three slots, which is the priority order). Any BREAKING change — renaming/removing slugs or tags, changing tag semantics, breaking ordering, or making a previously-optional tag required — is a coordinated v3 bump: add release.v3.json and migrate consumers, never edit this file. When an additive amendment lands, re-vendor this file into the glmps + ndisc.view consumers and re-pin their SHA.",
   "rolloutFromV1": "v1 readers ignore the `genre` tag (additive rule) and surface no genre data until upgraded. ndisc emits only v2 format; no v1-compatible proxy (e.g. NIP-12 `t` tags) is added. See schema/v2-proposal-glmps-reply.md for the v2-only emission decision rationale."
 }

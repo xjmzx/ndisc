@@ -67,22 +67,23 @@ addition is a repeatable optional `genre` tag.
 
 ### `genre` tag (new in v2)
 
-- **Repeatable**, 0–3 occurrences per event.
+- **Repeatable**, 0–5 occurrences per event (0–3 until the 2026-11 round).
 - **Ordered** — tag order IS the priority order (first = primary, second =
-  secondary, third = tertiary).
-- **Each value** is one of 38 active slugs (2026-06b round):
+  secondary, and so on to the fifth).
+- **Each value** is one of 41 active slugs (2026-11 round):
 
 ```
 acoustic:    ambient, blues, classical, disco, experimental, folk, funk,
              hip-hop, jazz, latin, metal, pop, reggae, rnb, rock, soul,
              soundtrack, spoken
 electronic:  acid, bass, breaks, dnb, downtempo, electro, electronic, footwork,
-             garage, house, jungle, techno
+             garage, house, jungle, minimal, techno
 bridge:      dub, noise
-tertiary:    boom-bap, conscious, lo-fi, trance, trap, turntablism
+tertiary:    abstract, boom-bap, conscious, lo-fi, trance, trap, turntablism,
+             world
 ```
 
-- **All 38 active slugs are pure peers.** The acoustic / electronic / bridge /
+- **All 41 active slugs are pure peers.** The acoustic / electronic / bridge /
   tertiary grouping is palette + semantic grouping only; there's no hierarchy
   or gate. A release MAY be tagged `electronic` + `techno` + `dub` if that's
   how the meaning composes.
@@ -98,7 +99,10 @@ tertiary:    boom-bap, conscious, lo-fi, trance, trap, turntablism
 ### Invariants (enforced at capture, validated on read)
 
 1. **Distinct** — no duplicate slug across the slots of a single event.
-2. **Slot cap = 3** — consumers ignore any 4th `genre` tag.
+2. **Slot cap = 5** — consumers ignore any 6th `genre` tag. Raised from 3 in
+   the 2026-11 round as a constraint relaxation: every earlier emitter stays
+   valid, and a reader still on the old cap keeps the first three slots —
+   the highest-priority ones.
 3. **Dense ordering** — present slugs occupy the lowest indices; sparse
    sequences should be compacted on receipt.
 
@@ -143,6 +147,11 @@ bridge                               tertiary (optional)
   electronic  --c-g-garage:         52 200 176
   tertiary    --c-g-conscious:     178 118  56   (= spiritual, renamed)
   tertiary    --c-g-turntablism:   110 122 134
+
+2026-11 additions
+  electronic  --c-g-minimal:       255 240 140
+  tertiary    --c-g-abstract:      210 140 230
+  tertiary    --c-g-world:         140 170  80
 
 deprecated (legacy reads only)
   compound pairs render with a slash:
@@ -235,7 +244,8 @@ amendments without forcing a v3 bump:
   earlier v2.1.2 `classical → classical-folk` rename was removed from
   `backfill_genre_slug_renames` as part of this (it would otherwise re-split
   plain `classical` every launch).
-- **Constraint relaxations** (e.g. v2.1 dropping `noParentWithOwnSub`) —
+- **Constraint relaxations** (e.g. v2.1 dropping `noParentWithOwnSub`; the
+  2026-11 `slotCap` raise 3 → 5) —
   strictly more permissive, all v2.0 emitters remain valid.
 - **Palette triplet updates** (e.g. v2.1.3 `electronic` magenta → grey; the
   2026-06 recolour of the electronic family). Visual-only; the palette is
@@ -348,7 +358,7 @@ itself.
 - `fixtures/` — reference events:
   - `release-31237.full.json` — v1 maximal
   - `release-31237.minimal.json` — v1 minimal
-  - `release-31237-v2.full.json` — v2 with all 3 genre slots
+  - `release-31237-v2.full.json` — v2 with all 5 genre slots (one per genre family) and every additive tag
   - `release-31237-v2.partial.json` — v2 with primary slot only
   - `release-31237-v2.minimal.json` — v2 with no genre slots (byte-identical
     to v1 minimal — the additive-rule guarantee)

@@ -177,8 +177,9 @@ pub struct Release {
     // instead of a single source-wide flag. Local-only, never published.
     #[serde(default)]
     pub paired_override: Option<bool>,
-    // Genre slots — primary / secondary / tertiary; ordered (slot 0 wins),
-    // each optional, each one of the 35 active slugs in schema/release.v2.json.
+    // Genre slots — primary / secondary / tertiary / quaternary / quinary;
+    // ordered (slot 0 wins), each optional, each one of the 41 active slugs in
+    // schema/release.v2.json (cap 5 since the 2026-11 round).
     // See genreInvariants there: distinct slugs, no parent+own-sub, dense
     // (no holes — a value at slot N requires every slot < N to be filled).
     // Enforced in set_release_genres.
@@ -188,6 +189,10 @@ pub struct Release {
     pub genre_secondary: Option<String>,
     #[serde(default)]
     pub genre_tertiary: Option<String>,
+    #[serde(default)]
+    pub genre_quaternary: Option<String>,
+    #[serde(default)]
+    pub genre_quinary: Option<String>,
     #[serde(default)]
     pub last_published_at: Option<i64>,
     #[serde(default)]
@@ -430,6 +435,9 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "genre_primary", "TEXT")?;
     ensure_column(&conn, "releases", "genre_secondary", "TEXT")?;
     ensure_column(&conn, "releases", "genre_tertiary", "TEXT")?;
+    // Slots 4 and 5 — the 2026-11 round raised the contract's cap 3 → 5.
+    ensure_column(&conn, "releases", "genre_quaternary", "TEXT")?;
+    ensure_column(&conn, "releases", "genre_quinary", "TEXT")?;
     // Leaf count — audio files per release folder. See Release.track_count.
     ensure_column(&conn, "releases", "track_count", "INTEGER")?;
     // Expected total tracks (from TRACKTOTAL tags). See Release.track_total.
@@ -607,7 +615,13 @@ mod distinct_label_list {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         // The genre slots postdate SCHEMA; `open` adds them the same way.
-        for col in ["genre_primary", "genre_secondary", "genre_tertiary"] {
+        for col in [
+            "genre_primary",
+            "genre_secondary",
+            "genre_tertiary",
+            "genre_quaternary",
+            "genre_quinary",
+        ] {
             ensure_column(&conn, "releases", col, "TEXT").unwrap();
         }
         for i in 0..620 {
@@ -1076,11 +1090,12 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
           condition, notes, source, file_path, cover_art_path, cover_art_url,
           discogs_id, bandcamp_id, release_type, category,
           genre_primary, genre_secondary, genre_tertiary,
+          genre_quaternary, genre_quinary,
           last_published_at, last_published_naddr, added_at, updated_at,
           track_count, track_total, source_label, paired_override)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
-                 ?29, ?30)",
+                 ?29, ?30, ?31, ?32)",
         params![
             id,
             release.artist,
@@ -1104,6 +1119,8 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
             release.genre_primary,
             release.genre_secondary,
             release.genre_tertiary,
+            release.genre_quaternary,
+            release.genre_quinary,
             release.last_published_at,
             release.last_published_naddr,
             release.added_at,
@@ -1126,9 +1143,10 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
          (artist, title, year, medium, format, label, catalog_number, country,
           condition, notes, source, file_path, cover_art_path, cover_art_url,
           discogs_id, bandcamp_id, release_type, category,
-          genre_primary, genre_secondary, genre_tertiary)
+          genre_primary, genre_secondary, genre_tertiary,
+          genre_quaternary, genre_quinary)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
         params![
             release.artist,
             release.title,
@@ -1151,6 +1169,8 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
             release.genre_primary,
             release.genre_secondary,
             release.genre_tertiary,
+            release.genre_quaternary,
+            release.genre_quinary,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1448,11 +1468,16 @@ const GENRE_ACOUSTIC: &[&str] = &[
 ];
 const GENRE_ELECTRONIC: &[&str] = &[
     "acid", "bass", "breaks", "dnb", "downtempo", "electro", "electronic",
-    "footwork", "garage", "house", "jungle", "techno",
+    "footwork", "garage", "house", "jungle", "minimal", "techno",
 ];
 const GENRE_BRIDGE: &[&str] = &["dub", "noise"];
-const GENRE_TERTIARY: &[&str] =
-    &["boom-bap", "conscious", "lo-fi", "trance", "trap", "turntablism"];
+const GENRE_TERTIARY: &[&str] = &[
+    "abstract", "boom-bap", "conscious", "lo-fi", "trance", "trap", "turntablism", "world",
+];
+
+/// Genre slots per release — release.v2 `genreInvariants.slotCap` (3 → 5 in
+/// the 2026-11 round).
+const GENRE_SLOT_CAP: usize = 5;
 
 fn is_valid_genre_slug(s: &str) -> bool {
     GENRE_ACOUSTIC.iter().any(|&g| g == s)
@@ -1462,10 +1487,17 @@ fn is_valid_genre_slug(s: &str) -> bool {
 }
 
 /// Enforces the v2 invariants from schema/release.v2.json `genreInvariants`:
-/// each non-null slot is one of the 35 active slugs; all non-null slots are
+/// each non-null slot is one of the 41 active slugs; all non-null slots are
 /// distinct; dense ordering (no holes — slot N+1 set requires slot N set).
 /// No parent+sub gate — `electronic` + `techno` is valid.
-fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {
+fn validate_genre_slots(slots: &[Option<String>]) -> Result<(), String> {
+    if slots.len() > GENRE_SLOT_CAP {
+        return Err(format!(
+            "at most {} genre slots (got {})",
+            GENRE_SLOT_CAP,
+            slots.len()
+        ));
+    }
     // Each non-null slot must be a known slug.
     for (i, s) in slots.iter().enumerate() {
         if let Some(v) = s {
@@ -1502,29 +1534,28 @@ fn validate_genre_slots(slots: &[Option<String>; 3]) -> Result<(), String> {
     Ok(())
 }
 
+/// Ordered genre slots, primary first. Up to GENRE_SLOT_CAP; missing trailing
+/// entries are empty slots.
 #[tauri::command]
 fn set_release_genres(
     app: tauri::AppHandle,
     release_id: i64,
-    primary: Option<String>,
-    secondary: Option<String>,
-    tertiary: Option<String>,
+    genres: Vec<Option<String>>,
 ) -> Result<(), String> {
-    let slots: [Option<String>; 3] = [
-        normalize_field(primary),
-        normalize_field(secondary),
-        normalize_field(tertiary),
-    ];
+    let mut slots: Vec<Option<String>> = genres.into_iter().map(normalize_field).collect();
     validate_genre_slots(&slots)?;
+    slots.resize(GENRE_SLOT_CAP, None);
     let conn = open(&app)?;
     conn.execute(
         "UPDATE releases
          SET genre_primary = ?1,
              genre_secondary = ?2,
              genre_tertiary = ?3,
+             genre_quaternary = ?4,
+             genre_quinary = ?5,
              updated_at = strftime('%s','now')
-         WHERE id = ?4",
-        params![slots[0], slots[1], slots[2], release_id],
+         WHERE id = ?6",
+        params![slots[0], slots[1], slots[2], slots[3], slots[4], release_id],
     )
     .map_err(|e| e.to_string())?;
     mark_unpublished(&conn, release_id)?;
@@ -1877,8 +1908,8 @@ fn list_distinct_labels(app: tauri::AppHandle) -> Result<Vec<LabelCount>, String
 
 fn distinct_labels(conn: &Connection) -> Result<Vec<LabelCount>, String> {
     // Aggregate label rows + top-3 most-tagged genres per label, across
-    // ALL slots (primary/secondary/tertiary treated as equivalent tallies).
-    // Each release contributes 1-3 slot-tags to its label's pool; we tally,
+    // ALL five slots (treated as equivalent tallies).
+    // Each release contributes 1-5 slot-tags to its label's pool; we tally,
     // rank by count desc with alphabetical tie-break, then pivot the top
     // three ranks into three named columns for the IPC payload. Labels with
     // no genre data anywhere keep all three dominant_* slots NULL.
@@ -1896,6 +1927,14 @@ fn distinct_labels(conn: &Connection) -> Result<Vec<LabelCount>, String> {
                SELECT label, genre_tertiary FROM releases
                  WHERE label IS NOT NULL AND label <> ''
                    AND genre_tertiary IS NOT NULL AND genre_tertiary <> ''
+               UNION ALL
+               SELECT label, genre_quaternary FROM releases
+                 WHERE label IS NOT NULL AND label <> ''
+                   AND genre_quaternary IS NOT NULL AND genre_quaternary <> ''
+               UNION ALL
+               SELECT label, genre_quinary FROM releases
+                 WHERE label IS NOT NULL AND label <> ''
+                   AND genre_quinary IS NOT NULL AND genre_quinary <> ''
              ),
              tally AS (
                SELECT label, g, COUNT(*) AS gn FROM slot_tags GROUP BY label, g
@@ -2013,6 +2052,8 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         last_published_event_id: row.get(31)?,
         source_label: row.get(32)?,
         paired_override: row.get(33)?,
+        genre_quaternary: row.get(34)?,
+        genre_quinary: row.get(35)?,
     })
 }
 
@@ -2023,7 +2064,7 @@ const RELEASE_SELECT_COLS: &str =
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
      disc_total, video_count, publish_state, last_published_event_id,
-     source_label, paired_override";
+     source_label, paired_override, genre_quaternary, genre_quinary";
 
 #[tauri::command]
 fn list_releases(
@@ -2501,7 +2542,7 @@ fn library_breakdown_from_conn(conn: &Connection) -> Result<LibraryBreakdown, St
         Ok(rows)
     };
 
-    // Genre: UNION ALL across the three slot columns, then tally. Pure-peer
+    // Genre: UNION ALL across the five slot columns, then tally. Pure-peer
     // model — a release tagged classical + downtempo + experimental
     // contributes one tally to each.
     let genre = collect(
@@ -2511,6 +2552,10 @@ fn library_breakdown_from_conn(conn: &Connection) -> Result<LibraryBreakdown, St
            SELECT genre_secondary AS g FROM releases WHERE genre_secondary IS NOT NULL AND genre_secondary <> ''
            UNION ALL
            SELECT genre_tertiary  AS g FROM releases WHERE genre_tertiary  IS NOT NULL AND genre_tertiary  <> ''
+           UNION ALL
+           SELECT genre_quaternary AS g FROM releases WHERE genre_quaternary IS NOT NULL AND genre_quaternary <> ''
+           UNION ALL
+           SELECT genre_quinary   AS g FROM releases WHERE genre_quinary   IS NOT NULL AND genre_quinary   <> ''
          )
          SELECT g, COUNT(*) AS n
          FROM slot_tags
@@ -5828,7 +5873,7 @@ fn release_wire_form(r: &Release) -> Result<(Vec<Tag>, String), String> {
         push_tag(&mut tags, "image", url)?;
     }
 
-    // v2: 0–3 ordered `genre` tags, slot 0 → 2. Order on the wire IS the
+    // v2: 0–5 ordered `genre` tags, slot 0 → 4. Order on the wire IS the
     // priority order (first = primary). Density is enforced upstream by
     // set_release_genres so we just emit what's set; a Some in slot N+1
     // without a Some in slot N never lands in the DB.
@@ -5836,6 +5881,8 @@ fn release_wire_form(r: &Release) -> Result<(Vec<Tag>, String), String> {
         r.genre_primary.as_deref(),
         r.genre_secondary.as_deref(),
         r.genre_tertiary.as_deref(),
+        r.genre_quaternary.as_deref(),
+        r.genre_quinary.as_deref(),
     ] {
         if let Some(g) = slot {
             push_tag(&mut tags, "genre", g)?;
@@ -6635,15 +6682,27 @@ async fn merge_releases(
     let source_label = fold_str(&mut folded, &mut wire, "source", false, survivor.source_label, loser.source_label);
     let track_count = fold_i64(&mut folded, &mut wire, "track_count", false, survivor.track_count, loser.track_count);
     // Genres move as a block only when the survivor has none (density/validity
-    // are already enforced on each row, so copying all three slots is safe).
-    let (gp, gs, gt) = if !str_nonempty(&survivor.genre_primary) && str_nonempty(&loser.genre_primary)
-    {
-        folded.push("genres".to_string());
-        wire = true;
-        (loser.genre_primary, loser.genre_secondary, loser.genre_tertiary)
-    } else {
-        (survivor.genre_primary, survivor.genre_secondary, survivor.genre_tertiary)
-    };
+    // are already enforced on each row, so copying all five slots is safe).
+    let (gp, gs, gt, gq4, gq5) =
+        if !str_nonempty(&survivor.genre_primary) && str_nonempty(&loser.genre_primary) {
+            folded.push("genres".to_string());
+            wire = true;
+            (
+                loser.genre_primary,
+                loser.genre_secondary,
+                loser.genre_tertiary,
+                loser.genre_quaternary,
+                loser.genre_quinary,
+            )
+        } else {
+            (
+                survivor.genre_primary,
+                survivor.genre_secondary,
+                survivor.genre_tertiary,
+                survivor.genre_quaternary,
+                survivor.genre_quinary,
+            )
+        };
 
     // Retract the loser's live event first (only when it actually has one), so a
     // delete never strands an naddr. Abort if no relay accepts the deletion.
@@ -6673,13 +6732,14 @@ async fn merge_releases(
            disc_total = ?15, video_count = ?16, file_path = ?17, bandcamp_id = ?18,
            cover_art_path = ?19, source_label = ?20, track_count = ?21,
            genre_primary = ?22, genre_secondary = ?23, genre_tertiary = ?24,
+           genre_quaternary = ?25, genre_quinary = ?26,
            updated_at = strftime('%s','now')
          WHERE id = ?1",
         params![
             survivor_id, year, format, label, catalog_number, country, condition,
             notes, source, cover_art_url, release_type, category, discogs_id,
             track_total, disc_total, video_count, file_path, bandcamp_id,
-            cover_art_path, source_label, track_count, gp, gs, gt,
+            cover_art_path, source_label, track_count, gp, gs, gt, gq4, gq5,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -11034,6 +11094,8 @@ mod schema_v1 {
             genre_primary: None,
             genre_secondary: None,
             genre_tertiary: None,
+            genre_quaternary: None,
+            genre_quinary: None,
             last_published_at: None,
             last_published_naddr: None,
             publish_state: None,
@@ -11213,6 +11275,8 @@ mod schema_v2 {
             genre_primary: None,
             genre_secondary: None,
             genre_tertiary: None,
+            genre_quaternary: None,
+            genre_quinary: None,
             last_published_at: None,
             last_published_naddr: None,
             publish_state: None,
@@ -11265,6 +11329,24 @@ mod schema_v2 {
         assert_eq!(
             genre_tags(&ev),
             vec!["techno", "dub", "downtempo"]
+        );
+    }
+
+    #[test]
+    fn five_slots_emit_five_genre_tags_in_order() {
+        // 2026-11: slotCap raised 3 → 5.
+        let r = Release {
+            genre_primary: Some("techno".into()),
+            genre_secondary: Some("dub".into()),
+            genre_tertiary: Some("downtempo".into()),
+            genre_quaternary: Some("minimal".into()),
+            genre_quinary: Some("abstract".into()),
+            ..base_v2_release()
+        };
+        let ev = release_event(&Keys::generate(), &r).unwrap();
+        assert_eq!(
+            genre_tags(&ev),
+            vec!["techno", "dub", "downtempo", "minimal", "abstract"]
         );
     }
 
@@ -11352,7 +11434,7 @@ mod schema_v2 {
         // must never validate for a new write (split/collapsed into atomic
         // slugs). They remain valid for legacy *reads* in consumers only.
         for slug in ["classical-folk", "dnb-jungle", "drone-noise", "footwork-trap"] {
-            let slots = [Some(slug.to_string()), None, None];
+            let slots = [Some(slug.to_string()), None, None, None, None];
             assert!(
                 validate_genre_slots(&slots).is_err(),
                 "deprecated pair '{}' must be rejected by the emitter validator",
@@ -11369,8 +11451,10 @@ mod schema_v2 {
             "classical", "folk", "dnb", "jungle", "noise", "footwork", "blues",
             "latin", "metal", "spoken", "rnb", "soul", "boom-bap", "lo-fi",
             "conscious", "trance", "trap", "disco", "garage", "turntablism",
+            // 2026-11 round
+            "abstract", "minimal", "world",
         ] {
-            let slots = [Some(slug.to_string()), None, None];
+            let slots = [Some(slug.to_string()), None, None, None, None];
             assert!(
                 validate_genre_slots(&slots).is_ok(),
                 "active slug '{}' must be accepted by the emitter validator",
@@ -11444,14 +11528,26 @@ mod schema_v2 {
     }
 
     #[test]
+    fn validate_genre_slots_accepts_five_and_rejects_six() {
+        let five: Vec<Option<String>> = ["techno", "dub", "minimal", "abstract", "world"]
+            .iter()
+            .map(|s| Some(s.to_string()))
+            .collect();
+        assert!(validate_genre_slots(&five).is_ok());
+        let mut six = five.clone();
+        six.push(Some("house".into()));
+        assert!(validate_genre_slots(&six).is_err());
+    }
+
+    #[test]
     fn validate_genre_slots_accepts_zero_slots() {
-        let slots = [None, None, None];
+        let slots = [None, None, None, None, None];
         assert!(validate_genre_slots(&slots).is_ok());
     }
 
     #[test]
     fn validate_genre_slots_accepts_primary_only() {
-        let slots = [Some("techno".into()), None, None];
+        let slots = [Some("techno".into()), None, None, None, None];
         assert!(validate_genre_slots(&slots).is_ok());
     }
 
@@ -11965,7 +12061,9 @@ mod stats {
                label           TEXT,
                genre_primary   TEXT,
                genre_secondary TEXT,
-               genre_tertiary  TEXT
+               genre_tertiary  TEXT,
+               genre_quaternary TEXT,
+               genre_quinary   TEXT
              );",
         )
         .unwrap();

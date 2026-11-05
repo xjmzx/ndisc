@@ -1,5 +1,5 @@
 {
-  "_comment": "Partial-slot v2 release — only the primary genre slot is set, secondary and tertiary are absent. Demonstrates the dense-ordering rule: when slot 1 is the only genre, exactly one `genre` tag is emitted. Other v1-only tags are sparsely populated to keep the fixture focused on slot semantics.",
+  "_comment": "Partial-slot v2 release — only the primary genre slot is set, slots 2–5 are absent. Demonstrates the dense-ordering rule: when slot 1 is the only genre, exactly one `genre` tag is emitted. Other v1-only tags are sparsely populated to keep the fixture focused on slot semantics.",
   "kind": 31237,
   "content": "",
   "tags": [

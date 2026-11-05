@@ -867,7 +867,7 @@ each app declaring its own stack.
   marketplace: discogs `#5e5c64` (near-neutral, manual-only — no domain
   inference). Plus user-assigned sources. Kept byte-identical in
   `ndisc` / `nview` / `glmps`.
-- **Genre palette** — 38 active slugs with fixed hue assignments, shared between
+- **Genre palette** — 41 active slugs with fixed hue assignments, shared between
   `ndisc` and `glmps` (the `g.*` Tailwind tokens; all slugs are pure peers).
 
 ---

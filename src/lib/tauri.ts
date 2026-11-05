@@ -28,13 +28,16 @@ export interface Release {
   // Per-release pairing override: null/undefined = auto (source/Discogs
   // inference), true = forced paired (physical + digital), false = forced solo.
   pairedOverride?: boolean | null;
-  // v2: three ordered genre slots (primary / secondary / tertiary). Each
-  // slot is one of the 22 valid slugs (see schema/release.v2.json) or null.
-  // Invariants (distinct, dense ordering) enforced by
-  // setReleaseGenres in the backend.
+  // v2: five ordered genre slots, primary first (cap raised 3 → 5 in the
+  // 2026-11 round). Each slot is one of the 41 active slugs (see
+  // schema/release.v2.json) or null. Invariants (distinct, dense ordering)
+  // enforced by setReleaseGenres in the backend. Use genreSlots() from
+  // lib/genre-slots to read them as an array.
   genrePrimary?: string | null;
   genreSecondary?: string | null;
   genreTertiary?: string | null;
+  genreQuaternary?: string | null;
+  genreQuinary?: string | null;
   lastPublishedAt?: number | null;
   lastPublishedNaddr?: string | null;
   publishState?: PublishState | null;
@@ -341,18 +344,25 @@ export async function setReleasePaired(
   return invoke("set_release_paired", { releaseId, value });
 }
 
+// Ordered genre slots, primary first, at most GENRE_SLOT_CAP (lib/genre).
 export async function setReleaseGenres(
   releaseId: number,
-  primary: string | null,
-  secondary: string | null,
-  tertiary: string | null,
+  genres: (string | null)[],
 ): Promise<void> {
-  return invoke("set_release_genres", {
-    releaseId,
-    primary,
-    secondary,
-    tertiary,
-  });
+  return invoke("set_release_genres", { releaseId, genres });
+}
+
+// The five genre slot fields of a Release, in priority order.
+export const GENRE_SLOT_FIELDS = [
+  "genrePrimary",
+  "genreSecondary",
+  "genreTertiary",
+  "genreQuaternary",
+  "genreQuinary",
+] as const;
+
+export function genreSlots(r: Release): (string | null)[] {
+  return GENRE_SLOT_FIELDS.map((f) => r[f] ?? null);
 }
 
 export async function setReleaseCatalogNumber(

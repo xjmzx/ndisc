@@ -35,7 +35,7 @@
 
   /* Genre palette — shared with glmps + ndisc.view verbatim. Mid-saturation
      hues that sit alongside the system tokens above without competing with
-     them. Theme-neutral (same values across fizx and upleb). 35 active slugs
+     them. Theme-neutral (same values across fizx and upleb). 41 active slugs
      in four groups + the four retired compound pairs (legacy reads only,
      rendered with a slash). Restructured + recoloured in the 2026-06 v2
      genre amendment. */
@@ -71,11 +71,13 @@
   --c-g-garage:         52 200 176;
   --c-g-house:         196  74 206;
   --c-g-jungle:         52 198 110;
+  --c-g-minimal:       255 240 140;
   --c-g-techno:         58 124 244;
   /* bridge */
   --c-g-dub:            22 138 104;
   --c-g-noise:         234  80  46;
   /* tertiary (optional) */
+  --c-g-abstract:      210 140 230;
   --c-g-boom-bap:      176 132  92;
   --c-g-conscious:     178 118  56;
   --c-g-lo-fi:         158 130 128;
@@ -83,6 +85,7 @@
   --c-g-trance:        120 100 245;
   --c-g-trap:          128  84  96;
   --c-g-turntablism:   110 122 134;
+  --c-g-world:         140 170  80;
   /* deprecated compound pairs — legacy reads only, render with slash */
   --c-g-classical-folk:232 220 195;
   --c-g-dnb-jungle:    160  39 135;
@@ -150,11 +153,13 @@
   --c-g-garage:         52 200 176;
   --c-g-house:         196  74 206;
   --c-g-jungle:         52 198 110;
+  --c-g-minimal:       255 240 140;
   --c-g-techno:         58 124 244;
   /* bridge */
   --c-g-dub:            22 138 104;
   --c-g-noise:         234  80  46;
   /* tertiary (optional) */
+  --c-g-abstract:      210 140 230;
   --c-g-boom-bap:      176 132  92;
   --c-g-conscious:     178 118  56;
   --c-g-lo-fi:         158 130 128;
@@ -162,6 +167,7 @@
   --c-g-trance:        120 100 245;
   --c-g-trap:          128  84  96;
   --c-g-turntablism:   110 122 134;
+  --c-g-world:         140 170  80;
   /* deprecated compound pairs — legacy reads only, render with slash */
   --c-g-classical-folk:232 220 195;
   --c-g-dnb-jungle:    160  39 135;
