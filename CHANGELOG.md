@@ -21,6 +21,14 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.4 — 2026-11-06
+
+### Changed — a lone extra source shows by name in Library Stats
+
+The Source bar folds sources past the top nine into "Other (N)". When only one
+source is left over, it now shows under its own name instead of "Other (1)" —
+the same single row, so the layout doesn't move.
+
 ## 0.6.3 — 2026-11-06
 
 ### Added — a Source bar in Library Stats

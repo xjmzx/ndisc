@@ -275,7 +275,8 @@ function formatLabel(value: string): string {
 // Sources are free text, so the list can grow without limit. Past the largest
 // SOURCE_TOP the rest fold into one "Other (N)" row, which keeps the card's
 // height (and the stats layout) fixed. Other is a real segment with its real
-// count, so the bar stays exact.
+// count, so the bar stays exact. A lone leftover source shows by name instead:
+// it takes the same one row that "Other (1)" would.
 const SOURCE_UNSET = "__unset";
 const SOURCE_OTHER = "__other:"; // + the number of sources folded in
 const SOURCE_TOP = 9;
@@ -285,10 +286,11 @@ function sourceRows(
   releases: number,
 ): BreakdownRow[] {
   const named = [...sources].sort((a, b) => b.count - a.count);
+  const shown = named.length === SOURCE_TOP + 1 ? named.length : SOURCE_TOP;
   const rows: BreakdownRow[] = named
-    .slice(0, SOURCE_TOP)
+    .slice(0, shown)
     .map((s) => ({ value: s.name, count: s.count }));
-  const rest = named.slice(SOURCE_TOP);
+  const rest = named.slice(shown);
   if (rest.length > 0) {
     rows.push({
       value: `${SOURCE_OTHER}${rest.length}`,
