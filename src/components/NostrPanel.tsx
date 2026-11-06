@@ -93,7 +93,7 @@ function describeFilter(f: FilterContext): string {
   if (f.coverLinkFilter === "with_link") parts.push("has web image");
   if (f.coverLinkFilter === "without_link") parts.push("no web image");
   if (f.sourceFilter === "bandcamp") parts.push("Bandcamp source");
-  if (f.sourceFilter === "generic") parts.push("generic source");
+  if (f.sourceFilter === "unset") parts.push("no source set");
   if (f.needsCoverOnly) parts.push("no cover");
   if (f.query.trim()) parts.push(`search "${f.query.trim()}"`);
   return parts.join(", ");

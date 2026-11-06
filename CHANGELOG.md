@@ -21,6 +21,41 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.5 — 2026-11-06
+
+### Changed — `electronic` always comes first among a release's genres
+
+When a release has the `electronic` genre, ndisc now puts it first, and the
+other genres keep the order you gave them. `electronic` stands for the
+electronic/dance family, so everything else on the release reads as its own
+genre or as secondary to it. The editor moves it as soon as you pick it, and
+releases saved with genres follow the same rule. Nothing is dropped: a release
+with all five slots full just reorders. Releases saved before this keep their
+current order until they're edited. The contract still allows any order; this
+is how ndisc writes releases.
+
+### Changed — Library Stats splits into Music and Library
+
+Stats had grown to a lot on one screen. A switch at the top now splits it in
+two: **Music** (genre, country, label) and **Library** (year,
+digital/physical, source, format). Both halves are always named on the
+switch, with what each holds, so the other one isn't missed. The totals sit
+beside the switch, in the same top row, so they stay put on both halves, and
+ndisc remembers which half you last opened. The Library bars go back to their
+taller size now there's room.
+
+The Year chart now runs full width and covers the whole catalogue, from the
+decade of your oldest release to this year. It used to show only the last 50
+years, which left older releases off. Each decade sits over a faint bracket
+with its label, so the decades read as blocks.
+
+### Changed — the source filter finds releases with no source set
+
+The shopping-bag filter in the release list cycles Bandcamp → **not set** →
+any. Its second state used to mean "no Bandcamp link or receipt", which
+ignored the source you'd chosen. It now shows the releases whose source is
+empty, so they can be found and filled in.
+
 ## 0.6.4 — 2026-11-06
 
 ### Changed — a lone extra source shows by name in Library Stats

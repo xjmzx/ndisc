@@ -1137,6 +1137,15 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
 
 #[tauri::command]
 fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
+    // Same ordering rule as set_release_genres, so a release added with genres
+    // starts out in house order.
+    let g = electronic_first(vec![
+        release.genre_primary.clone(),
+        release.genre_secondary.clone(),
+        release.genre_tertiary.clone(),
+        release.genre_quaternary.clone(),
+        release.genre_quinary.clone(),
+    ]);
     let conn = open(&app)?;
     conn.execute(
         "INSERT INTO releases
@@ -1166,11 +1175,11 @@ fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
             release.bandcamp_id,
             release.release_type,
             release.category,
-            release.genre_primary,
-            release.genre_secondary,
-            release.genre_tertiary,
-            release.genre_quaternary,
-            release.genre_quinary,
+            g[0],
+            g[1],
+            g[2],
+            g[3],
+            g[4],
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1534,16 +1543,39 @@ fn validate_genre_slots(slots: &[Option<String>]) -> Result<(), String> {
     Ok(())
 }
 
+/// The house ordering rule: when `electronic` is present it is the first
+/// genre, and the rest keep the order they were given. `electronic` marks the
+/// electronic/dance family, so every other slug on the release reads as its
+/// own genre or as secondary to it. Takes dense slots and returns dense slots
+/// of the same length; nothing is added or dropped, so it can't overflow the
+/// cap. This is ndisc's convention as the emitter — release.v2 itself allows
+/// any order.
+fn electronic_first(slots: Vec<Option<String>>) -> Vec<Option<String>> {
+    let len = slots.len();
+    let present: Vec<String> = slots.into_iter().flatten().collect();
+    let mut ordered: Vec<String> = present
+        .iter()
+        .filter(|g| g.as_str() == "electronic")
+        .cloned()
+        .collect();
+    ordered.extend(present.into_iter().filter(|g| g.as_str() != "electronic"));
+    let mut out: Vec<Option<String>> = ordered.into_iter().map(Some).collect();
+    out.resize(len.max(out.len()), None);
+    out
+}
+
 /// Ordered genre slots, primary first. Up to GENRE_SLOT_CAP; missing trailing
-/// entries are empty slots.
+/// entries are empty slots. `electronic`, when present, is moved first
+/// (see electronic_first).
 #[tauri::command]
 fn set_release_genres(
     app: tauri::AppHandle,
     release_id: i64,
     genres: Vec<Option<String>>,
 ) -> Result<(), String> {
-    let mut slots: Vec<Option<String>> = genres.into_iter().map(normalize_field).collect();
+    let slots: Vec<Option<String>> = genres.into_iter().map(normalize_field).collect();
     validate_genre_slots(&slots)?;
+    let mut slots = electronic_first(slots);
     slots.resize(GENRE_SLOT_CAP, None);
     let conn = open(&app)?;
     conn.execute(
@@ -2135,14 +2167,14 @@ fn list_releases(
     // Acquisition source. A release is "Bandcamp" if its source is on
     // bandcamp.com, on a known custom storefront, or it carries a purchase
     // receipt (bandcamp_id) — the same predicate the frontend dot uses
-    // (src/lib/source.ts). "generic" is the complement: the generic
-    // digital-purchase bucket with no recognised source.
+    // (src/lib/source.ts). "unset" is the releases with no acquisition source
+    // chosen (empty source_label) — the ones still to fill in.
     let bc_pred = "(source LIKE '%bandcamp.com%' \
                     OR source LIKE '%shop.cpurecords.net%' \
                     OR (bandcamp_id IS NOT NULL AND bandcamp_id <> ''))";
     let source_clause = match source_filter.as_deref() {
         Some("bandcamp") => format!("AND {bc_pred}"),
-        Some("generic") => format!("AND NOT {bc_pred}"),
+        Some("unset") => "AND (source_label IS NULL OR source_label = '')".to_string(),
         _ => String::new(),
     };
 
@@ -11525,6 +11557,33 @@ mod schema_v2 {
             [slot("hip-hop"), slot("jazz"), None]
         );
         assert_eq!(remap_restructured_genre_slots([None, None, None]), [None, None, None]);
+    }
+
+    #[test]
+    fn electronic_first_moves_electronic_to_the_front() {
+        let s = |v: &[&str]| -> Vec<Option<String>> {
+            v.iter().map(|x| if x.is_empty() { None } else { Some(x.to_string()) }).collect()
+        };
+        // Moved to the front; the rest keep their order; length kept.
+        assert_eq!(
+            electronic_first(s(&["downtempo", "dub", "electronic", "", ""])),
+            s(&["electronic", "downtempo", "dub", "", ""])
+        );
+        // Already first, absent, or empty: unchanged.
+        assert_eq!(
+            electronic_first(s(&["electronic", "techno"])),
+            s(&["electronic", "techno"])
+        );
+        assert_eq!(
+            electronic_first(s(&["hip-hop", "turntablism", ""])),
+            s(&["hip-hop", "turntablism", ""])
+        );
+        assert_eq!(electronic_first(s(&["", ""])), s(&["", ""]));
+        // A full set of five: reordered, nothing dropped.
+        assert_eq!(
+            electronic_first(s(&["jazz", "funk", "soul", "dub", "electronic"])),
+            s(&["electronic", "jazz", "funk", "soul", "dub"])
+        );
     }
 
     #[test]

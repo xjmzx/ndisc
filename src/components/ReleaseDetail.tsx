@@ -36,7 +36,7 @@ import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
-import { genreDisplay, GENRE_ORDER, GENRE_SLOT_CAP } from "../lib/genre";
+import { electronicFirst, genreDisplay, GENRE_ORDER, GENRE_SLOT_CAP } from "../lib/genre";
 import {
   clearReleasePath,
   enrichDiscogsRelease,
@@ -625,7 +625,9 @@ export function ReleaseDetail({
   // Changes a single genre slot. Clears any later slot that now repeats an
   // earlier one (pick `dub` in slot 1 when slot 3 was `dub`), then compacts
   // to keep density (no holes) — clearing a slot shifts the later ones up.
-  // Writes all five slots at once via setReleaseGenres.
+  // Then `electronic`, if present, moves to the front (the backend applies the
+  // same rule; doing it here too keeps the pickers in step). Writes all five
+  // slots at once via setReleaseGenres.
   async function onChangeGenreSlot(slot: number, newValue: string | null) {
     if (!release.id) return;
     const slots = genreSlots(release);
@@ -637,7 +639,9 @@ export function ReleaseDetail({
       }
     }
     const present = slots.filter((s): s is string => !!s);
-    const dense = GENRE_SLOT_FIELDS.map((_, i) => present[i] ?? null);
+    const dense = electronicFirst(
+      GENRE_SLOT_FIELDS.map((_, i) => present[i] ?? null),
+    );
     await setReleaseGenres(release.id, dense);
     applyEdit(
       Object.fromEntries(GENRE_SLOT_FIELDS.map((f, i) => [f, dense[i]])),

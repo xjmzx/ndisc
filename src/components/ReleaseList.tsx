@@ -1354,11 +1354,11 @@ export function ReleaseList({
           value={sourceFilter}
           onChange={(v) => setSourceFilter(v as "" | SourceFilter)}
           filledValue="bandcamp"
-          outlinedValue="generic"
+          outlinedValue="unset"
           color={SOURCE_PLATFORMS[0].color}
-          tooltipDefault="Filter by purchase source — click cycles Bandcamp / generic / any"
-          tooltipFilled="Source: Bandcamp (click for generic purchases)"
-          tooltipOutlined="Source: generic purchase / no source (click to clear)"
+          tooltipDefault="Filter by purchase source — click cycles Bandcamp / not set / any"
+          tooltipFilled="Source: Bandcamp (click for no source set)"
+          tooltipOutlined="Source: not set (click to clear)"
         />
         <PublishStateFilter
           value={publishStateFilter}

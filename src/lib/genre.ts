@@ -72,6 +72,19 @@ export const GENRE_TERTIARY = [
 // the 2026-11 round). Must match GENRE_SLOT_CAP in src-tauri/src/lib.rs.
 export const GENRE_SLOT_CAP = 5;
 
+// The house ordering rule (mirrors electronic_first in the backend): when
+// `electronic` is present it is the first genre, and the rest keep their
+// order. Takes dense slots, returns dense slots of the same length; nothing is
+// added or dropped.
+export function electronicFirst(slots: (string | null)[]): (string | null)[] {
+  const present = slots.filter((s): s is string => !!s);
+  const ordered = [
+    ...present.filter((g) => g === "electronic"),
+    ...present.filter((g) => g !== "electronic"),
+  ];
+  return slots.map((_, i) => ordered[i] ?? null);
+}
+
 // Retired slugs — never emitted; valid for legacy reads only. The four compound
 // slash-pairs (display with a slash) plus the 2026-06b 1:1 renames poetry and
 // spiritual (display verbatim; remapped to spoken / conscious).

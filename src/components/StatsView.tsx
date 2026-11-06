@@ -31,6 +31,11 @@ const DOMINANT_SKEW = 0.33;
 // removed releases reflect in the breakdowns without a manual refresh.
 export function StatsView({ reloadKey }: { reloadKey: number }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [page, setPage] = useState<StatsPage>(readStatsPage);
+  const choosePage = (next: StatsPage) => {
+    setPage(next);
+    writeStatsPage(next);
+  };
   // Source colours live in localStorage; re-render when one is edited.
   useSourceMetaVersion();
 
@@ -71,77 +76,170 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
 
   const { genre, country, year, medium, format, label } = state.data;
 
+  const totals = <TotalsCard data={state.data} />;
+
   return (
-    // One 2-column grid for all three rows. Each grid row stretches both cells
-    // to equal height (the default), so every section's top/bottom boundary —
-    // and every gap — lines up across the left/right divide. Row 2's left cell
-    // holds Medium + Format stacked; together they fill the cell, matching
-    // Genre's height on the right. Section labels are gone; the charts + the
-    // Totals block (row-1 left, above Medium) carry the figures.
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-      {/* Row 1: Totals | Year */}
-      <TotalsCard data={state.data} />
-      <YearCard rows={year} />
-      {/* Row 2: Medium + Source + Format (stacked, filling the cell) | Genre.
-          Three cards share the height Genre sets, so their bars are "md"
-          (h-3) rather than the chunkier "lg" two cards could afford. */}
-      <div className="flex flex-col gap-2">
-        <StackedBarCard
-          title="Medium"
-          rows={medium}
-          colorFor={mediumColor}
-          displayFor={mediumLabel}
-          scalingExponent={1.0}
-          barHeight="md"
-          className="flex-1"
-        />
-        <StackedBarCard
-          title="Source"
-          rows={state.source}
-          colorFor={sourceBarColor}
-          displayFor={sourceLabel}
-          scalingExponent={1.0}
-          barHeight="md"
-          className="flex-1"
-        />
-        <StackedBarCard
-          title="Format"
-          rows={format}
-          colorFor={formatColor}
-          displayFor={formatLabel}
-          scalingExponent={1.0}
-          barHeight="md"
-          className="flex-1"
-        />
+    // A header row in thirds — the two page buttons, then the totals — and
+    // one 2-column grid per half below. The totals sit in the header so the
+    // headline figures stay put whichever half is open. Each grid row
+    // stretches both cells to equal height (the default), so card edges line
+    // up across the left/right divide.
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <StatsSwitch page={page} onChange={choosePage} className="md:col-span-2" />
+        {totals}
       </div>
-      <StackedBarCard
-        title="Genre"
-        rows={genre}
-        colorFor={(v) => `rgb(var(--c-g-${v}))`}
-        displayFor={genreDisplay}
-        scalingExponent={DOMINANT_SKEW}
-        barHeight="sm"
-        showBar={false}
-      />
-      {/* Row 3: Country | Label — both run two columns (16/page) so the long
-          tails of countries and labels are browsable without endless paging.
-          Country shares the aggressive DOMINANT_SKEW so a home-country monopoly
-          (here UK) doesn't crush the rest. */}
-      <RankedRowsCard
-        title="Country"
-        rows={country}
-        reloadKey={reloadKey}
-        scalingExponent={DOMINANT_SKEW}
-        columns={2}
-        tintFor={(_row, rank, total) => gradientTint(rank - 1, total)}
-      />
-      <RankedRowsCard
-        title="Label"
-        rows={label}
-        reloadKey={reloadKey}
-        columns={2}
-        tintFor={(_row, rank, total) => labelTierTint(rank, total)}
-      />
+      {page === "music" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {/* Genre | Country + Label stacked. Genre's two-column list
+              sets the height; Country and Label share it. Both rank cards run
+              two columns (16/page). Country shares the aggressive
+              DOMINANT_SKEW so a home-country monopoly (here UK) doesn't crush
+              the rest. */}
+          <StackedBarCard
+            title="Genre"
+            rows={genre}
+            colorFor={(v) => `rgb(var(--c-g-${v}))`}
+            displayFor={genreDisplay}
+            scalingExponent={DOMINANT_SKEW}
+            barHeight="sm"
+            showBar={false}
+          />
+          <div className="flex flex-col gap-2">
+            <RankedRowsCard
+              title="Country"
+              rows={country}
+              reloadKey={reloadKey}
+              scalingExponent={DOMINANT_SKEW}
+              columns={2}
+              tintFor={(_row, rank, total) => gradientTint(rank - 1, total)}
+              className="flex-1"
+            />
+            <RankedRowsCard
+              title="Label"
+              rows={label}
+              reloadKey={reloadKey}
+              columns={2}
+              tintFor={(_row, rank, total) => labelTierTint(rank, total)}
+              className="flex-1"
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-2 gap-y-4">
+          {/* Digital/Physical and Year each run full width — a slim two-part
+              bar, then the years wide enough to read one by one, grouped by
+              decade. Source | Format sit side by side below. */}
+          <StackedBarCard
+            title="Medium"
+            rows={medium}
+            colorFor={mediumColor}
+            displayFor={mediumLabel}
+            scalingExponent={1.0}
+            barHeight="half"
+            className="md:col-span-2"
+          />
+          <YearCard rows={year} className="md:col-span-2" />
+          <StackedBarCard
+            title="Source"
+            rows={state.source}
+            colorFor={sourceBarColor}
+            displayFor={sourceLabel}
+            scalingExponent={1.0}
+            barHeight="lg"
+          />
+          <StackedBarCard
+            title="Format"
+            rows={format}
+            colorFor={formatColor}
+            displayFor={formatLabel}
+            scalingExponent={1.0}
+            barHeight="lg"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- StatsSwitch ------------------------------------------------------------
+
+// Stats is split in two halves: what the music is (Music) and how you hold it
+// (Library). Both halves are always named, with what each holds spelled out,
+// so the one not on screen can't be overlooked. The choice is remembered per
+// viewer (localStorage; the page still works without it).
+type StatsPage = "music" | "library";
+const STATS_PAGE_KEY = "ndisc.statsPage";
+
+function readStatsPage(): StatsPage {
+  try {
+    return localStorage.getItem(STATS_PAGE_KEY) === "library" ? "library" : "music";
+  } catch {
+    return "music";
+  }
+}
+
+function writeStatsPage(page: StatsPage): void {
+  try {
+    localStorage.setItem(STATS_PAGE_KEY, page);
+  } catch {
+    // Storage unavailable — the choice just isn't remembered.
+  }
+}
+
+const STATS_PAGES: { key: StatsPage; title: string; holds: string }[] = [
+  { key: "music", title: "Music", holds: "genre · country · label" },
+  { key: "library", title: "Library", holds: "year · digital/physical · source · format" },
+];
+
+function StatsSwitch({
+  page,
+  onChange,
+  className,
+}: {
+  page: StatsPage;
+  onChange: (page: StatsPage) => void;
+  className?: string;
+}) {
+  return (
+    // Stretches to the totals card's height; each button fills its half.
+    <div
+      role="tablist"
+      aria-label="Stats pages"
+      className={
+        "grid grid-cols-2 gap-1 p-1 rounded-xl bg-panel border border-surface/60 shadow-md " +
+        (className ?? "")
+      }
+    >
+      {STATS_PAGES.map((p) => {
+        const active = p.key === page;
+        return (
+          <button
+            key={p.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(p.key)}
+            className={
+              "flex items-center justify-center gap-3 rounded-lg px-3 py-2 min-w-0 " +
+              "transition-colors border " +
+              (active
+                ? "bg-surface border-accent/50 text-accent"
+                : "border-transparent text-fg/70 hover:bg-surface/60 hover:text-fg")
+            }
+          >
+            <span className="text-sm font-semibold">{p.title}</span>
+            <span
+              className={
+                "font-mono text-[10px] truncate " +
+                (active ? "text-accent/70" : "text-muted")
+              }
+            >
+              {p.holds}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -175,9 +273,10 @@ function TotalsCard({
     ["years", yearSpan],
   ];
   return (
-    // One line of six, centred in the height the Year card sets. Each figure
-    // takes its natural width and the row spreads them evenly, so the widest
-    // (the year span) never gets squeezed; on a narrow window they wrap.
+    // One line of six in the header's right third, beside the page buttons.
+    // Each figure takes its natural width and the row spreads them evenly, so
+    // the widest (the year span) never gets squeezed; on a narrow window they
+    // wrap.
     <Section dense className={className} bodyClassName="justify-center">
       <dl className="flex flex-wrap justify-between gap-x-4 gap-y-2 font-mono">
         {items.map(([k, v]) => (
@@ -371,7 +470,7 @@ interface StackedBarCardProps {
   // Bar thickness: "md" (default h-3) for Medium, Source and Format; "lg"
   // (3×, h-9) for a lone small set that can afford a chunkier band; "sm"
   // (½, h-1.5) for Genre, which has many rows and wants the height for its legend.
-  barHeight?: "sm" | "md" | "lg";
+  barHeight?: "sm" | "md" | "half" | "lg";
   // Tighter legend row spacing — used by Genre to claw back vertical height so
   // the lower Country/Label cards rise on-screen.
   denseRows?: boolean;
@@ -392,7 +491,14 @@ function StackedBarCard({
   showBar = true,
   className,
 }: StackedBarCardProps) {
-  const barH = barHeight === "lg" ? "h-9" : barHeight === "sm" ? "h-1.5" : "h-3";
+  const barH =
+    barHeight === "lg"
+      ? "h-9"
+      : barHeight === "half"
+        ? "h-[18px]" // half of "lg"
+        : barHeight === "sm"
+          ? "h-1.5"
+          : "h-3";
   const totalCount = total(rows);
   // Cosmetic width allocation — bar segments scale ^k so a dominant slug
   // doesn't crush the tail. Numeric percentages in the legend stay honest.
@@ -687,12 +793,13 @@ interface YearCardProps {
   className?: string;
 }
 
-// Rolling window for the YEAR card. The chart always spans the last
-// YEAR_WINDOW years up to (and including) the current calendar year, so
-// releases drift off the left edge as time passes. Today=2026 → window
-// is 1977–2026. Releases tagged earlier than the window are silently
-// excluded from this chart; they still show up everywhere else.
-const YEAR_WINDOW = 50;
+// The YEAR card spans the whole catalogue: from the start of the decade of
+// the oldest release to the current year (or a later release year, if one is
+// tagged ahead). Starting on a decade boundary keeps the first bracket a whole
+// decade, so only the newest can be partial. Years before YEAR_FLOOR are
+// treated as typos and left off the chart (they still count everywhere
+// else), so one bad tag can't stretch it across centuries.
+const YEAR_FLOOR = 1900;
 
 function YearCard({ rows, className }: YearCardProps) {
   // Parse "1968" → 1968; ignore unparseable rows defensively.
@@ -709,14 +816,24 @@ function YearCard({ rows, className }: YearCardProps) {
   }
 
   const currentYear = new Date().getFullYear();
-  const windowStart = currentYear - YEAR_WINDOW + 1;
-  const maxYear = currentYear;
+  const plausible = parsed
+    .map((p) => p.year)
+    .filter((y) => y >= YEAR_FLOOR);
+  if (plausible.length === 0) {
+    return (
+      <Section dense className={className}>
+        <p className="text-xs text-muted italic">no data yet</p>
+      </Section>
+    );
+  }
+  const windowStart = Math.floor(Math.min(...plausible) / 10) * 10;
+  const maxYear = Math.max(currentYear, ...plausible);
   const minYear = windowStart;
-  // Keep only in-window years for the lookup; out-of-window data is
-  // dropped from this chart by design.
+  // Every plausible year is in the window now; the filter only drops the
+  // pre-YEAR_FLOOR typos.
   const lookup = new Map(
     parsed
-      .filter((p) => p.year >= windowStart && p.year <= currentYear)
+      .filter((p) => p.year >= windowStart && p.year <= maxYear)
       .map((p) => [p.year, p.count]),
   );
 
@@ -749,34 +866,44 @@ function YearCard({ rows, className }: YearCardProps) {
     <Section dense className={className}>
       {/* Inset from the card's edges so the first and last bars don't run up
           against the border. The label row shares the inset to stay aligned. */}
-      <div className="flex flex-col gap-1 px-6">
-        {/* One bar per year, uniformly spaced across the whole window — no
-            decade gap or divider. Each year is coloured by its position
-            along the theme gradient, so decades are distinguished by colour
-            and every decade reads as a *0→*9 horizontal gradation. */}
+      <div className="flex flex-1 flex-col gap-1 px-6">
+        {/* One bar per year, grouped by decade: a slightly wider gap between
+            decades than between years, so each decade reads as a block while
+            the colour still runs along the theme gradient. */}
         <div
-          className="flex items-end h-9 gap-0.5"
+          className="flex h-32 items-end gap-2"
           aria-label="releases per year"
         >
-          {allYears.map((d) => (
-            <div
-              key={d.year}
-              className="flex-1 min-w-[2px]"
-              style={{
-                height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
-                backgroundColor: yearGradientColor((d.year - minYear) / span),
-              }}
-              title={`${d.year}: ${d.count.toLocaleString()}`}
-            />
-          ))}
-        </div>
-        {/* Decade labels, proportionally spaced. No dividers — colour now
-            carries the decade distinction. */}
-        <div className="flex text-[10px] font-mono text-muted">
           {decadeGroups.map((g) => (
             <div
               key={g.decade}
-              className="text-center py-0.5"
+              className="flex h-full items-end gap-0.5"
+              style={{ flexGrow: g.years.length, flexBasis: 0 }}
+            >
+              {g.years.map((d) => (
+                <div
+                  key={d.year}
+                  className="flex-1 min-w-[2px]"
+                  style={{
+                    height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
+                    backgroundColor: yearGradientColor((d.year - minYear) / span),
+                  }}
+                  title={`${d.year}: ${d.count.toLocaleString()}`}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+        {/* Decade brackets, one per block above — same flex weights and the
+            same gap, so each spans its decade exactly. A faint open-topped
+            box (|__ 1990s __|) marks where one decade ends and the next
+            begins; the label sits centred in it. */}
+        <div className="flex gap-2 text-[10px] font-mono text-fg/70">
+          {decadeGroups.map((g) => (
+            <div
+              key={g.decade}
+              className="text-center pt-1 pb-1 min-w-0 truncate
+                         border border-t-0 border-muted/30 rounded-b-sm"
               style={{ flexGrow: g.years.length, flexBasis: 0 }}
             >
               {g.decade}s
