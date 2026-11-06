@@ -21,6 +21,25 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.3 — 2026-11-06
+
+### Added — a Source bar in Library Stats
+
+Library Stats now shows where your releases came from (Apple Music, Bandcamp, a
+record store…), between the Digital/Physical and Lossless/Lossy bars. It counts
+releases, uses each source's own colour, and ends with a grey "Not set" segment
+for releases with no source yet. Past the nine largest sources the rest fold
+into one "Other (N)" entry, so adding stores never grows the card. The three left-hand bars are now thinner so
+all three fit beside Genre.
+
+### Changed — Library Stats totals stand out; Genre drops its bar
+
+The totals at the top of Library Stats (releases, labels, countries, genres,
+formats, years) are larger and bold, and sit on one line. With the year chart's
+bars a little shorter, the top row takes less height. The Genre card keeps its coloured legend
+and counts but no longer draws the stacked bar above them, which was dozens of
+slivers too thin to read.
+
 ## 0.6.2 — 2026-11-06
 
 ### Fixed — Delete still said "Unpublish it first" after unpublishing

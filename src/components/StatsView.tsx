@@ -2,15 +2,18 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Section } from "./Section";
 import { genreDisplay } from "../lib/genre";
+import { sourceColor } from "../lib/source";
+import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 import {
   getLibraryBreakdown,
+  listDistinctSources,
   type LibraryBreakdown,
   type BreakdownRow,
 } from "../lib/tauri";
 
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ready"; data: LibraryBreakdown }
+  | { kind: "ready"; data: LibraryBreakdown; source: BreakdownRow[] }
   | { kind: "error"; message: string };
 
 // Aggressive sub-linear exponent for the bars that tend to have ONE runaway
@@ -28,13 +31,20 @@ const DOMINANT_SKEW = 0.33;
 // removed releases reflect in the breakdowns without a manual refresh.
 export function StatsView({ reloadKey }: { reloadKey: number }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  // Source colours live in localStorage; re-render when one is edited.
+  useSourceMetaVersion();
 
   useEffect(() => {
     let cancelled = false;
     setState({ kind: "loading" });
-    getLibraryBreakdown()
-      .then((data) => {
-        if (!cancelled) setState({ kind: "ready", data });
+    Promise.all([getLibraryBreakdown(), listDistinctSources()])
+      .then(([data, sources]) => {
+        if (!cancelled)
+          setState({
+            kind: "ready",
+            data,
+            source: sourceRows(sources, total(data.medium)),
+          });
       })
       .catch((e) => {
         if (!cancelled) setState({ kind: "error", message: String(e) });
@@ -72,7 +82,9 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
       {/* Row 1: Totals | Year */}
       <TotalsCard data={state.data} />
       <YearCard rows={year} />
-      {/* Row 2: Medium + Format (stacked, filling the cell) | Genre */}
+      {/* Row 2: Medium + Source + Format (stacked, filling the cell) | Genre.
+          Three cards share the height Genre sets, so their bars are "md"
+          (h-3) rather than the chunkier "lg" two cards could afford. */}
       <div className="flex flex-col gap-2">
         <StackedBarCard
           title="Medium"
@@ -80,7 +92,16 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
           colorFor={mediumColor}
           displayFor={mediumLabel}
           scalingExponent={1.0}
-          barHeight="lg"
+          barHeight="md"
+          className="flex-1"
+        />
+        <StackedBarCard
+          title="Source"
+          rows={state.source}
+          colorFor={sourceBarColor}
+          displayFor={sourceLabel}
+          scalingExponent={1.0}
+          barHeight="md"
           className="flex-1"
         />
         <StackedBarCard
@@ -89,7 +110,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
           colorFor={formatColor}
           displayFor={formatLabel}
           scalingExponent={1.0}
-          barHeight="lg"
+          barHeight="md"
           className="flex-1"
         />
       </div>
@@ -100,6 +121,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
         displayFor={genreDisplay}
         scalingExponent={DOMINANT_SKEW}
         barHeight="sm"
+        showBar={false}
       />
       {/* Row 3: Country | Label — both run two columns (16/page) so the long
           tails of countries and labels are browsable without endless paging.
@@ -153,14 +175,17 @@ function TotalsCard({
     ["years", yearSpan],
   ];
   return (
-    <Section dense className={className}>
-      <dl className="grid grid-cols-3 gap-x-6 gap-y-2 font-mono">
+    // One line of six, centred in the height the Year card sets. Each figure
+    // takes its natural width and the row spreads them evenly, so the widest
+    // (the year span) never gets squeezed; on a narrow window they wrap.
+    <Section dense className={className} bodyClassName="justify-center">
+      <dl className="flex flex-wrap justify-between gap-x-4 gap-y-2 font-mono">
         {items.map(([k, v]) => (
-          <div key={k} className="flex flex-col gap-0.5 min-w-0">
+          <div key={k} className="flex flex-col gap-1 min-w-0">
             <dt className="text-[10px] uppercase tracking-wide text-muted truncate">
               {k}
             </dt>
-            <dd className="text-accent tabular-nums text-sm leading-none">
+            <dd className="text-accent tabular-nums text-xl font-semibold leading-none whitespace-nowrap">
               {v}
             </dd>
           </div>
@@ -243,6 +268,59 @@ function formatLabel(value: string): string {
   }
 }
 
+// Acquisition source, counted by release. Releases with no source make one
+// trailing "not set" row (total minus the named ones), so the gap stays visible
+// rather than the named sources reading as the whole library.
+//
+// Sources are free text, so the list can grow without limit. Past the largest
+// SOURCE_TOP the rest fold into one "Other (N)" row, which keeps the card's
+// height (and the stats layout) fixed. Other is a real segment with its real
+// count, so the bar stays exact.
+const SOURCE_UNSET = "__unset";
+const SOURCE_OTHER = "__other:"; // + the number of sources folded in
+const SOURCE_TOP = 9;
+
+function sourceRows(
+  sources: { name: string; count: number }[],
+  releases: number,
+): BreakdownRow[] {
+  const named = [...sources].sort((a, b) => b.count - a.count);
+  const rows: BreakdownRow[] = named
+    .slice(0, SOURCE_TOP)
+    .map((s) => ({ value: s.name, count: s.count }));
+  const rest = named.slice(SOURCE_TOP);
+  if (rest.length > 0) {
+    rows.push({
+      value: `${SOURCE_OTHER}${rest.length}`,
+      count: rest.reduce((a, s) => a + s.count, 0),
+    });
+  }
+  const unset = releases - total(rows);
+  if (unset > 0) rows.push({ value: SOURCE_UNSET, count: unset });
+  return rows;
+}
+
+// The source's own colour (user-set or seeded). A "<name> (partial)" source
+// with no colour of its own borrows a paler <name>. Uncoloured sources get a
+// neutral tone, and "not set" a fainter one, so the two never read as the same.
+function sourceBarColor(value: string): string {
+  if (value === SOURCE_UNSET) return "rgb(var(--c-muted) / 0.4)";
+  if (value.startsWith(SOURCE_OTHER)) return "rgb(var(--c-muted))";
+  const own = sourceColor(value);
+  if (own) return own;
+  const base = /^(.*)\s+\(partial\)$/i.exec(value)?.[1];
+  const baseColor = base ? sourceColor(base) : null;
+  if (baseColor) return `color-mix(in srgb, ${baseColor} 55%, transparent)`;
+  return "rgb(var(--c-fg) / 0.55)";
+}
+
+function sourceLabel(value: string): string {
+  if (value === SOURCE_UNSET) return "Not set";
+  if (value.startsWith(SOURCE_OTHER))
+    return `Other (${value.slice(SOURCE_OTHER.length)})`;
+  return value;
+}
+
 function total(rows: BreakdownRow[]): number {
   return rows.reduce((a, r) => a + r.count, 0);
 }
@@ -288,13 +366,16 @@ interface StackedBarCardProps {
   // Sub-linear (< 1) softens dominant slugs so the tail stays readable;
   // linear (= 1) is honest for small categorical sets.
   scalingExponent: number;
-  // Bar thickness: "md" (default h-3); "lg" (3×, h-9) for Medium + Format whose
-  // small balanced sets read as a chunkier band; "sm" (½, h-1.5) for Genre,
-  // which has many rows and wants the saved height for its legend.
+  // Bar thickness: "md" (default h-3) for Medium, Source and Format; "lg"
+  // (3×, h-9) for a lone small set that can afford a chunkier band; "sm"
+  // (½, h-1.5) for Genre, which has many rows and wants the height for its legend.
   barHeight?: "sm" | "md" | "lg";
   // Tighter legend row spacing — used by Genre to claw back vertical height so
   // the lower Country/Label cards rise on-screen.
   denseRows?: boolean;
+  // Draw the stacked bar above the legend (default). Genre turns it off: with
+  // dozens of thin slivers the counts in the legend carry the information.
+  showBar?: boolean;
   className?: string;
 }
 
@@ -306,6 +387,7 @@ function StackedBarCard({
   scalingExponent,
   barHeight = "md",
   denseRows = false,
+  showBar = true,
   className,
 }: StackedBarCardProps) {
   const barH = barHeight === "lg" ? "h-9" : barHeight === "sm" ? "h-1.5" : "h-3";
@@ -325,22 +407,24 @@ function StackedBarCard({
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
         <div className={denseRows ? "space-y-2" : "space-y-3"}>
-          <div
-            className={`flex ${barH} gap-0.5 overflow-hidden rounded-sm bg-surface`}
-            aria-label={`${title} composition`}
-          >
-            {segments.map(({ row, widthPct }) => (
-              <div
-                key={row.value}
-                style={{
-                  width: `${widthPct}%`,
-                  minWidth: "2px",
-                  backgroundColor: colorFor(row.value),
-                }}
-                title={`${displayFor(row.value)}: ${row.count.toLocaleString()} (${pct(row.count, totalCount)})`}
-              />
-            ))}
-          </div>
+          {showBar && (
+            <div
+              className={`flex ${barH} gap-0.5 overflow-hidden rounded-sm bg-surface`}
+              aria-label={`${title} composition`}
+            >
+              {segments.map(({ row, widthPct }) => (
+                <div
+                  key={row.value}
+                  style={{
+                    width: `${widthPct}%`,
+                    minWidth: "2px",
+                    backgroundColor: colorFor(row.value),
+                  }}
+                  title={`${displayFor(row.value)}: ${row.count.toLocaleString()} (${pct(row.count, totalCount)})`}
+                />
+              ))}
+            </div>
+          )}
           <ul
             className={`grid grid-cols-1 sm:grid-cols-2 gap-x-6 text-xs font-mono ${
               denseRows ? "gap-y-0.5" : "gap-y-1"
@@ -661,13 +745,15 @@ function YearCard({ rows, className }: YearCardProps) {
 
   return (
     <Section dense className={className}>
-      <div className="flex flex-col gap-1">
+      {/* Inset from the card's edges so the first and last bars don't run up
+          against the border. The label row shares the inset to stay aligned. */}
+      <div className="flex flex-col gap-1 px-6">
         {/* One bar per year, uniformly spaced across the whole window — no
             decade gap or divider. Each year is coloured by its position
             along the theme gradient, so decades are distinguished by colour
             and every decade reads as a *0→*9 horizontal gradation. */}
         <div
-          className="flex items-end h-14 gap-px"
+          className="flex items-end h-9 gap-0.5"
           aria-label="releases per year"
         >
           {allYears.map((d) => (
