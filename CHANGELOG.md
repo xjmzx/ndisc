@@ -21,6 +21,15 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.2 — 2026-11-06
+
+### Fixed — Delete still said "Unpublish it first" after unpublishing
+
+Unpublishing a release worked on the relay and in the database, but the detail
+panel kept treating the release as published until you selected another one,
+so the Delete dialog wouldn't offer "move files to Trash". The panel now shows
+the release as retracted straight away.
+
 ## 0.6.1 — 2026-11-06
 
 ### Fixed — a source carried over to the next release you clicked

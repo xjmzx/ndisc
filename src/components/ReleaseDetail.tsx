@@ -549,10 +549,14 @@ export function ReleaseDetail({
       });
       if (result.acceptedBy.length > 0) {
         setLastPublish(null);
+        // Mirror the backend, which marks the row retracted: leaving
+        // publishState at "published" kept the Delete dialog blocking trash.
         onChanged({
           ...release,
           lastPublishedAt: null,
           lastPublishedNaddr: null,
+          lastPublishedEventId: null,
+          publishState: "retracted",
         });
       }
     } catch (e) {
