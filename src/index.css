@@ -194,8 +194,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Accent-tinted so dragged-over text is easy to see on the dark panel. */
 ::selection {
-  @apply bg-surfaceHover text-fg;
+  background-color: rgb(var(--c-accent) / 0.35);
+  @apply text-fg;
 }
 
 /* Custom scrollbar — dark, slightly wider than the WebKit default, easier

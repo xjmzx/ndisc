@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Pencil, UploadCloud, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Pencil, UploadCloud, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   listReleases,
   publishRelease,
@@ -13,9 +14,10 @@ import { cn } from "../lib/cn";
 import {
   hasBandcampReceipt,
   isHttpUrl,
-  SOURCE_PLATFORMS,
+  sourceColor,
   sourcePlatform,
 } from "../lib/source";
+import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 
 // Minimal full-screen tabular view for batch-editing release metadata. Dense,
 // functional, no cover art / colours / badges — density over decoration. Only
@@ -23,7 +25,7 @@ import {
 // editable; artist/album/year are read-only here (edit them in the detail
 // panel until they grow setters). Sorting is client-side over the full list.
 
-// "source" is a synthetic sort key (the platform-dot column) — not a Column.
+// "source" is a synthetic sort key (the source-dot column) — not a Column.
 // "sourceLabel" is the real, editable acquisition-source column (distinct from
 // the synthetic dot key).
 type SortKey =
@@ -56,10 +58,37 @@ const COLUMNS: Column[] = [
 ];
 
 // One grid template shared by the header and every row so columns line up.
-// Two leading 0.85rem indicator columns: publish-state dot (not sortable) then
-// the Bandcamp dot (sortable via its header). Then the six COLUMNS.
+// A tick box for selecting rows, then two 0.85rem indicator columns:
+// publish-state dot (not sortable) then the source dot (sortable via its
+// header). Then the six COLUMNS.
 const GRID =
-  "grid-cols-[0.85rem_0.85rem_minmax(0,1.3fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)_3.5rem]";
+  "grid-cols-[1rem_0.85rem_0.85rem_minmax(0,1.3fr)_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)_3.5rem]";
+
+// The source dot, for reviewing which releases have a source chosen:
+//   • filled — a source is chosen; its own colour, or neutral grey for one
+//     without a colour (Record Store, Unknown…);
+//   • ring — no source chosen, but the link points at a known store (a
+//     Bandcamp URL or receipt), so it's a suggestion, not a choice;
+//   • nothing — no source and no hint: a gap to fill in.
+type SourceDot =
+  | { kind: "chosen"; name: string; color: string }
+  | { kind: "hint"; name: string; color: string }
+  | { kind: "none" };
+
+const NEUTRAL_DOT = "rgb(var(--c-muted))";
+
+function sourceDot(r: Release): SourceDot {
+  const name = (r.sourceLabel ?? "").trim();
+  if (name) return { kind: "chosen", name, color: sourceColor(name) ?? NEUTRAL_DOT };
+  const p = sourcePlatform(r);
+  return p ? { kind: "hint", name: p.label, color: p.color } : { kind: "none" };
+}
+
+// Sort rank: chosen sources first (grouped by name), then hints, then gaps.
+// Descending flips it, putting the gaps on top.
+function sourceDotRank(d: SourceDot): number {
+  return d.kind === "chosen" ? 0 : d.kind === "hint" ? 1 : 2;
+}
 
 function compare(a: Release, b: Release, key: SortKey, dir: SortDir): number {
   const col = COLUMNS.find((c) => c.key === key)!;
@@ -93,11 +122,24 @@ export function BatchEditView({
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("artist");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  // Source colours live in localStorage; re-render when one is edited.
+  useSourceMetaVersion();
   // Releases edited in THIS view session — the precise set the republish
   // button targets (vs the whole "unpublished" bucket, which would also sweep
   // up never-published imports). Editing a published release also clears its
   // publish markers backend-side, so its dot flips to "needs republish".
   const [editedIds, setEditedIds] = useState<Set<number>>(new Set());
+  // Every row changed in this view session, including local-only source
+  // edits (which never join the republish queue) — tinted so a run of edits
+  // stays visible as you work down the list.
+  const [touchedIds, setTouchedIds] = useState<Set<number>>(new Set());
+  const touch = (id: number) => setTouchedIds((s) => new Set(s).add(id));
+  // Multi-row selection for applying one value to many releases at once.
+  // Click a tick to toggle a row; shift-click to tick the whole run between
+  // it and the last row you clicked (in the current sort order).
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [applying, setApplying] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [pubDone, setPubDone] = useState(0);
   const [pubStatus, setPubStatus] = useState<string | null>(null);
@@ -125,15 +167,17 @@ export function BatchEditView({
   const sorted = useMemo(() => {
     const copy = [...rows];
     if (sortKey === "source") {
-      // Group by platform: present-first (clustered), grouped in SOURCE_PLATFORMS
-      // order; releases with no recognised source sink to the bottom.
-      const idx = (r: Release) => {
-        const p = sourcePlatform(r);
-        return p ? SOURCE_PLATFORMS.indexOf(p) : SOURCE_PLATFORMS.length;
+      // Chosen sources first, grouped by name; then hints; then releases with
+      // nothing. Descending puts the gaps at the top.
+      const key = (r: Release): [number, string] => {
+        const d = sourceDot(r);
+        return [sourceDotRank(d), d.kind === "none" ? "" : d.name.toLowerCase()];
       };
       copy.sort((a, b) => {
-        const r = idx(a) - idx(b);
-        return sortDir === "asc" ? -r : r; // desc = platforms clustered up top
+        const [ra, na] = key(a);
+        const [rb, nb] = key(b);
+        const r = ra - rb || na.localeCompare(nb);
+        return sortDir === "asc" ? r : -r;
       });
     } else {
       copy.sort((a, b) => compare(a, b, sortKey, sortDir));
@@ -158,9 +202,9 @@ export function BatchEditView({
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      // source defaults to desc so the first click clusters platform rows to
-      // the top (grouped by platform); text/year default to asc.
-      setSortDir(key === "source" ? "desc" : "asc");
+      // Every column starts ascending. For the source dot that's chosen
+      // sources first (grouped by name); a second click puts the gaps on top.
+      setSortDir("asc");
     }
   }
 
@@ -201,6 +245,84 @@ export function BatchEditView({
     load(); // pull DB truth so dots reflect the new publish state
   }
 
+  function toggleRow(index: number, shift: boolean) {
+    const id = sorted[index]?.id;
+    if (id == null) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (shift && anchor != null) {
+        // Tick (or untick) the whole run to match the row just clicked.
+        const on = !prev.has(id);
+        const [a, b] = anchor < index ? [anchor, index] : [index, anchor];
+        for (let i = a; i <= b; i++) {
+          const rid = sorted[i]?.id;
+          if (rid == null) continue;
+          if (on) next.add(rid);
+          else next.delete(rid);
+        }
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setAnchor(index);
+  }
+
+  const allTicked = sorted.length > 0 && sorted.every((r) => r.id != null && selected.has(r.id));
+  function toggleAll() {
+    setSelected(allTicked ? new Set() : new Set(sorted.flatMap((r) => (r.id == null ? [] : [r.id]))));
+    setAnchor(null);
+  }
+
+  // Esc clears the selection (unless you're typing in a cell).
+  useEffect(() => {
+    if (selected.size === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key === "Escape" && !(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"))) {
+        setSelected(new Set());
+        setAnchor(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected.size]);
+
+  // Apply one value to every ticked release, one at a time. Source is
+  // local-only (no republish); label is published data, so those rows join
+  // the republish queue. An empty value clears the field.
+  async function applyToSelected(field: "sourceLabel" | "label", raw: string) {
+    const value = raw.trim() === "" ? null : raw.trim();
+    const ids = sorted.flatMap((r) => (r.id != null && selected.has(r.id) ? [r.id] : []));
+    // A label is published data, so changing many at once asks first.
+    if (field === "label") {
+      const ok = await ask(
+        value
+          ? `Set the label to "${value}" on ${ids.length} releases? They'll need republishing.`
+          : `Clear the label on ${ids.length} releases? They'll need republishing.`,
+        { title: "Set label", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    let done = 0;
+    for (const id of ids) {
+      setApplying(`${done}/${ids.length}`);
+      if (field === "sourceLabel") {
+        await setReleaseSource(id, value);
+        patchRow(id, { sourceLabel: value });
+      } else {
+        await setReleaseLabel(id, value);
+        patchRow(id, { label: value, lastPublishedAt: null, lastPublishedNaddr: null });
+        setEditedIds((s) => new Set(s).add(id));
+      }
+      touch(id);
+      done++;
+    }
+    setApplying(null);
+  }
+
   return (
     <div className="rounded-xl bg-panel border border-surface/60 shadow-md
                     flex flex-col min-h-0 h-full overflow-hidden">
@@ -211,6 +333,17 @@ export function BatchEditView({
           {rows.length} releases
           {pubStatus && <span className="ml-3 text-mauve">{pubStatus}</span>}
         </span>
+        {selected.size > 0 && (
+          <SelectionBar
+            count={selected.size}
+            applying={applying}
+            onApply={applyToSelected}
+            onClear={() => {
+              setSelected(new Set());
+              setAnchor(null);
+            }}
+          />
+        )}
         {editedIds.size > 0 && (
           <button
             type="button"
@@ -237,13 +370,19 @@ export function BatchEditView({
           GRID,
         )}
       >
+        <Tick
+          checked={allTicked}
+          onClick={toggleAll}
+          title={allTicked ? "Untick all" : "Tick every release in this list"}
+          label="Select all"
+        />
         <span aria-hidden="true" />
         <button
           type="button"
           onClick={() => toggleSort("source")}
           className="inline-flex items-center justify-center hover:text-fg transition-colors"
-          title="Sort by source platform (cluster to top)"
-          aria-label="Sort by source platform"
+          title="Sort by source — chosen sources, then hints, then none (click again for gaps first)"
+          aria-label="Sort by source"
         >
           <span className="w-2 h-2 rounded-full border border-fg/40" />
           {sortKey === "source" &&
@@ -288,19 +427,35 @@ export function BatchEditView({
         ) : sorted.length === 0 ? (
           <div className="px-4 py-6 text-sm text-muted">no releases</div>
         ) : (
-          sorted.map((r) => {
+          sorted.map((r, index) => {
+            const isSelected = r.id != null && selected.has(r.id);
             const published = r.lastPublishedNaddr != null;
-            const platform = sourcePlatform(r);
-            const platformLinkable = platform != null && isHttpUrl(r.source);
+            const dot = sourceDot(r);
+            const linkable = dot.kind !== "none" && isHttpUrl(r.source);
             return (
             <div
               key={r.id}
               className={cn(
                 "grid items-center gap-3 px-4 py-1 font-mono text-xs",
                 "border-b border-fg/25 hover:bg-surface/30 transition-colors",
+                // Changed this session: a soft accent tint plus a bar on the
+                // left edge. The row being edited: a stronger tint.
+                r.id != null &&
+                  touchedIds.has(r.id) &&
+                  "bg-accent/10 shadow-[inset_3px_0_0_rgb(var(--c-accent))]",
+                // Ticked for a multi-row edit: the strongest tint. Background
+                // only, no outline (the cell being edited has its own border).
+                isSelected && "bg-accent/25",
+                "focus-within:bg-accent/20",
                 GRID,
               )}
             >
+              <Tick
+                checked={isSelected}
+                onClick={(e) => toggleRow(index, e.shiftKey)}
+                title="Tick to edit with others · shift-click ticks a run"
+                label={`Select ${r.artist} — ${r.title}`}
+              />
               <span
                 className={cn(
                   "w-2 h-2 rounded-full justify-self-center shrink-0",
@@ -312,27 +467,34 @@ export function BatchEditView({
                     : "needs republish"
                 }
               />
-              {platform == null ? (
-                <span aria-hidden="true" />
+              {dot.kind === "none" ? (
+                <span aria-hidden="true" title="no source set" />
               ) : (
                 <button
                   type="button"
-                  disabled={!platformLinkable}
-                  onClick={() => platformLinkable && openUrl(r.source!)}
+                  disabled={!linkable}
+                  onClick={() => linkable && openUrl(r.source!)}
                   className={cn(
                     "w-2 h-2 rounded-full justify-self-center shrink-0",
-                    platformLinkable &&
-                      "cursor-pointer hover:scale-125 transition-transform",
+                    linkable && "cursor-pointer hover:scale-125 transition-transform",
                   )}
-                  style={{ backgroundColor: platform.color }}
+                  style={
+                    dot.kind === "chosen"
+                      ? { backgroundColor: dot.color }
+                      : { boxShadow: `inset 0 0 0 1.5px ${dot.color}` }
+                  }
                   title={
-                    platform.label +
-                    (platform.key === "bandcamp" && hasBandcampReceipt(r)
+                    (dot.kind === "chosen"
+                      ? dot.name
+                      : `no source set — the link suggests ${dot.name}`) +
+                    (dot.name.toLowerCase() === "bandcamp" && hasBandcampReceipt(r)
                       ? " — purchase receipt in notes"
                       : "") +
-                    (platformLinkable ? " · click to open release" : "")
+                    (linkable ? " · click to open the link" : "")
                   }
-                  aria-label={`Open ${platform.label} release`}
+                  aria-label={
+                    dot.kind === "chosen" ? `Source: ${dot.name}` : `Suggested source: ${dot.name}`
+                  }
                 />
               )}
               {COLUMNS.map((c) => {
@@ -351,6 +513,7 @@ export function BatchEditView({
                           // so no publish-marker clear and no republish queue.
                           await setReleaseSource(r.id!, next);
                           patchRow(r.id!, { sourceLabel: next });
+                          touch(r.id!);
                           return;
                         }
                         if (c.key === "label") {
@@ -367,6 +530,7 @@ export function BatchEditView({
                           lastPublishedNaddr: null,
                         });
                         setEditedIds((s) => new Set(s).add(r.id!));
+                        touch(r.id!);
                       }}
                     />
                   );
@@ -508,5 +672,107 @@ function Cell({
         </button>
       )}
     </div>
+  );
+}
+
+// The bar shown while rows are ticked: set one source or label on all of them.
+// Leave the box empty to clear the field. Source is local-only; a label change
+// queues the rows for republishing.
+function SelectionBar({
+  count,
+  applying,
+  onApply,
+  onClear,
+}: {
+  count: number;
+  applying: string | null;
+  onApply: (field: "sourceLabel" | "label", value: string) => Promise<void>;
+  onClear: () => void;
+}) {
+  const [source, setSource] = useState("");
+  const [label, setLabel] = useState("");
+  const busy = applying != null;
+  const field = (
+    value: string,
+    set: (v: string) => void,
+    placeholder: string,
+    listId: string | undefined,
+    apply: () => void,
+    verb: string,
+  ) => (
+    <span className="inline-flex items-center gap-1">
+      <input
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !busy) apply();
+        }}
+        list={listId}
+        placeholder={placeholder}
+        disabled={busy}
+        className="w-36 px-2 py-0.5 rounded bg-surface text-fg placeholder:text-muted
+                   border border-transparent focus:border-accent/50 outline-none"
+      />
+      <button
+        type="button"
+        onClick={apply}
+        disabled={busy}
+        className="px-2 py-0.5 rounded bg-accent/15 text-accent hover:bg-accent/25
+                   transition-colors disabled:opacity-50"
+      >
+        {value.trim() ? verb : `Clear ${verb.split(" ")[1]}`}
+      </button>
+    </span>
+  );
+  return (
+    <div className="flex flex-1 items-center gap-3 min-w-0 px-2 py-0.5 rounded-md bg-accent/10">
+      <span className="text-accent font-medium whitespace-nowrap">
+        {busy ? `applying ${applying}…` : `${count} selected`}
+      </span>
+      {field(source, setSource, "source…", "batch-source-names", () => void onApply("sourceLabel", source), "Set source")}
+      {field(label, setLabel, "label…", undefined, () => void onApply("label", label), "Set label")}
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={busy}
+        className="ml-auto inline-flex items-center gap-1 text-muted hover:text-fg transition-colors"
+        title="Untick all (Esc)"
+      >
+        <X size={12} /> clear
+      </button>
+    </div>
+  );
+}
+
+// A tick box drawn by hand: the native checkbox renders near-black on the dark
+// panel. Unticked is a light grey square, ticked fills with the accent colour.
+function Tick({
+  checked,
+  onClick,
+  title,
+  label,
+}: {
+  checked: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  title: string;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      title={title}
+      onClick={onClick}
+      className={cn(
+        "justify-self-center grid place-items-center w-3.5 h-3.5 rounded-sm border transition-colors",
+        checked
+          ? "bg-accent border-accent text-bg"
+          : "bg-fg/20 border-fg/50 hover:bg-fg/30",
+      )}
+    >
+      {checked && <Check size={11} strokeWidth={3} />}
+    </button>
   );
 }

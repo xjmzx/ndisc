@@ -21,6 +21,67 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.6 — 2026-11-07
+
+### Changed — Batch edit's source dot shows the source you chose
+
+The dot beside each release in Batch edit used to light up only when its link
+pointed at Bandcamp, whatever source you'd set, so two Bandcamp releases could
+look different. It now follows the **source** column:
+
+- **filled** in the source's colour (grey for one without a colour, such as
+  Record Store) when a source is chosen;
+- **a ring** when no source is chosen but the link points at a store, as a
+  suggestion;
+- **nothing** when there's no source and no hint.
+
+Sorting by the dot groups releases by source, then suggestions, then gaps;
+click again to put the gaps on top.
+
+### Added — edit many releases at once in Batch edit
+
+Batch edit has a tick box on every row. Click to tick a release; shift-click
+to tick the whole run between it and the last one you clicked; the tick in the
+header ticks everything in the list. Ticked rows are strongly highlighted, and
+a bar appears at the top: **N selected · Set source · Set label · clear**.
+Type a source (with suggestions) or a label and apply it to every ticked
+release; leave the box empty to clear that field. Sources are local, so no
+republish is needed; a label change asks first and queues the releases for
+republishing. Esc unticks everything.
+
+Text you drag across is now highlighted in the accent colour, so it's easy to
+see.
+
+### Added — filter the release list by any source
+
+The shopping-bag button now opens a menu: every source you've used, each with
+its colour and release count, then **Not set** and **Any source**. Pick one
+and the button fills with that source's colour (a grey outline for Not set).
+It matches the source you chose, not the release's link. This replaces the
+old click-to-cycle Bandcamp / not set / any toggle.
+
+### Added — CPU Records is a built-in source, in white
+
+CPU Records now comes with ndisc: white (it reads well on the dark panel), and
+counted as both digital and physical, since CPU's shop sells downloads and
+vinyl. A link to CPU's shop is recognised as CPU Records rather than Bandcamp,
+and releases with no source and a CPU-shop link are filed under it on start.
+A colour you set yourself in the source editor still wins.
+
+### Changed — releases with no source show a darker grey
+
+In the release list, a release's dot was white whenever it had no source
+colour, so a gap looked the same as a white source. Now Record Store and
+Unknown show mid grey, and a release with no source at all shows a darker
+grey. Hovering says "no source set".
+
+### Changed — Batch edit highlights the rows you're working on
+
+The row you're editing gets a clear tint, and every row you've
+changed this session keeps a softer tint with a bar on its left edge, source
+edits included. Sorting by the source dot now starts with chosen sources
+grouped; a second click puts the gaps on top.
+
 ## 0.6.5 — 2026-11-06
 
 ### Changed — `electronic` always comes first among a release's genres

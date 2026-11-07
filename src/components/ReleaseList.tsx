@@ -63,6 +63,8 @@ import {
   unpublishRelease,
   updateReleasePath,
   decrementOrphaned,
+  listDistinctSources,
+  type SourceCount,
   type ExtractSummary,
   type ImportProgress,
   type CoverLinkFilter,
@@ -99,7 +101,7 @@ import { ContentAuditDialog } from "./ContentAuditDialog";
 import { NotesReviewDialog } from "./NotesReviewDialog";
 import { IgnoredFoldersDialog } from "./IgnoredFoldersDialog";
 import {
-  SOURCE_PLATFORMS,
+  sourceColor,
   releaseSourceColor,
   releaseSourceName,
   isPaired,
@@ -1349,16 +1351,10 @@ export function ReleaseList({
           tooltipFilled="Medium: physical (click for digital)"
           tooltipOutlined="Medium: digital (click to clear)"
         />
-        <FilterToggle
-          Icon={ShoppingBag}
+        <SourceFilterMenu
           value={sourceFilter}
-          onChange={(v) => setSourceFilter(v as "" | SourceFilter)}
-          filledValue="bandcamp"
-          outlinedValue="unset"
-          color={SOURCE_PLATFORMS[0].color}
-          tooltipDefault="Filter by purchase source — click cycles Bandcamp / not set / any"
-          tooltipFilled="Source: Bandcamp (click for no source set)"
-          tooltipOutlined="Source: not set (click to clear)"
+          onChange={setSourceFilter}
+          reloadKey={reloadKey}
         />
         <PublishStateFilter
           value={publishStateFilter}
@@ -2590,17 +2586,22 @@ export function ReleaseList({
                     {/* Medium — the same StateDot as the publish dot, at the
                         same size; a physical release carries a spindle hole.
                         Tinted by acquisition source (Bandcamp blue, Boomkat
-                        olive, …) so a release's origin reads at a glance;
-                        neutral white otherwise, digital faded to 70%. */}
+                        olive, CPU white…) so a release's origin reads at a
+                        glance; grey otherwise, darker when no source is set. */}
                     {(() => {
                       // Tint the medium glyph by acquisition source — the
                       // assigned `sourceLabel` colour wins, falling back to the
                       // platform inferred from the URL/receipt; neutral when
                       // neither applies.
+                      // Three shades without a source colour: a named neutral
+                      // source (Record Store, Unknown) is mid grey; no source
+                      // at all is a darker grey, so a gap reads as a gap and
+                      // never as CPU's white.
                       const color = releaseSourceColor(r);
                       const name = releaseSourceName(r);
-                      const tip = name ? ` · ${name}` : "";
+                      const tip = name ? ` · ${name}` : " · no source set";
                       const tint = color ? { color } : undefined;
+                      const neutral = name ? "text-muted" : "text-muted/45";
                       if (r.medium === "physical") {
                         return (
                           <span
@@ -2608,10 +2609,10 @@ export function ReleaseList({
                             aria-label={`physical${tip}`}
                             className={cn(
                               "grid place-items-center",
-                              // Neutral (Unknown / Record Store) inner dot is
-                              // WHITE; its ring is the darker --c-medium fill.
+                              // Neutral inner dot: mid grey for Record Store /
+                              // Unknown, darker with no source (see above).
                               // A named source tints this via `style` instead.
-                              !color && "text-fg",
+                              !color && neutral,
                             )}
                             style={tint}
                           >
@@ -2626,10 +2627,9 @@ export function ReleaseList({
                             aria-label={`digital${tip}`}
                             className={cn(
                               "grid place-items-center",
-                              // Neutral digital inner dot: white, faded to 70%
-                              // so digital still reads a touch softer than
+                              // Neutral digital inner dot: same greys as
                               // physical. Named source tints via `style`.
-                              !color && "text-fg/70",
+                              !color && neutral,
                             )}
                             style={tint}
                           >
@@ -2816,6 +2816,137 @@ function FilterToggle({
         fill={state === "filled" ? "currentColor" : "none"}
       />
     </button>
+  );
+}
+
+// Source filter: a small menu of every source you've used, each with its
+// colour and release count, then "Not set" and "Any source". The button takes
+// the chosen source's colour (filled), or a grey outline for "Not set", so the
+// active filter reads at a glance. Matches the source you chose, not the link.
+function SourceFilterMenu({
+  value,
+  onChange,
+  reloadKey,
+}: {
+  value: "" | SourceFilter;
+  onChange: (v: "" | SourceFilter) => void;
+  reloadKey: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [sources, setSources] = useState<SourceCount[]>([]);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  // Refresh the list when the menu opens or the library changes, so a source
+  // just typed in elsewhere shows up.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    listDistinctSources()
+      .then((s) => {
+        if (!cancelled) setSources(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, reloadKey]);
+
+  const chosen = value.startsWith("source:") ? value.slice("source:".length) : null;
+  const chosenColor = chosen ? (sourceColor(chosen) ?? "rgb(var(--c-muted))") : null;
+  const tooltip =
+    value === "unset"
+      ? "Source: not set"
+      : chosen
+        ? `Source: ${chosen}`
+        : "Filter by source";
+  const pick = (v: "" | SourceFilter) => {
+    onChange(v);
+    setOpen(false);
+  };
+  const item = (active: boolean) =>
+    cn(
+      "w-full flex items-center gap-2 px-3 py-1.5 text-left",
+      "hover:bg-surface/60 transition-colors",
+      active ? "bg-surface/50 text-fg" : "text-fg/80",
+    );
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={tooltip}
+        aria-label={tooltip}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-pressed={value !== ""}
+        className={cn(
+          "p-2 rounded-md transition-colors",
+          value === "" && "bg-surface text-muted hover:text-fg hover:bg-surfaceHover",
+          value === "unset" && "bg-surface text-muted/60 hover:bg-surfaceHover",
+          chosen && "text-bg",
+        )}
+        style={chosenColor ? { backgroundColor: chosenColor } : undefined}
+      >
+        <ShoppingBag size={14} fill={chosen ? "currentColor" : "none"} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 top-full mt-1 z-20 w-60 rounded-md
+                     bg-panel border border-surface/60 shadow-lg
+                     text-xs py-1 max-h-96 overflow-y-auto"
+        >
+          <button
+            role="menuitemradio"
+            aria-checked={value === ""}
+            onClick={() => pick("")}
+            className={item(value === "")}
+          >
+            <Circle size={8} className="text-muted/40" />
+            Any source
+          </button>
+          {sources.map((s) => {
+            const v = `source:${s.name}` as SourceFilter;
+            return (
+              <button
+                key={s.name}
+                role="menuitemradio"
+                aria-checked={value === v}
+                onClick={() => pick(v)}
+                className={item(value === v)}
+              >
+                <Circle
+                  size={8}
+                  fill="currentColor"
+                  style={{ color: sourceColor(s.name) ?? "rgb(var(--c-muted))" }}
+                />
+                <span className="flex-1 min-w-0 truncate">{s.name}</span>
+                <span className="font-mono tabular-nums text-muted">
+                  {s.count.toLocaleString()}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            role="menuitemradio"
+            aria-checked={value === "unset"}
+            onClick={() => pick("unset")}
+            className={cn(item(value === "unset"), "border-t border-surface/60 mt-1 pt-2")}
+          >
+            <Circle size={8} className="text-muted/45" />
+            Not set
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

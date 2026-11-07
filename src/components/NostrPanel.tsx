@@ -92,7 +92,8 @@ function describeFilter(f: FilterContext): string {
   if (f.videoFilter === "without_video") parts.push("audio-only");
   if (f.coverLinkFilter === "with_link") parts.push("has web image");
   if (f.coverLinkFilter === "without_link") parts.push("no web image");
-  if (f.sourceFilter === "bandcamp") parts.push("Bandcamp source");
+  if (f.sourceFilter?.startsWith("source:"))
+    parts.push(`source ${f.sourceFilter.slice("source:".length)}`);
   if (f.sourceFilter === "unset") parts.push("no source set");
   if (f.needsCoverOnly) parts.push("no cover");
   if (f.query.trim()) parts.push(`search "${f.query.trim()}"`);

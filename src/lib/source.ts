@@ -25,6 +25,9 @@ export const SOURCE_PLATFORMS: SourcePlatform[] = [
   { key: "bleep", label: "Bleep", domain: "bleep.com", color: "#e05a9c" },
   { key: "warp", label: "Warp", domain: "warp.net", color: "#3f5bf6" },
   { key: "planetmu", label: "Planet Mu", domain: "planet.mu", color: "#a8c94a" },
+  // CPU's own shop (Bandcamp-backed; sells downloads and vinyl). White reads
+  // well on the dark panel and stands apart from the grey of "no source".
+  { key: "cpu", label: "CPU Records", domain: "shop.cpurecords.net", color: "#ffffff" },
   // Physical marketplace — no domain inference: a Discogs catalogue link is a
   // pairing signal (discogsId), not an acquisition source to auto-tint. Its
   // muted grey applies only when "Discogs" is the chosen sourceLabel.
@@ -35,7 +38,8 @@ export const SOURCE_PLATFORMS: SourcePlatform[] = [
 // a *.bandcamp.com URL). These have no receipt of their own to key off, so they
 // need explicit recognition. Add a domain here when a label's own shop is
 // Bandcamp-backed.
-const BANDCAMP_CUSTOM_DOMAINS = ["shop.cpurecords.net"];
+// (CPU's shop used to be listed here; it is now its own source, CPU Records.)
+const BANDCAMP_CUSTOM_DOMAINS: string[] = [];
 
 // The platform a release came from, or null. A source-URL domain match wins.
 // Failing that, a release is Bandcamp if it sits on a known custom Bandcamp
@@ -111,12 +115,12 @@ export interface SourceMeta {
 
 // Platforms whose acquisition is a download you own (a digital half), as
 // opposed to a streaming link. Seeds the `digital` default for these names.
-const DIGITAL_SEED_KEYS = new Set(["bandcamp", "boomkat", "bleep", "warp", "planetmu"]);
+const DIGITAL_SEED_KEYS = new Set(["bandcamp", "boomkat", "bleep", "warp", "planetmu", "cpu"]);
 
 // Platforms whose acquisition is a physical copy (a marketplace/record order).
 // Seeds the `physical` default; drives the reverse pairing (a digital row with
 // a physical half).
-const PHYSICAL_SEED_KEYS = new Set(["discogs"]);
+const PHYSICAL_SEED_KEYS = new Set(["discogs", "cpu"]);
 
 // Seed metadata, derived from the recognised platforms so colour is defined in
 // exactly one place (SOURCE_PLATFORMS above) and digital/physical from the sets

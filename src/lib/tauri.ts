@@ -72,11 +72,10 @@ export type VideoFilter = "with_video" | "without_video";
 // Presence of a published web image link (cover_art_url), distinct from a
 // local cover.jpg (cover_art_path) — "with_link" only counts the web URL.
 export type CoverLinkFilter = "with_link" | "without_link";
-// Acquisition-source filter. "bandcamp" = has a Bandcamp source domain, a known
-// custom storefront, or a purchase receipt (mirrors the layer-1 predicate in
-// source.ts); "unset" = no acquisition source chosen (empty `sourceLabel`), for
-// finding the releases still to fill in.
-export type SourceFilter = "bandcamp" | "unset";
+// Acquisition-source filter, by the source you chose (`sourceLabel`):
+// "unset" = no source chosen, for finding the releases still to fill in;
+// "source:<name>" = releases with that source (case-insensitive).
+export type SourceFilter = "unset" | `source:${string}`;
 
 export interface Stats {
   total: number;

@@ -471,11 +471,19 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     // receipt or a Bandcamp source URL) so their grouping ring reads blue
     // without any manual tagging. Idempotent — only fills rows still unset, so
     // a later manual re-categorisation is never clobbered.
+    // CPU's own shop is its own source (CPU Records), checked first so a CPU
+    // link with a Bandcamp receipt isn't filed under Bandcamp.
+    conn.execute(
+        "UPDATE releases SET source_label = 'CPU Records'
+           WHERE (source_label IS NULL OR source_label = '')
+             AND source LIKE '%shop.cpurecords.net%'",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE releases SET source_label = 'Bandcamp'
            WHERE (source_label IS NULL OR source_label = '')
              AND (source LIKE '%bandcamp.com%'
-                  OR source LIKE '%shop.cpurecords.net%'
                   OR (bandcamp_id IS NOT NULL AND bandcamp_id <> ''))",
         [],
     )
@@ -2164,18 +2172,20 @@ fn list_releases(
         _ => "",
     };
 
-    // Acquisition source. A release is "Bandcamp" if its source is on
-    // bandcamp.com, on a known custom storefront, or it carries a purchase
-    // receipt (bandcamp_id) — the same predicate the frontend dot uses
-    // (src/lib/source.ts). "unset" is the releases with no acquisition source
-    // chosen (empty source_label) — the ones still to fill in.
-    let bc_pred = "(source LIKE '%bandcamp.com%' \
-                    OR source LIKE '%shop.cpurecords.net%' \
-                    OR (bandcamp_id IS NOT NULL AND bandcamp_id <> ''))";
+    // Acquisition source, by the source you chose (source_label):
+    //   "unset"        → no source chosen;
+    //   "source:<name>" → that source (case-insensitive), bound as ?4 so any
+    //                     name is safe in the query.
+    // ?4 is always in the SQL (NULL when unused) so the parameter count holds.
+    let source_name: Option<String> = source_filter
+        .as_deref()
+        .and_then(|f| f.strip_prefix("source:"))
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty());
     let source_clause = match source_filter.as_deref() {
-        Some("bandcamp") => format!("AND {bc_pred}"),
-        Some("unset") => "AND (source_label IS NULL OR source_label = '')".to_string(),
-        _ => String::new(),
+        // `?4 IS NULL` is always true here; it only keeps ?4 in the SQL.
+        Some("unset") => "AND (source_label IS NULL OR source_label = '') AND ?4 IS NULL",
+        _ => "AND (?4 IS NULL OR source_label = ?4 COLLATE NOCASE)",
     };
 
     let select_sql = format!(
@@ -2205,7 +2215,7 @@ fn list_releases(
         .prepare(&select_sql)
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![q, q_like, medium], row_to_release)
+        .query_map(params![q, q_like, medium, source_name], row_to_release)
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows {
