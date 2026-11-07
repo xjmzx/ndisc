@@ -70,23 +70,34 @@ addition is a repeatable optional `genre` tag.
 - **Repeatable**, 0–5 occurrences per event (0–3 until the 2026-11 round).
 - **Ordered** — tag order IS the priority order (first = primary, second =
   secondary, and so on to the fifth).
-- **Each value** is one of 41 active slugs (2026-11 round):
+- **Each value** is one of 74 active slugs (2026-11b round):
 
 ```
-acoustic:    ambient, blues, classical, disco, experimental, folk, funk,
-             hip-hop, jazz, latin, metal, pop, reggae, rnb, rock, soul,
-             soundtrack, spoken
-electronic:  acid, bass, breaks, dnb, downtempo, electro, electronic, footwork,
-             garage, house, jungle, minimal, techno
-bridge:      dub, noise
-tertiary:    abstract, boom-bap, conscious, lo-fi, trance, trap, turntablism,
-             world
+electronicDance:  ambient, bass, bleep, breaks, dnb, downtempo, electro,
+                  electronic, footwork, garage, glitch, grime, house, jungle,
+                  techno, trance, trap, trip-hop
+otherGenres:      alternative, blues, bossa-nova, celtic, choral, classical,
+                  country, dancehall, disco, drone, easy-listening,
+                  experimental, folk, funk, gospel, gothic, grunge, hip-hop,
+                  industrial, jazz, krautrock, latin, library, metal, noise,
+                  pop, punk, reggae, rnb, rock, ska, soul, soundtrack, spoken,
+                  swing
+combining:        abstract, acid, acoustic, afro, boom-bap, conscious,
+                  contemporary, dub, hardcore, indian, instrumental, italo, lo-
+                  fi, minimal, post, proto, psychedelic, roots, synth,
+                  turntablism, world
 ```
 
-- **All 41 active slugs are pure peers.** The acoustic / electronic / bridge /
-  tertiary grouping is palette + semantic grouping only; there's no hierarchy
-  or gate. A release MAY be tagged `electronic` + `techno` + `dub` if that's
-  how the meaning composes.
+- **All 74 active slugs are pure peers.** The electronicDance / otherGenres /
+  combining grouping is palette + semantic grouping only; there's no hierarchy
+  or gate, and group names never reach the wire. **Combining forms** are
+  modifiers that mean the same on any genre and compose by stacking:
+  `dub` + `techno` = dub techno, `post` + `punk` = post-punk,
+  `classical` + `contemporary` = contemporary composition. `slugNotes` in the
+  contract records the intended reading of the ambiguous ones (`contemporary`,
+  `hardcore`, `post`, `proto`, …).
+- **Emitter convention (ndisc):** when `electronic` is present it is the first
+  slot; every other order is the user's choice.
 - **Deprecated** — never emitted on new events, but **valid for reading**
   legacy / cross-relay events. Two kinds:
   - Four compound slash-pairs from the original v2 set, retired in the 2026-06
@@ -152,6 +163,42 @@ bridge                               tertiary (optional)
   electronic  --c-g-minimal:       255 240 140
   tertiary    --c-g-abstract:      210 140 230
   tertiary    --c-g-world:         140 170  80
+
+2026-11b additions (groups: electronicDance / otherGenres / combining;
+the 41 above keep their colours under the new groups)
+  electronicDance --c-g-bleep:           255 210   0
+  electronicDance --c-g-glitch:          190 250 235
+  electronicDance --c-g-grime:           255 110  64
+  electronicDance --c-g-trip-hop:        120 150 210
+  otherGenres     --c-g-alternative:     150 120 160
+  otherGenres     --c-g-bossa-nova:      222 170 120
+  otherGenres     --c-g-celtic:           70 140  90
+  otherGenres     --c-g-choral:          236 228 210
+  otherGenres     --c-g-country:         180 120  70
+  otherGenres     --c-g-dancehall:       214 170  40
+  otherGenres     --c-g-drone:            90 110 120
+  otherGenres     --c-g-easy-listening:  200 190 230
+  otherGenres     --c-g-gospel:          230 200 120
+  otherGenres     --c-g-gothic:          112  72 136
+  otherGenres     --c-g-grunge:          130 118  84
+  otherGenres     --c-g-industrial:      134 124 118
+  otherGenres     --c-g-krautrock:       170 150  60
+  otherGenres     --c-g-library:         160 160 130
+  otherGenres     --c-g-punk:            220  40  90
+  otherGenres     --c-g-ska:             200 200 205
+  otherGenres     --c-g-swing:           210 150  90
+  combining       --c-g-acoustic:        190 160 120
+  combining       --c-g-afro:            220 120  30
+  combining       --c-g-contemporary:    210 200 180
+  combining       --c-g-hardcore:        255  60  60
+  combining       --c-g-indian:          255 140  60
+  combining       --c-g-instrumental:    170 180 190
+  combining       --c-g-italo:           255 120 150
+  combining       --c-g-post:            130 140 160
+  combining       --c-g-proto:           160 130 110
+  combining       --c-g-psychedelic:     255 100 220
+  combining       --c-g-roots:            60 120  50
+  combining       --c-g-synth:           200 120 255
 
 deprecated (legacy reads only)
   compound pairs render with a slash:
@@ -244,6 +291,11 @@ amendments without forcing a v3 bump:
   earlier v2.1.2 `classical → classical-folk` rename was removed from
   `backfill_genre_slug_renames` as part of this (it would otherwise re-split
   plain `classical` every launch).
+- **Group regrouping + additions** (2026-11b): the groups became
+  electronicDance / otherGenres / combining and 33 slugs were added (41 → 74
+  active), keeping every existing slug. Purely additive — no release changes,
+  no backfill. Consumers that read the group names (genre.ts in ndisc, glmps,
+  nview) update them in the same wave, and add the 33 palette triplets.
 - **Constraint relaxations** (e.g. v2.1 dropping `noParentWithOwnSub`; the
   2026-11 `slotCap` raise 3 → 5) —
   strictly more permissive, all v2.0 emitters remain valid.

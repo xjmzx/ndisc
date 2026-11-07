@@ -98,9 +98,9 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
               the rest. */}
           <StackedBarCard
             title="Genre"
-            rows={genre}
-            colorFor={(v) => `rgb(var(--c-g-${v}))`}
-            displayFor={genreDisplay}
+            rows={genreRows(genre)}
+            colorFor={genreColor}
+            displayFor={genreLabel}
             scalingExponent={DOMINANT_SKEW}
             barHeight="sm"
             showBar={false}
@@ -379,6 +379,37 @@ function formatLabel(value: string): string {
 const SOURCE_UNSET = "__unset";
 const SOURCE_OTHER = "__other:"; // + the number of sources folded in
 const SOURCE_TOP = 9;
+
+// The Genre card holds at most GENRE_ROWS rows (two columns of 27) so it never
+// grows taller than the Country + Label stack beside it. Past that, the
+// most-used GENRE_ROWS - 1 show and the rest fold into one "Other (N)" row,
+// with its real count. A lone leftover shows by name instead (same one row).
+const GENRE_ROWS = 54;
+const GENRE_OTHER = "__other:"; // + the number of genres folded in
+
+function genreRows(rows: BreakdownRow[]): BreakdownRow[] {
+  if (rows.length <= GENRE_ROWS) return rows;
+  const sorted = [...rows].sort((a, b) => b.count - a.count);
+  const head = sorted.slice(0, GENRE_ROWS - 1);
+  const rest = sorted.slice(GENRE_ROWS - 1);
+  return [
+    ...head,
+    {
+      value: `${GENRE_OTHER}${rest.length}`,
+      count: rest.reduce((a, r) => a + r.count, 0),
+    },
+  ];
+}
+
+function genreColor(value: string): string {
+  return value.startsWith(GENRE_OTHER) ? "rgb(var(--c-muted))" : `rgb(var(--c-g-${value}))`;
+}
+
+function genreLabel(value: string): string {
+  return value.startsWith(GENRE_OTHER)
+    ? `Other (${value.slice(GENRE_OTHER.length)})`
+    : genreDisplay(value);
+}
 
 function sourceRows(
   sources: { name: string; count: number }[],

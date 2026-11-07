@@ -2,8 +2,8 @@
  * release.v2 genre slug constants + the wire-to-display helper.
  *
  * Source of truth: schema/release.v2.json — keep this in sync with the grouped
- * `genreSlugs` (acoustic / electronic / bridge / tertiary). The grouping is
- * semantic + palette ONLY — not a hierarchy; all 41 active slugs are pure
+ * `genreSlugs` (electronicDance / otherGenres / combining). The grouping is
+ * semantic + palette ONLY — not a hierarchy; all 74 active slugs are pure
  * peers and may be freely combined. The canonical emittable-slug list also
  * lives Rust-side (src-tauri/src/lib.rs) for publish validation; these two
  * must agree.
@@ -14,32 +14,11 @@
  * legacy events and cross-relay copies, where they render with a slash.
  */
 
-// Primary / acoustic family — muted, earthy.
-export const GENRE_ACOUSTIC = [
+// Electronic/dance genres — vivid hues.
+export const GENRE_ELECTRONIC_DANCE = [
   "ambient",
-  "blues",
-  "classical",
-  "disco",
-  "experimental",
-  "folk",
-  "funk",
-  "hip-hop",
-  "jazz",
-  "latin",
-  "metal",
-  "pop",
-  "reggae",
-  "rnb",
-  "rock",
-  "soul",
-  "soundtrack",
-  "spoken",
-] as const;
-
-// Secondary / electronic family — vivid, spread across the hue wheel.
-export const GENRE_ELECTRONIC = [
-  "acid",
   "bass",
+  "bleep",
   "breaks",
   "dnb",
   "downtempo",
@@ -47,23 +26,77 @@ export const GENRE_ELECTRONIC = [
   "electronic",
   "footwork",
   "garage",
+  "glitch",
+  "grime",
   "house",
   "jungle",
-  "minimal",
   "techno",
-] as const;
-
-// Bridge — sit between the acoustic and electronic families, own hues.
-export const GENRE_BRIDGE = ["dub", "noise"] as const;
-
-// Tertiary / optional — cross-cutting styles.
-export const GENRE_TERTIARY = [
-  "abstract",
-  "boom-bap",
-  "conscious",
-  "lo-fi",
   "trance",
   "trap",
+  "trip-hop",
+] as const;
+
+// Every other genre — muted, earthy hues.
+export const GENRE_OTHER = [
+  "alternative",
+  "blues",
+  "bossa-nova",
+  "celtic",
+  "choral",
+  "classical",
+  "country",
+  "dancehall",
+  "disco",
+  "drone",
+  "easy-listening",
+  "experimental",
+  "folk",
+  "funk",
+  "gospel",
+  "gothic",
+  "grunge",
+  "hip-hop",
+  "industrial",
+  "jazz",
+  "krautrock",
+  "latin",
+  "library",
+  "metal",
+  "noise",
+  "pop",
+  "punk",
+  "reggae",
+  "rnb",
+  "rock",
+  "ska",
+  "soul",
+  "soundtrack",
+  "spoken",
+  "swing",
+] as const;
+
+// Combining forms — modifiers that mean the same on any genre and compose by
+// stacking (`dub` + `techno` = dub techno, `post` + `punk` = post-punk).
+export const GENRE_COMBINING = [
+  "abstract",
+  "acid",
+  "acoustic",
+  "afro",
+  "boom-bap",
+  "conscious",
+  "contemporary",
+  "dub",
+  "hardcore",
+  "indian",
+  "instrumental",
+  "italo",
+  "lo-fi",
+  "minimal",
+  "post",
+  "proto",
+  "psychedelic",
+  "roots",
+  "synth",
   "turntablism",
   "world",
 ] as const;
@@ -97,12 +130,11 @@ export const GENRE_DEPRECATED = [
   "spiritual",
 ] as const;
 
-// Picker / display order: acoustic → electronic → bridge → tertiary.
+// Picker / display order: electronic/dance → other genres → combining forms.
 export const GENRE_ORDER = [
-  ...GENRE_ACOUSTIC,
-  ...GENRE_ELECTRONIC,
-  ...GENRE_BRIDGE,
-  ...GENRE_TERTIARY,
+  ...GENRE_ELECTRONIC_DANCE,
+  ...GENRE_OTHER,
+  ...GENRE_COMBINING,
 ] as const;
 
 export type GenreSlug =

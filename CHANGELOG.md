@@ -1,7 +1,7 @@
 # Changelog
 
-**Contract:** `release.v2` @ `03f312cfc5f9b4906211de41d7d0142e34330925cd56a8808ed119d4fd34fb42`
-(2026-11 genre round — 41 active slugs, up to 5 genre slots)
+**Contract:** `release.v2` @ `1c3169bbb4a9333d1597c632c1f8b1681a613712f615bbff40e348caddb32fdf`
+(2026-11b genre round — 74 active slugs in three groups, up to 5 genre slots)
 
 **Feed contract:** `feed.v1` @ `077fe7a6f70831ccf7c9640185c29e0b9c289ea22a1e4283064a1803ed1ea50c`
 (kind:31239 feed-note channel — frozen 2026-06-23, pinned by `mod schema_feed_v1`)
@@ -20,6 +20,37 @@ ndisc uses two version axes — this app's semver (below) and the shared
 `release.vN` contract (above). A contract change moves the whole suite in one
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
+
+## Unreleased
+
+### Contract — the 2026-11b genre round: 74 genres, three groups
+
+`release.v2` gains 33 genres (41 → 74), and every existing genre is kept, so
+no release changes and nothing needs republishing.
+
+- **New electronic/dance:** bleep (covers chiptune), glitch, grime, trip-hop.
+- **New other genres:** alternative (covers indie and shoegaze), bossa-nova,
+  celtic, choral, country, dancehall, drone, easy-listening, gospel, gothic,
+  grunge, industrial, krautrock, library, punk, ska, swing.
+- **New combining forms:** acoustic, afro, contemporary, hardcore, indian,
+  instrumental, italo, post, proto, psychedelic, roots, synth.
+
+The groups are now **electronic/dance**, **other genres** and **combining
+forms** (modifiers that stack onto any genre: dub + techno, post + punk,
+classical + contemporary), replacing acoustic / electronic / bridge /
+tertiary. Groups set colour families only and are never published. The
+contract's new `slugNotes` records the intended reading of the ambiguous ones,
+such as `contemporary` (contemporary composition, paired with classical) and
+`hardcore` (pair with punk or breaks). Each new genre has its own colour. A
+new test checks that ndisc's genre lists match the contract exactly. glmps and
+nview update their copies in the same wave.
+
+### Changed — the Genre card never grows past 54 rows
+
+The Genre card on the Music page shows at most 54 genres, two columns of 27,
+so it stays the height of the Country and Label cards beside it. If more
+genres are in use, the 53 most-used show and the rest fold into one
+"Other (N)" row with its real count.
 
 ## 0.6.6 — 2026-11-07
 

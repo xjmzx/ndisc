@@ -35,8 +35,8 @@
 
   /* Genre palette — shared with glmps + ndisc.view verbatim. Mid-saturation
      hues that sit alongside the system tokens above without competing with
-     them. Theme-neutral (same values across fizx and upleb). 41 active slugs
-     in four groups + the four retired compound pairs (legacy reads only,
+     them. Theme-neutral (same values across fizx and upleb). 74 active slugs
+     (41 below in their original four groups + the 33 2026-11b additions) + the four retired compound pairs (legacy reads only,
      rendered with a slash). Restructured + recoloured in the 2026-06 v2
      genre amendment. */
   /* acoustic (primary) */
@@ -86,6 +86,43 @@
   --c-g-trap:          128  84  96;
   --c-g-turntablism:   110 122 134;
   --c-g-world:         140 170  80;
+  /* 2026-11b additions (33) */
+  /* electronic/dance — vivid */
+  --c-g-bleep:           255 210   0;
+  --c-g-glitch:          190 250 235;
+  --c-g-grime:           255 110  64;
+  --c-g-trip-hop:        120 150 210;
+  /* other genres — muted, earthy */
+  --c-g-alternative:     150 120 160;
+  --c-g-bossa-nova:      222 170 120;
+  --c-g-celtic:           70 140  90;
+  --c-g-choral:          236 228 210;
+  --c-g-country:         180 120  70;
+  --c-g-dancehall:       214 170  40;
+  --c-g-drone:            90 110 120;
+  --c-g-easy-listening:  200 190 230;
+  --c-g-gospel:          230 200 120;
+  --c-g-gothic:          112  72 136;
+  --c-g-grunge:          130 118  84;
+  --c-g-industrial:      134 124 118;
+  --c-g-krautrock:       170 150  60;
+  --c-g-library:         160 160 130;
+  --c-g-punk:            220  40  90;
+  --c-g-ska:             200 200 205;
+  --c-g-swing:           210 150  90;
+  /* combining forms */
+  --c-g-acoustic:        190 160 120;
+  --c-g-afro:            220 120  30;
+  --c-g-contemporary:    210 200 180;
+  --c-g-hardcore:        255  60  60;
+  --c-g-indian:          255 140  60;
+  --c-g-instrumental:    170 180 190;
+  --c-g-italo:           255 120 150;
+  --c-g-post:            130 140 160;
+  --c-g-proto:           160 130 110;
+  --c-g-psychedelic:     255 100 220;
+  --c-g-roots:            60 120  50;
+  --c-g-synth:           200 120 255;
   /* deprecated compound pairs — legacy reads only, render with slash */
   --c-g-classical-folk:232 220 195;
   --c-g-dnb-jungle:    160  39 135;
@@ -168,6 +205,43 @@
   --c-g-trap:          128  84  96;
   --c-g-turntablism:   110 122 134;
   --c-g-world:         140 170  80;
+  /* 2026-11b additions (33) */
+  /* electronic/dance — vivid */
+  --c-g-bleep:           255 210   0;
+  --c-g-glitch:          190 250 235;
+  --c-g-grime:           255 110  64;
+  --c-g-trip-hop:        120 150 210;
+  /* other genres — muted, earthy */
+  --c-g-alternative:     150 120 160;
+  --c-g-bossa-nova:      222 170 120;
+  --c-g-celtic:           70 140  90;
+  --c-g-choral:          236 228 210;
+  --c-g-country:         180 120  70;
+  --c-g-dancehall:       214 170  40;
+  --c-g-drone:            90 110 120;
+  --c-g-easy-listening:  200 190 230;
+  --c-g-gospel:          230 200 120;
+  --c-g-gothic:          112  72 136;
+  --c-g-grunge:          130 118  84;
+  --c-g-industrial:      134 124 118;
+  --c-g-krautrock:       170 150  60;
+  --c-g-library:         160 160 130;
+  --c-g-punk:            220  40  90;
+  --c-g-ska:             200 200 205;
+  --c-g-swing:           210 150  90;
+  /* combining forms */
+  --c-g-acoustic:        190 160 120;
+  --c-g-afro:            220 120  30;
+  --c-g-contemporary:    210 200 180;
+  --c-g-hardcore:        255  60  60;
+  --c-g-indian:          255 140  60;
+  --c-g-instrumental:    170 180 190;
+  --c-g-italo:           255 120 150;
+  --c-g-post:            130 140 160;
+  --c-g-proto:           160 130 110;
+  --c-g-psychedelic:     255 100 220;
+  --c-g-roots:            60 120  50;
+  --c-g-synth:           200 120 255;
   /* deprecated compound pairs — legacy reads only, render with slash */
   --c-g-classical-folk:232 220 195;
   --c-g-dnb-jungle:    160  39 135;

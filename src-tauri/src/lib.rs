@@ -1471,25 +1471,29 @@ fn set_release_condition(
 
 // Genre slug groups — mirror schema/release.v2.json `genreSlugs` and
 // src/lib/genre.ts. Held here as the canonical EMITTABLE-slug list for publish
-// validation; release.v2.json is the wire spec. The grouping is semantic /
-// palette ONLY — all 35 active slugs are pure peers and may be freely combined
-// (see genreInvariants). The four retired compound pairs (classical-folk,
-// dnb-jungle, drone-noise, footwork-trap) are deliberately ABSENT: never
+// validation; release.v2.json is the wire spec (a test below checks the two
+// agree). The grouping is semantic / palette ONLY — all 74 active slugs are
+// pure peers and may be freely combined (see genreInvariants). Retired slugs
+// (the four compound pairs, poetry, spiritual) are deliberately ABSENT: never
 // emitted on new events. They stay valid for legacy *reads* in consumers, but
 // the emitter must never write them — backfill_genre_slug_renames migrates any
 // local rows still carrying them to the atomic slugs.
-const GENRE_ACOUSTIC: &[&str] = &[
-    "ambient", "blues", "classical", "disco", "experimental", "folk", "funk",
-    "hip-hop", "jazz", "latin", "metal", "pop", "reggae", "rnb",
-    "rock", "soul", "soundtrack", "spoken",
+const GENRE_ELECTRONIC_DANCE: &[&str] = &[
+    "ambient", "bass", "bleep", "breaks", "dnb", "downtempo", "electro", "electronic",
+    "footwork", "garage", "glitch", "grime", "house", "jungle", "techno", "trance",
+    "trap", "trip-hop",
 ];
-const GENRE_ELECTRONIC: &[&str] = &[
-    "acid", "bass", "breaks", "dnb", "downtempo", "electro", "electronic",
-    "footwork", "garage", "house", "jungle", "minimal", "techno",
+const GENRE_OTHER: &[&str] = &[
+    "alternative", "blues", "bossa-nova", "celtic", "choral", "classical", "country",
+    "dancehall", "disco", "drone", "easy-listening", "experimental", "folk", "funk",
+    "gospel", "gothic", "grunge", "hip-hop", "industrial", "jazz", "krautrock", "latin",
+    "library", "metal", "noise", "pop", "punk", "reggae", "rnb", "rock", "ska", "soul",
+    "soundtrack", "spoken", "swing",
 ];
-const GENRE_BRIDGE: &[&str] = &["dub", "noise"];
-const GENRE_TERTIARY: &[&str] = &[
-    "abstract", "boom-bap", "conscious", "lo-fi", "trance", "trap", "turntablism", "world",
+const GENRE_COMBINING: &[&str] = &[
+    "abstract", "acid", "acoustic", "afro", "boom-bap", "conscious", "contemporary",
+    "dub", "hardcore", "indian", "instrumental", "italo", "lo-fi", "minimal", "post",
+    "proto", "psychedelic", "roots", "synth", "turntablism", "world",
 ];
 
 /// Genre slots per release — release.v2 `genreInvariants.slotCap` (3 → 5 in
@@ -1497,14 +1501,13 @@ const GENRE_TERTIARY: &[&str] = &[
 const GENRE_SLOT_CAP: usize = 5;
 
 fn is_valid_genre_slug(s: &str) -> bool {
-    GENRE_ACOUSTIC.iter().any(|&g| g == s)
-        || GENRE_ELECTRONIC.iter().any(|&g| g == s)
-        || GENRE_BRIDGE.iter().any(|&g| g == s)
-        || GENRE_TERTIARY.iter().any(|&g| g == s)
+    GENRE_ELECTRONIC_DANCE.iter().any(|&g| g == s)
+        || GENRE_OTHER.iter().any(|&g| g == s)
+        || GENRE_COMBINING.iter().any(|&g| g == s)
 }
 
 /// Enforces the v2 invariants from schema/release.v2.json `genreInvariants`:
-/// each non-null slot is one of the 41 active slugs; all non-null slots are
+/// each non-null slot is one of the 74 active slugs; all non-null slots are
 /// distinct; dense ordering (no holes — slot N+1 set requires slot N set).
 /// No parent+sub gate — `electronic` + `techno` is valid.
 fn validate_genre_slots(slots: &[Option<String>]) -> Result<(), String> {
@@ -11486,6 +11489,35 @@ mod schema_v2 {
     }
 
     #[test]
+    fn genre_lists_match_the_contract() {
+        // The emitter's slug lists must equal release.v2.json `genreSlugs`,
+        // group by group, so a contract change can't land half-applied.
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../../schema/release.v2.json")).unwrap();
+        let g = &v["genreSlugs"];
+        for (key, list) in [
+            ("electronicDance", GENRE_ELECTRONIC_DANCE),
+            ("otherGenres", GENRE_OTHER),
+            ("combining", GENRE_COMBINING),
+        ] {
+            let mut want: Vec<String> = g[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("genreSlugs.{key} missing"))
+                .iter()
+                .map(|x| x.as_str().unwrap().to_string())
+                .collect();
+            let mut have: Vec<String> = list.iter().map(|x| x.to_string()).collect();
+            want.sort();
+            have.sort();
+            assert_eq!(have, want, "genre group {key} differs from the contract");
+        }
+        assert_eq!(
+            GENRE_ELECTRONIC_DANCE.len() + GENRE_OTHER.len() + GENRE_COMBINING.len(),
+            74
+        );
+    }
+
+    #[test]
     fn restructure_atomic_slugs_accepted_by_validator() {
         // The atomic slugs the pairs split/collapsed into, plus a sampling of
         // the other slugs added in the restructure, must all validate.
@@ -11495,6 +11527,9 @@ mod schema_v2 {
             "conscious", "trance", "trap", "disco", "garage", "turntablism",
             // 2026-11 round
             "abstract", "minimal", "world",
+            // 2026-11b round (a sampling)
+            "contemporary", "gothic", "krautrock", "trip-hop", "bossa-nova",
+            "easy-listening", "post", "proto", "bleep", "alternative",
         ] {
             let slots = [Some(slug.to_string()), None, None, None, None];
             assert!(
