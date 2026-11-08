@@ -21,6 +21,15 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.8 — 2026-11-09
+
+### Fixed
+
+- **Discogs enrich no longer fails on a null list.** Discogs sometimes sends
+  an explicit `null` for a list field, for example a CD format with
+  `"descriptions": null`. The enrich read it as an error and skipped the
+  release. It now reads null as an empty list.
+
 ## 0.6.7 — 2026-11-08
 
 ### Contract — the 2026-11b genre round: 74 genres, three groups

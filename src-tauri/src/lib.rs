@@ -10103,15 +10103,26 @@ fn category_from_discogs_format(format: &str) -> Option<&'static str> {
 // tag would be an additive contract wave, deferred).
 // ---------------------------------------------------------------------------
 
+// Discogs sometimes sends an explicit `null` for a list (e.g. a format's
+// "descriptions": null). `#[serde(default)]` only covers a missing field, so
+// read null as an empty list too.
+fn null_as_empty<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
+}
+
 #[derive(Deserialize)]
 struct DiscogsRelease {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     tracklist: Vec<DiscogsTrack>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     formats: Vec<DiscogsFormat>,
     #[serde(default)]
     country: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     labels: Vec<DiscogsLabel>,
 }
 
@@ -10129,7 +10140,7 @@ struct DiscogsTrack {
     kind: Option<String>,
     #[serde(default)]
     position: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     sub_tracks: Vec<DiscogsTrack>,
 }
 
@@ -10139,7 +10150,7 @@ struct DiscogsFormat {
     name: Option<String>,
     #[serde(default)]
     qty: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     descriptions: Vec<String>,
     // Free-text qualifier — Discogs stores the vinyl colour here ("Green"),
     // NOT in `descriptions`; the CSV export appends an abbreviated form of it.
@@ -12915,5 +12926,22 @@ mod refresh_guard {
     #[test]
     fn a_mixed_change_set_still_marks_stale() {
         assert!(refresh_marks_stale(&ch(&["cover_art_path", "title"]), false));
+    }
+}
+
+#[cfg(test)]
+mod discogs_null_lists {
+    use super::DiscogsRelease;
+
+    // Discogs release 93710 sends `"descriptions": null` on its CD format.
+    #[test]
+    fn null_lists_read_as_empty() {
+        let json = r#"{"tracklist": null, "labels": null, "formats": [
+            {"name": "Vinyl", "qty": "1", "descriptions": ["12\""]},
+            {"name": "CD", "qty": "1", "descriptions": null}]}"#;
+        let r: DiscogsRelease = serde_json::from_str(json).expect("parses");
+        assert_eq!(r.formats.len(), 2);
+        assert!(r.formats[1].descriptions.is_empty());
+        assert!(r.tracklist.is_empty() && r.labels.is_empty());
     }
 }
