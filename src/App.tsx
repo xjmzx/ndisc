@@ -751,7 +751,7 @@ export default function App() {
           {/* Version moved to the header chip (suite top-bar grammar); the
               footer now carries only the stack line + machine values. */}
           <span className="truncate">
-            scaffold · stack: Tauri 2 + React + TypeScript + Tailwind + SQLite
+            stack: Tauri 2 · React · TypeScript · Tailwind · SQLite
           </span>
         </span>
         {npub && (

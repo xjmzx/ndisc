@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Section } from "./Section";
-import { genreDisplay } from "../lib/genre";
+import { genreDisplay, GENRE_ORDER } from "../lib/genre";
 import { sourceColor } from "../lib/source";
 import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 import {
@@ -76,18 +76,17 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
 
   const { genre, country, year, medium, format, label } = state.data;
 
-  const totals = <TotalsCard data={state.data} />;
-
   return (
-    // A header row in thirds — the two page buttons, then the totals — and
+    // A header row in halves — the two page buttons over the Genre card, the
+    // totals over the Country + Label stack — and
     // one 2-column grid per half below. The totals sit in the header so the
     // headline figures stay put whichever half is open. Each grid row
     // stretches both cells to equal height (the default), so card edges line
     // up across the left/right divide.
     <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <StatsSwitch page={page} onChange={choosePage} className="md:col-span-2" />
-        {totals}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <StatsSwitch page={page} onChange={choosePage} />
+        <TotalsCard data={state.data} />
       </div>
       {page === "music" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -126,12 +125,14 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-2 gap-y-4">
+        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-x-2 gap-y-6">
           {/* Digital/Physical and Year each run full width — a slim two-part
               bar, then the years wide enough to read one by one, grouped by
-              decade. Source | Format sit side by side below. */}
+              decade. Source | Format sit side by side below. Each card is
+              titled, with a wider gap between rows than on Music. */}
           <StackedBarCard
             title="Medium"
+            heading="Media Kind"
             rows={medium}
             colorFor={mediumColor}
             displayFor={mediumLabel}
@@ -139,9 +140,14 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
             barHeight="half"
             className="md:col-span-2"
           />
-          <YearCard rows={year} className="md:col-span-2" />
+          <YearCard
+            rows={year}
+            title="Collection (By Year and Decade)"
+            className="md:col-span-2"
+          />
           <StackedBarCard
             title="Source"
+            heading="Discography by Source Library"
             rows={state.source}
             colorFor={sourceBarColor}
             displayFor={sourceLabel}
@@ -150,6 +156,7 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
           />
           <StackedBarCard
             title="Format"
+            heading="Format"
             rows={format}
             colorFor={formatColor}
             displayFor={formatLabel}
@@ -165,8 +172,8 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
 // --- StatsSwitch ------------------------------------------------------------
 
 // Stats is split in two halves: what the music is (Music) and how you hold it
-// (Library). Both halves are always named, with what each holds spelled out,
-// so the one not on screen can't be overlooked. The choice is remembered per
+// (Library). Both halves are always named, so the one not on screen can't be
+// overlooked. The choice is remembered per
 // viewer (localStorage; the page still works without it).
 type StatsPage = "music" | "library";
 const STATS_PAGE_KEY = "ndisc.statsPage";
@@ -187,9 +194,9 @@ function writeStatsPage(page: StatsPage): void {
   }
 }
 
-const STATS_PAGES: { key: StatsPage; title: string; holds: string }[] = [
-  { key: "music", title: "Music", holds: "genre · country · label" },
-  { key: "library", title: "Library", holds: "year · digital/physical · source · format" },
+const STATS_PAGES: { key: StatsPage; title: string }[] = [
+  { key: "music", title: "Music" },
+  { key: "library", title: "Library" },
 ];
 
 function StatsSwitch({
@@ -221,22 +228,14 @@ function StatsSwitch({
             aria-selected={active}
             onClick={() => onChange(p.key)}
             className={
-              "flex items-center justify-center gap-3 rounded-lg px-3 py-2 min-w-0 " +
+              "flex items-center justify-center rounded-lg px-3 py-2 min-w-0 " +
               "transition-colors border " +
               (active
                 ? "bg-surface border-accent/50 text-accent"
                 : "border-transparent text-fg/70 hover:bg-surface/60 hover:text-fg")
             }
           >
-            <span className="text-sm font-semibold">{p.title}</span>
-            <span
-              className={
-                "font-mono text-[10px] truncate " +
-                (active ? "text-accent/70" : "text-muted")
-              }
-            >
-              {p.holds}
-            </span>
+            <span className="text-sm font-semibold truncate">{p.title}</span>
           </button>
         );
       })}
@@ -273,7 +272,7 @@ function TotalsCard({
     ["years", yearSpan],
   ];
   return (
-    // One line of six in the header's right third, beside the page buttons.
+    // One line of six in the header's right half, beside the page buttons.
     // Each figure takes its natural width and the row spreads them evenly, so
     // the widest (the year span) never gets squeezed; on a narrow window they
     // wrap.
@@ -380,18 +379,24 @@ const SOURCE_UNSET = "__unset";
 const SOURCE_OTHER = "__other:"; // + the number of sources folded in
 const SOURCE_TOP = 9;
 
-// The Genre card holds at most GENRE_ROWS rows (two columns of 27) so it never
-// grows taller than the Country + Label stack beside it. Past that, the
-// most-used GENRE_ROWS - 1 show and the rest fold into one "Other (N)" row,
-// with its real count. A lone leftover shows by name instead (same one row).
+// The Genre card lists every contract genre: the ones in use by count, then
+// the unused ones at 0, in contract order. It holds at most GENRE_ROWS rows
+// (two columns of 27) so it never grows taller than the Country + Label stack
+// beside it. Past that, the first GENRE_ROWS - 1 show and the rest fold into
+// one "Other (N)" row, with its real count. A lone leftover shows by name
+// instead (same one row).
 const GENRE_ROWS = 54;
 const GENRE_OTHER = "__other:"; // + the number of genres folded in
 
 function genreRows(rows: BreakdownRow[]): BreakdownRow[] {
-  if (rows.length <= GENRE_ROWS) return rows;
-  const sorted = [...rows].sort((a, b) => b.count - a.count);
-  const head = sorted.slice(0, GENRE_ROWS - 1);
-  const rest = sorted.slice(GENRE_ROWS - 1);
+  const used = new Set(rows.map((r) => r.value));
+  const all = [
+    ...[...rows].sort((a, b) => b.count - a.count),
+    ...GENRE_ORDER.filter((g) => !used.has(g)).map((g) => ({ value: g, count: 0 })),
+  ];
+  if (all.length <= GENRE_ROWS) return all;
+  const head = all.slice(0, GENRE_ROWS - 1);
+  const rest = all.slice(GENRE_ROWS - 1);
   return [
     ...head,
     {
@@ -508,11 +513,15 @@ interface StackedBarCardProps {
   // Draw the stacked bar above the legend (default). Genre turns it off: with
   // dozens of thin slivers the counts in the legend carry the information.
   showBar?: boolean;
+  // Visible card title, top left. Off by default: the Music tab's cards and
+  // the bar's aria-label use `title` without showing it.
+  heading?: string;
   className?: string;
 }
 
 function StackedBarCard({
   title,
+  heading,
   rows,
   colorFor,
   displayFor = (v) => v,
@@ -541,7 +550,7 @@ function StackedBarCard({
   }));
 
   return (
-    <Section dense className={className}>
+    <Section dense title={heading} className={className}>
       {rows.length === 0 ? (
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
@@ -821,18 +830,22 @@ function yearGradientColor(p: number): string {
 
 interface YearCardProps {
   rows: BreakdownRow[];
+  title?: string;
   className?: string;
 }
 
-// The YEAR card spans the whole catalogue: from the start of the decade of
-// the oldest release to the current year (or a later release year, if one is
-// tagged ahead). Starting on a decade boundary keeps the first bracket a whole
-// decade, so only the newest can be partial. Years before YEAR_FLOOR are
-// treated as typos and left off the chart (they still count everywhere
-// else), so one bad tag can't stretch it across centuries.
+// The YEAR card always shows YEAR_DECADES whole decades: the current one
+// (its future years as empty slots) and the ones before it. The window slides
+// on as the decade turns (1950s–2020s today, 1960s–2030s from 2030), so every
+// library gets the same layout. Releases older than the window fold into one
+// narrow "earlier" bar at the left, so nothing drops off. Years before
+// YEAR_FLOOR are treated as typos, and years past the current decade as
+// mistagged; both are left off the chart (they still count everywhere else).
+const YEAR_DECADES = 8;
 const YEAR_FLOOR = 1900;
+const EARLIER_SLOTS = 3; // width of the "earlier" bar, in year slots
 
-function YearCard({ rows, className }: YearCardProps) {
+function YearCard({ rows, title, className }: YearCardProps) {
   // Parse "1968" → 1968; ignore unparseable rows defensively.
   const parsed: { year: number; count: number }[] = rows
     .map((r) => ({ year: Number(r.value), count: r.count }))
@@ -840,33 +853,30 @@ function YearCard({ rows, className }: YearCardProps) {
 
   if (parsed.length === 0) {
     return (
-      <Section dense className={className}>
+      <Section dense title={title} className={className}>
         <p className="text-xs text-muted italic">no data yet</p>
       </Section>
     );
   }
 
-  const currentYear = new Date().getFullYear();
-  const plausible = parsed
-    .map((p) => p.year)
-    .filter((y) => y >= YEAR_FLOOR);
-  if (plausible.length === 0) {
+  const lastDecade = Math.floor(new Date().getFullYear() / 10) * 10;
+  const minYear = lastDecade - (YEAR_DECADES - 1) * 10;
+  const maxYear = lastDecade + 9;
+  const lookup = new Map(
+    parsed
+      .filter((p) => p.year >= minYear && p.year <= maxYear)
+      .map((p) => [p.year, p.count]),
+  );
+  const earlier = parsed
+    .filter((p) => p.year >= YEAR_FLOOR && p.year < minYear)
+    .reduce((a, p) => a + p.count, 0);
+  if (lookup.size === 0 && earlier === 0) {
     return (
-      <Section dense className={className}>
+      <Section dense title={title} className={className}>
         <p className="text-xs text-muted italic">no data yet</p>
       </Section>
     );
   }
-  const windowStart = Math.floor(Math.min(...plausible) / 10) * 10;
-  const maxYear = Math.max(currentYear, ...plausible);
-  const minYear = windowStart;
-  // Every plausible year is in the window now; the filter only drops the
-  // pre-YEAR_FLOOR typos.
-  const lookup = new Map(
-    parsed
-      .filter((p) => p.year >= windowStart && p.year <= maxYear)
-      .map((p) => [p.year, p.count]),
-  );
 
   // Group by decade — each group holds the densified year sequence for
   // that decade. Densifying ensures every year in the visible range gets
@@ -894,7 +904,7 @@ function YearCard({ rows, className }: YearCardProps) {
   const span = Math.max(1, maxYear - minYear);
 
   return (
-    <Section dense className={className}>
+    <Section dense title={title} className={className}>
       {/* Inset from the card's edges so the first and last bars don't run up
           against the border. The label row shares the inset to stay aligned. */}
       <div className="flex flex-1 flex-col gap-1 px-6">
@@ -905,6 +915,20 @@ function YearCard({ rows, className }: YearCardProps) {
           className="flex h-32 items-end gap-2"
           aria-label="releases per year"
         >
+          {earlier > 0 && (
+            // One bar for everything older than the window, two year-slots
+            // wide. Scaled like the rest but capped at full height.
+            <div
+              className="flex h-full items-end"
+              style={{ flexGrow: EARLIER_SLOTS, flexBasis: 0 }}
+            >
+              <div
+                className="flex-1 bg-muted/60"
+                style={{ height: `${Math.min(100, (earlier / maxCount) * 100)}%` }}
+                title={`before ${minYear}: ${earlier.toLocaleString()}`}
+              />
+            </div>
+          )}
           {decadeGroups.map((g) => (
             <div
               key={g.decade}
@@ -930,6 +954,15 @@ function YearCard({ rows, className }: YearCardProps) {
             box (|__ 1990s __|) marks where one decade ends and the next
             begins; the label sits centred in it. */}
         <div className="flex gap-2 text-[10px] font-mono text-fg/70">
+          {earlier > 0 && (
+            <div
+              className="text-center pt-1 pb-1 min-w-0 truncate text-muted"
+              style={{ flexGrow: EARLIER_SLOTS, flexBasis: 0 }}
+              title={`before ${minYear}: ${earlier.toLocaleString()}`}
+            >
+              &lt;{minYear}
+            </div>
+          )}
           {decadeGroups.map((g) => (
             <div
               key={g.decade}

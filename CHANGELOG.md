@@ -21,6 +21,36 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.9 — 2026-11-09
+
+### Fixed
+
+- **"Enrich missing" no longer refetches the same releases every run.** It
+  picked any linked release with no disc count, but Discogs gives a digital
+  (File) release none, so about 700 digital releases were fetched again each
+  time. ndisc now records which Discogs release each release was enriched
+  from, and "enrich missing" fetches only releases never enriched, or re-linked
+  to a different Discogs release since. On first launch every linked release
+  is recorded as enriched; use "re-enrich all" for anything that wasn't.
+
+### Changed
+
+- **Stats: page buttons line up with the cards below.** The Music and Library
+  buttons now sit over the Genre card and show just their names; the totals
+  sit over the Country and Label cards.
+- **Stats: the Genre card lists every genre.** Genres with no releases show
+  at 0 after the ones in use, up to the card's 54 rows; the rest fold into
+  "Other".
+- **Stats: the Year chart always shows 8 whole decades**, the current one and
+  the 7 before it (1950s–2020s today), sliding on as the decade turns.
+  Releases older than that fold into one narrow bar at the left, labelled
+  with the year the chart starts.
+- **Stats: the Library cards are titled** (Media Kind; Collection, by year
+  and decade; Discography by Source Library; Format), with more space
+  between the rows.
+- **Footer:** drops "scaffold"; the stack now reads "Tauri 2 · React ·
+  TypeScript · Tailwind · SQLite".
+
 ## 0.6.8 — 2026-11-09
 
 ### Fixed

@@ -420,11 +420,54 @@ fn ensure_column(
     Ok(())
 }
 
+// Which Discogs release each release was last enriched from. "Enrich missing"
+// fetches only releases with no row here, or whose discogs_id has changed
+// since. It used to pick releases with no disc count, but Discogs gives a
+// digital (File) release no disc count, so those were fetched again on every
+// run. Created on first open; at that point every linked release is recorded
+// as enriched, because the library had just been through full enrich passes
+// (2026-11). A release linked but never enriched before this table existed
+// needs "re-enrich all" or its own Enrich button.
+fn ensure_discogs_enrichments(conn: &Connection) -> Result<(), String> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master
+                           WHERE type = 'table' AND name = 'discogs_enrichments')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if exists {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "BEGIN;
+         CREATE TABLE discogs_enrichments (
+             release_id  INTEGER PRIMARY KEY,
+             discogs_id  INTEGER NOT NULL,
+             enriched_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+         );
+         INSERT INTO discogs_enrichments (release_id, discogs_id)
+             SELECT id, discogs_id FROM releases WHERE discogs_id IS NOT NULL;
+         COMMIT;",
+    )
+    .map_err(|e| e.to_string())
+}
+
+// "Enrich missing": linked releases never enriched, or re-linked since.
+const ENRICH_MISSING_SQL: &str = "SELECT r.id, r.discogs_id, r.artist, r.title
+     FROM releases r
+     LEFT JOIN discogs_enrichments e ON e.release_id = r.id
+     WHERE r.discogs_id IS NOT NULL
+       AND (e.discogs_id IS NULL OR e.discogs_id <> r.discogs_id)
+     ORDER BY r.id";
+
 fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
     conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
     rename_legacy_musicbrainz_column(&conn)?;
+    ensure_discogs_enrichments(&conn)?;
     ensure_column(&conn, "releases", "cover_art_url", "TEXT")?;
     ensure_column(&conn, "releases", "release_type", "TEXT")?;
     ensure_column(&conn, "releases", "category", "TEXT")?;
@@ -10290,6 +10333,7 @@ struct EnrichProgress {
 fn apply_enrichment(
     conn: &Connection,
     release_id: i64,
+    discogs_id: i64,
     enr: &Enrichment,
 ) -> Result<(), String> {
     type Row = (
@@ -10416,6 +10460,18 @@ fn apply_enrichment(
             clear_pub,
             release_id
         ],
+    )
+    .map_err(|e| e.to_string())?;
+    record_enrichment(conn, release_id, discogs_id)
+}
+
+fn record_enrichment(conn: &Connection, release_id: i64, discogs_id: i64) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO discogs_enrichments (release_id, discogs_id, enriched_at)
+         VALUES (?1, ?2, strftime('%s','now'))
+         ON CONFLICT(release_id) DO UPDATE SET
+             discogs_id = excluded.discogs_id, enriched_at = excluded.enriched_at",
+        params![release_id, discogs_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -10580,7 +10636,7 @@ async fn enrich_discogs_release(
     let enr = enrichment_from(&rel);
     let (tt, dt) = (enr.track_total, enr.disc_total);
     let conn = open(&app)?;
-    apply_enrichment(&conn, release_id, &enr)?;
+    apply_enrichment(&conn, release_id, did, &enr)?;
     Ok(EnrichResult {
         release_id,
         track_total: tt,
@@ -10655,10 +10711,7 @@ async fn enrich_discogs_library(
             "SELECT id, discogs_id, artist, title FROM releases
              WHERE discogs_id IS NOT NULL ORDER BY id"
         } else {
-            "SELECT id, discogs_id, artist, title FROM releases
-             WHERE discogs_id IS NOT NULL
-               AND (track_total IS NULL OR disc_total IS NULL)
-             ORDER BY id"
+            ENRICH_MISSING_SQL
         };
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
         let rows = stmt
@@ -10697,7 +10750,7 @@ async fn enrich_discogs_library(
                 // Open a fresh connection per item: rusqlite's Connection is
                 // !Send and must not be held across the .await above.
                 let conn = open(&app)?;
-                match apply_enrichment(&conn, *rid, &enr) {
+                match apply_enrichment(&conn, *rid, *did, &enr) {
                     Ok(()) => summary.enriched += 1,
                     Err(e) => summary.errors.push(format!("release {}: {}", rid, e)),
                 }
@@ -12943,5 +12996,42 @@ mod discogs_null_lists {
         assert_eq!(r.formats.len(), 2);
         assert!(r.formats[1].descriptions.is_empty());
         assert!(r.tracklist.is_empty() && r.labels.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod enrich_missing_selection {
+    use super::{ensure_discogs_enrichments, record_enrichment, ENRICH_MISSING_SQL, SCHEMA};
+    use rusqlite::Connection;
+
+    fn picked(c: &Connection) -> Vec<i64> {
+        let mut st = c.prepare(ENRICH_MISSING_SQL).unwrap();
+        st.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+    }
+
+    #[test]
+    fn picks_only_never_enriched_or_relinked() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute_batch(
+            "INSERT INTO releases (id, artist, title, medium, discogs_id)
+             VALUES (1, 'a', 'linked before the table', 'digital', 100),
+                    (2, 'b', 'unlinked', 'digital', NULL);",
+        )
+        .unwrap();
+        // First open records every linked release as done.
+        ensure_discogs_enrichments(&c).unwrap();
+        assert!(picked(&c).is_empty());
+        // A new link is picked up; enriching it clears it, with no disc count.
+        c.execute("UPDATE releases SET discogs_id = 200 WHERE id = 2", []).unwrap();
+        assert_eq!(picked(&c), vec![2]);
+        record_enrichment(&c, 2, 200).unwrap();
+        assert!(picked(&c).is_empty());
+        // Re-linking to a different Discogs release picks it up again.
+        c.execute("UPDATE releases SET discogs_id = 101 WHERE id = 1", []).unwrap();
+        assert_eq!(picked(&c), vec![1]);
+        // A second open leaves the table as it is.
+        ensure_discogs_enrichments(&c).unwrap();
+        assert_eq!(picked(&c), vec![1]);
     }
 }

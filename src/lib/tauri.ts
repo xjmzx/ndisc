@@ -521,8 +521,8 @@ export async function enrichDiscogsRelease(
   return invoke<EnrichResult>("enrich_discogs_release", { releaseId });
 }
 
-// Batch-enrich every Discogs release still missing a count (or all, when
-// `force`). Emits enrich:started / enrich:progress / enrich:done events.
+// Batch-enrich every linked release not yet enriched from its current
+// Discogs link (or all, when `force`). Emits enrich:started / enrich:progress / enrich:done events.
 export async function enrichDiscogsLibrary(
   force = false,
   ids?: number[],
