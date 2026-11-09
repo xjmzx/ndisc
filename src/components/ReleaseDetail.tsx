@@ -955,9 +955,9 @@ export function ReleaseDetail({
           placeholder="country"
           width="w-32"
         />
-        {/* Link box — takes a Discogs release, MusicBrainz release or
-            Bandcamp album/track link and files it in the right field (a
-            Bandcamp link becomes the source). Shows the Discogs id, else the
+        {/* Link box — takes a Discogs release, MusicBrainz release or a
+            store link (Bandcamp, Apple Music, Spotify) and files it in the
+            right field (a store link becomes the source). Shows the Discogs id, else the
             MusicBrainz id. Paired with the per-release Discogs enrich. */}
         <div className="inline-flex items-center gap-1.5">
           <EditableText
@@ -968,7 +968,7 @@ export function ReleaseDetail({
             }
             onChange={onChangeLink}
             ariaLabel="release link"
-            placeholder="discogs · mb · bandcamp"
+            placeholder="discogs · mb · store"
             width="w-28"
           />
           {release.discogsId != null && (

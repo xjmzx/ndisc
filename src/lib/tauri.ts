@@ -378,7 +378,8 @@ export async function setReleaseCatalogNumber(
 // discogs.com/release/… URL). Returns the parsed id (null when cleared);
 // rejects unparseable input. Also keeps the `source` URL coherent.
 // The release pane's one link box: a Discogs release, a MusicBrainz release or
-// a Bandcamp album/track link (or a bare Discogs id / MBID). The backend sorts
+// a store link — Bandcamp album/track, Apple Music or Spotify album (or a bare
+// Discogs id / MBID). The backend sorts
 // it into discogs_id, musicbrainz_release_id or source and returns the new
 // state; anything else rejects with a message saying what was expected.
 // Empty clears the id the box shows (Discogs first, else MusicBrainz).

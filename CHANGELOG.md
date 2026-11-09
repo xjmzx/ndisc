@@ -28,6 +28,12 @@ wave; an app-only change bumps ndisc alone. See
   pane's title bar copies `Artist - Title` (as stored, not the uppercase the
   bar shows) — for pasting into a store or Discogs search. Clicking it doesn't
   collapse the release.
+- **Apple Music and Spotify links in the link box.** Alongside Bandcamp, an
+  Apple Music or Spotify album link now becomes the release's source. Apple
+  links are saved without the country (`music.apple.com/album/<id>`), so each
+  reader lands in their own store; Spotify links lose the `?si=` share code.
+  Artist, song and playlist pages are refused, as are short share links
+  (`spotify.link`), whose real address can't be read.
 
 ## 0.6.10 — 2026-11-09
 

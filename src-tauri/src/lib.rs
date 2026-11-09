@@ -1844,7 +1844,8 @@ fn set_release_discogs_id(
 // to the right field, so the pane needs no extra boxes:
 //   Discogs release      → discogs_id               (`i` discogs:release:<id>)
 //   MusicBrainz release  → musicbrainz_release_id   (`i` musicbrainz:release:<mbid>)
-//   Bandcamp album/track → source                   (`source`)
+//   Store album link     → source                   (`source`)
+//     (Bandcamp album/track, Apple Music album, Spotify album)
 // Anything else is rejected with a message saying what was expected, and
 // nothing is written.
 
@@ -1853,11 +1854,13 @@ enum LinkInput {
     Clear,
     Discogs(i64),
     MusicBrainz(String),
-    Bandcamp(String),
+    // A store page for the release (Bandcamp, Apple Music, Spotify), already
+    // cleaned to its canonical form. Becomes the source.
+    Store(String),
 }
 
 // Kept short: the message sits inline beside the box in the release pane.
-const LINK_EXPECTED: &str = "Not a Discogs, MB or Bandcamp URL!";
+const LINK_EXPECTED: &str = "Not a supported release URL!";
 
 // A MusicBrainz id: a UUID, 8-4-4-4-12 hex digits.
 fn is_mbid(s: &str) -> bool {
@@ -1899,6 +1902,14 @@ fn parse_link_input(raw: &str) -> Result<LinkInput, String> {
             return Ok(LinkInput::MusicBrainz(rest.to_string()));
         }
     }
+    // Spotify's app URI; the id is case-sensitive, so read it from `t`.
+    if lower.starts_with("spotify:") {
+        let id = t.splitn(3, ':').nth(2).filter(|_| lower.starts_with("spotify:album:"));
+        return id
+            .filter(|id| is_spotify_id(id))
+            .map(|id| LinkInput::Store(format!("https://open.spotify.com/album/{id}")))
+            .ok_or_else(|| "Not a Spotify album URL!".to_string());
+    }
 
     // URLs: split into host + path segments, dropping scheme, query, fragment.
     let no_scheme = t
@@ -1935,12 +1946,48 @@ fn parse_link_input(raw: &str) -> Result<LinkInput, String> {
         if let (Some(kind), Some(slug)) = (segs.first(), segs.get(1)) {
             let kind = kind.to_ascii_lowercase();
             if kind == "album" || kind == "track" {
-                return Ok(LinkInput::Bandcamp(format!("https://{host}/{kind}/{slug}")));
+                return Ok(LinkInput::Store(format!("https://{host}/{kind}/{slug}")));
             }
         }
         return Err("Not a Bandcamp album/track URL!".into());
     }
+    // Apple Music: …/<country>/album/<name>/<id>. Saved without the country so
+    // every reader lands in their own store (Apple redirects). The old iTunes
+    // form ends in id<digits>.
+    if host == "music.apple.com" || host == "itunes.apple.com" {
+        if let Some(i) = segs.iter().position(|s| s.eq_ignore_ascii_case("album")) {
+            if let Some(last) = segs.get(i + 1..).and_then(|r| r.last()) {
+                let digits = last.strip_prefix("id").unwrap_or(last);
+                if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                    return Ok(LinkInput::Store(format!("https://music.apple.com/album/{digits}")));
+                }
+            }
+        }
+        return Err("Not an Apple Music album URL!".into());
+    }
+    // Spotify: open.spotify.com/[intl-xx/]album/<22-char id>; the ?si= share
+    // code goes with the query. Short share links hide the real address.
+    if host == "open.spotify.com" {
+        let rest: &[&str] = match segs.first() {
+            Some(s) if s.to_ascii_lowercase().starts_with("intl-") => &segs[1..],
+            _ => &segs[..],
+        };
+        if let [kind, id, ..] = rest {
+            if kind.eq_ignore_ascii_case("album") && is_spotify_id(id) {
+                return Ok(LinkInput::Store(format!("https://open.spotify.com/album/{id}")));
+            }
+        }
+        return Err("Not a Spotify album URL!".into());
+    }
+    if host == "spotify.link" || host == "spoti.fi" {
+        return Err("Use the full Spotify album URL!".into());
+    }
     Err(LINK_EXPECTED.to_string())
+}
+
+// A Spotify id: 22 base-62 characters.
+fn is_spotify_id(s: &str) -> bool {
+    s.len() == 22 && s.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn discogs_release_url(id: i64) -> String {
@@ -1965,7 +2012,8 @@ struct LinkState {
 }
 
 // Pure routing: the current state + one parsed input → the new state.
-// Source rules: a Bandcamp link always becomes the source. A catalogue link
+// Source rules: a store link (Bandcamp, Apple Music, Spotify) always becomes
+// the source, replacing whatever was there. A catalogue link
 // fills the source only when it's empty or was itself filled from a catalogue
 // id — a Discogs link wins over a MusicBrainz one; a source the user set
 // (Bandcamp, a store page) is never replaced by one. Clearing removes the id
@@ -1991,7 +2039,7 @@ fn route_link(cur: &LinkState, input: LinkInput) -> LinkState {
             }
             next.musicbrainz_release_id = Some(m);
         }
-        LinkInput::Bandcamp(url) => {
+        LinkInput::Store(url) => {
             next.source = Some(url);
         }
         LinkInput::Clear => {
@@ -13307,13 +13355,24 @@ mod release_link_box {
         );
         assert_eq!(
             parse_link_input("https://nikturnermusic.bandcamp.com/album/xitintoday?from=search#x"),
-            Ok(LinkInput::Bandcamp("https://nikturnermusic.bandcamp.com/album/xitintoday".into()))
+            Ok(LinkInput::Store("https://nikturnermusic.bandcamp.com/album/xitintoday".into()))
         );
         assert_eq!(
             parse_link_input("moatun7.bandcamp.com/track/a-song"),
-            Ok(LinkInput::Bandcamp("https://moatun7.bandcamp.com/track/a-song".into()))
+            Ok(LinkInput::Store("https://moatun7.bandcamp.com/track/a-song".into()))
         );
         assert_eq!(parse_link_input("  "), Ok(LinkInput::Clear));
+        // Apple Music: any country, song pointer dropped, saved country-free.
+        let apple = Ok(LinkInput::Store("https://music.apple.com/album/356347307".into()));
+        assert_eq!(parse_link_input("https://music.apple.com/gb/album/midori-no-okinawa-ep/356347307"), apple);
+        assert_eq!(parse_link_input("https://music.apple.com/tm/album/midori-no-okinawa-ep/356347307?i=356347310"), apple);
+        assert_eq!(parse_link_input("https://music.apple.com/album/356347307"), apple);
+        assert_eq!(parse_link_input("https://itunes.apple.com/gb/album/midori/id356347307?uo=4"), apple);
+        // Spotify: share code and intl prefix dropped; id case kept.
+        let spot = Ok(LinkInput::Store("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy".into()));
+        assert_eq!(parse_link_input("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy?si=Xyz123"), spot);
+        assert_eq!(parse_link_input("https://open.spotify.com/intl-de/album/4aawyAB9vmqN3uQ7FjRGTy"), spot);
+        assert_eq!(parse_link_input("spotify:album:4aawyAB9vmqN3uQ7FjRGTy"), spot);
     }
 
     #[test]
@@ -13325,8 +13384,14 @@ mod release_link_box {
         assert_eq!(err("https://musicbrainz.org/artist/14fcc498-17c7-41b0-aaec-25f14d679bd5"), "Not a MB release URL!");
         assert_eq!(err("https://musicbrainz.org/release/not-a-uuid"), "Not a MB release URL!");
         assert_eq!(err("https://nikturnermusic.bandcamp.com/"), "Not a Bandcamp album/track URL!");
-        assert_eq!(err("https://en.wikipedia.org/wiki/Xitintoday"), "Not a Discogs, MB or Bandcamp URL!");
-        assert_eq!(err("hello"), "Not a Discogs, MB or Bandcamp URL!");
+        assert_eq!(err("https://en.wikipedia.org/wiki/Xitintoday"), "Not a supported release URL!");
+        assert_eq!(err("hello"), "Not a supported release URL!");
+        assert_eq!(err("https://music.apple.com/gb/artist/seijin-noborikawa/356347293"), "Not an Apple Music album URL!");
+        assert_eq!(err("https://music.apple.com/gb/playlist/x/pl.u-abc"), "Not an Apple Music album URL!");
+        assert_eq!(err("https://open.spotify.com/artist/0OdUWJ0sBjDrqHygGUXeCF"), "Not a Spotify album URL!");
+        assert_eq!(err("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"), "Not a Spotify album URL!");
+        assert_eq!(err("spotify:artist:0OdUWJ0sBjDrqHygGUXeCF"), "Not a Spotify album URL!");
+        assert_eq!(err("https://spotify.link/AbCdEf"), "Use the full Spotify album URL!");
     }
 
     fn st(d: Option<i64>, m: Option<&str>, s: Option<&str>) -> LinkState {
@@ -13346,7 +13411,7 @@ mod release_link_box {
         assert_eq!(route_link(&st(None, None, None), LinkInput::MusicBrainz(MB.into())), st(None, Some(MB), Some(&mb)));
         assert_eq!(route_link(&st(Some(5), None, Some(dg)), LinkInput::MusicBrainz(MB.into())), st(Some(5), Some(MB), Some(dg)));
         // Bandcamp always becomes the source and leaves the ids alone.
-        assert_eq!(route_link(&st(Some(5), Some(MB), Some(dg)), LinkInput::Bandcamp(bc.into())), st(Some(5), Some(MB), Some(bc)));
+        assert_eq!(route_link(&st(Some(5), Some(MB), Some(dg)), LinkInput::Store(bc.into())), st(Some(5), Some(MB), Some(bc)));
     }
 
     #[test]
