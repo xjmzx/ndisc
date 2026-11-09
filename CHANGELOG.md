@@ -21,6 +21,20 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Fixed
+- **Discogs shop links no longer pass for Discogs releases.** Discogs' new
+  shop (`newreleases.discogs.com/release/<n>`) numbers its items separately
+  from the Discogs database, so in 0.6.10–0.6.11 pasting a shop link saved an
+  unrelated Discogs id (shop 772398 is a 2026 album; Discogs release 772398 is
+  a 2003 one). Only `www.discogs.com` links now count as Discogs releases.
+
+### Added
+- A Discogs shop link in the link box is saved as the release's source, like a
+  Bandcamp, Apple Music or Spotify link, and colours the source dot as Discogs.
+  A shop link in Source is never replaced or cleared as if ndisc had made it.
+
 ## 0.6.11 — 2026-11-09
 
 ### Added

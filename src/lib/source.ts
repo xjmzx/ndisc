@@ -34,10 +34,11 @@ export const SOURCE_PLATFORMS: SourcePlatform[] = [
   // still win over these defaults.
   { key: "applemusic", label: "Apple Music", domain: "music.apple.com", color: "#fa2d48" },
   { key: "spotify", label: "Spotify", domain: "open.spotify.com", color: "#1db954" },
-  // Physical marketplace — no domain inference: a Discogs catalogue link is a
-  // pairing signal (discogsId), not an acquisition source to auto-tint. Its
-  // muted grey applies only when "Discogs" is the chosen sourceLabel.
-  { key: "discogs", label: "Discogs", color: "#5e5c64" },
+  // Physical marketplace. A Discogs *catalogue* link (www.discogs.com) is a
+  // pairing signal (discogsId), not an acquisition source, so it never tints.
+  // Only Discogs' own shop (newreleases.discogs.com — a purchase) matches by
+  // domain; otherwise the grey applies when "Discogs" is the chosen sourceLabel.
+  { key: "discogs", label: "Discogs", domain: "newreleases.discogs.com", color: "#5e5c64" },
 ];
 
 // Custom Bandcamp storefronts on their own domain (label stores that don't use

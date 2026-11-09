@@ -1771,6 +1771,10 @@ fn parse_discogs_input(raw: &str) -> Result<Option<i64>, String> {
     if t.is_empty() {
         return Ok(None);
     }
+    // A Discogs shop link carries the shop's own numbering, not a release id.
+    if t.to_ascii_lowercase().contains("newreleases.discogs.com") {
+        return Err(format!("not a valid Discogs release id or URL: {t}"));
+    }
     // From a URL, take the run of digits right after "/release/"; otherwise
     // treat the whole string as the id.
     let candidate = if let Some(rest) = t.split("/release/").nth(1) {
@@ -1808,7 +1812,7 @@ fn set_release_discogs_id(
         .map_err(|e| e.to_string())?;
     let source_is_discogs = current_source
         .as_deref()
-        .map(|s| s.contains("discogs.com/release/"))
+        .map(is_discogs_release_url)
         .unwrap_or(false);
     let source_is_empty = current_source
         .as_deref()
@@ -1922,7 +1926,17 @@ fn parse_link_input(raw: &str) -> Result<LinkInput, String> {
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     let on = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
 
-    if on("discogs.com") {
+    // The Discogs shop sells new releases directly; its product numbers are
+    // NOT Discogs release ids, so a shop link is a store link (the source).
+    if host == "newreleases.discogs.com" {
+        if let (Some(kind), Some(id)) = (segs.first(), segs.get(1).and_then(|s| leading_digits(s))) {
+            if kind.eq_ignore_ascii_case("release") {
+                return Ok(LinkInput::Store(format!("https://newreleases.discogs.com/release/{id}")));
+            }
+        }
+        return Err("Not a Discogs shop release URL!".into());
+    }
+    if host == "discogs.com" || host == "www.discogs.com" {
         // Discogs URLs may carry a language prefix (/fr/release/…).
         if let Some(i) = segs.iter().position(|s| s.eq_ignore_ascii_case("release")) {
             if let Some(id) = segs.get(i + 1).and_then(|s| leading_digits(s)) {
@@ -1998,9 +2012,24 @@ fn musicbrainz_release_url(mbid: &str) -> String {
     format!("https://musicbrainz.org/release/{mbid}")
 }
 
+// A Discogs *database* release page (www.discogs.com/release/…). Deliberately
+// host-exact: the Discogs shop (newreleases.discogs.com/release/<n>) uses its
+// own numbering, so a shop link must never read as a catalogue link.
+fn is_discogs_release_url(s: &str) -> bool {
+    let rest = s
+        .trim()
+        .strip_prefix("https://")
+        .or_else(|| s.trim().strip_prefix("http://"))
+        .unwrap_or(s.trim());
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.to_ascii_lowercase();
+    (host == "www.discogs.com" || host == "discogs.com")
+        && path.split('/').any(|seg| seg.eq_ignore_ascii_case("release"))
+}
+
 // A source ndisc filled in itself from a catalogue id (so it may replace it).
 fn is_catalogue_source(s: &str) -> bool {
-    s.contains("discogs.com/release/") || s.contains("musicbrainz.org/release/")
+    is_discogs_release_url(s) || s.contains("musicbrainz.org/release/")
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -2045,7 +2074,7 @@ fn route_link(cur: &LinkState, input: LinkInput) -> LinkState {
         LinkInput::Clear => {
             if cur.discogs_id.is_some() {
                 next.discogs_id = None;
-                if src.contains("discogs.com/release/") {
+                if is_discogs_release_url(src) {
                     next.source = cur.musicbrainz_release_id.as_deref().map(musicbrainz_release_url);
                 }
             } else if cur.musicbrainz_release_id.is_some() {
@@ -13373,6 +13402,11 @@ mod release_link_box {
         assert_eq!(parse_link_input("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy?si=Xyz123"), spot);
         assert_eq!(parse_link_input("https://open.spotify.com/intl-de/album/4aawyAB9vmqN3uQ7FjRGTy"), spot);
         assert_eq!(parse_link_input("spotify:album:4aawyAB9vmqN3uQ7FjRGTy"), spot);
+        // Discogs shop: its own numbering, so a store link, never a release id.
+        assert_eq!(
+            parse_link_input("https://newreleases.discogs.com/release/772392-cracker-greenland?x=1"),
+            Ok(LinkInput::Store("https://newreleases.discogs.com/release/772392".into()))
+        );
     }
 
     #[test]
@@ -13392,6 +13426,8 @@ mod release_link_box {
         assert_eq!(err("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"), "Not a Spotify album URL!");
         assert_eq!(err("spotify:artist:0OdUWJ0sBjDrqHygGUXeCF"), "Not a Spotify album URL!");
         assert_eq!(err("https://spotify.link/AbCdEf"), "Use the full Spotify album URL!");
+        assert_eq!(err("https://newreleases.discogs.com/"), "Not a Discogs shop release URL!");
+        assert_eq!(err("https://blog.discogs.com/release/123"), "Not a supported release URL!");
     }
 
     fn st(d: Option<i64>, m: Option<&str>, s: Option<&str>) -> LinkState {
@@ -13412,6 +13448,18 @@ mod release_link_box {
         assert_eq!(route_link(&st(Some(5), None, Some(dg)), LinkInput::MusicBrainz(MB.into())), st(Some(5), Some(MB), Some(dg)));
         // Bandcamp always becomes the source and leaves the ids alone.
         assert_eq!(route_link(&st(Some(5), Some(MB), Some(dg)), LinkInput::Store(bc.into())), st(Some(5), Some(MB), Some(bc)));
+    }
+
+    #[test]
+    fn a_shop_source_is_never_treated_as_catalogue_made() {
+        let shop = "https://newreleases.discogs.com/release/772392";
+        // Linking a Discogs release keeps the shop link as the source…
+        assert_eq!(route_link(&st(None, None, Some(shop)), LinkInput::Discogs(5)), st(Some(5), None, Some(shop)));
+        // …and clearing the Discogs id leaves it alone.
+        assert_eq!(route_link(&st(Some(5), None, Some(shop)), LinkInput::Clear), st(None, None, Some(shop)));
+        assert!(super::is_discogs_release_url("https://www.discogs.com/release/5"));
+        assert!(super::is_discogs_release_url("https://www.discogs.com/fr/release/5-x"));
+        assert!(!super::is_discogs_release_url(shop));
     }
 
     #[test]
