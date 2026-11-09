@@ -49,7 +49,7 @@ import {
   setCoverArtUrl,
   setReleaseNotes,
   setReleaseCatalogNumber,
-  setReleaseDiscogsId,
+  setReleaseLink,
   setReleaseDiscTotal,
   setReleaseCategory,
   setReleaseCountry,
@@ -663,23 +663,22 @@ export function ReleaseDetail({
     applyEdit({ discTotal: next });
   }
 
-  // Accepts a bare id or a discogs.com/release/… URL (parsed backend-side; an
-  // invalid value rejects and EditableText surfaces it inline). Mirrors the
-  // backend's source-canonicalisation so the optimistic update stays coherent.
-  async function onChangeDiscogsId(v: string | null) {
+  // The one link box: Discogs release → discogs id, MusicBrainz release → MBID,
+  // Bandcamp album/track → source. Sorted backend-side (set_release_link); a
+  // link of any other kind rejects and EditableText shows why inline.
+  async function onChangeLink(v: string | null) {
     if (!release.id) return;
-    const id = await setReleaseDiscogsId(release.id, v ?? "");
-    const sourceIsDiscogs = (release.source ?? "").includes(
-      "discogs.com/release/",
-    );
-    const sourceIsEmpty = (release.source ?? "").trim() === "";
-    let source = release.source ?? null;
-    if (id != null && (sourceIsEmpty || sourceIsDiscogs)) {
-      source = `https://www.discogs.com/release/${id}`;
-    } else if (id == null && sourceIsDiscogs) {
-      source = null;
-    }
-    applyEdit({ discogsId: id, source });
+    const next = await setReleaseLink(release.id, v ?? "");
+    const unchanged =
+      next.discogsId === (release.discogsId ?? null) &&
+      next.musicbrainzReleaseId === (release.musicbrainzReleaseId ?? null) &&
+      next.source === (release.source ?? null);
+    if (unchanged) return; // backend wrote nothing, so nothing goes stale
+    applyEdit({
+      discogsId: next.discogsId,
+      musicbrainzReleaseId: next.musicbrainzReleaseId,
+      source: next.source,
+    });
   }
 
   // Pull track + disc counts from Discogs for just this release (vs the batch
@@ -931,14 +930,20 @@ export function ReleaseDetail({
           placeholder="country"
           width="w-32"
         />
-        {/* Discogs id — editable (bare id or a release URL); paired with a
-            per-release enrich button that pulls track + disc counts. */}
+        {/* Link box — takes a Discogs release, MusicBrainz release or
+            Bandcamp album/track link and files it in the right field (a
+            Bandcamp link becomes the source). Shows the Discogs id, else the
+            MusicBrainz id. Paired with the per-release Discogs enrich. */}
         <div className="inline-flex items-center gap-1.5">
           <EditableText
-            value={release.discogsId != null ? String(release.discogsId) : null}
-            onChange={onChangeDiscogsId}
-            ariaLabel="discogs id"
-            placeholder="discogs id"
+            value={
+              release.discogsId != null
+                ? String(release.discogsId)
+                : (release.musicbrainzReleaseId ?? null)
+            }
+            onChange={onChangeLink}
+            ariaLabel="release link"
+            placeholder="discogs · mb · bandcamp"
             width="w-28"
           />
           {release.discogsId != null && (
@@ -1472,6 +1477,7 @@ function EditableText({
 
   if (editing) {
     return (
+      <>
       <input
         type="text"
         autoFocus
@@ -1485,6 +1491,7 @@ function EditableText({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           if (e.key === "Escape") {
             setDraft(value ?? "");
+            setError(null);
             setEditing(false);
           }
         }}
@@ -1493,6 +1500,10 @@ function EditableText({
                     outline-none border border-accent/50 text-xs
                     placeholder:text-muted/60 disabled:opacity-50`}
       />
+      {error && (
+        <span className="ml-2 text-alert text-[10px]">{error}</span>
+      )}
+      </>
     );
   }
 

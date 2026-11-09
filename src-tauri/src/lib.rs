@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS releases (
     cover_art_path  TEXT,
     discogs_id      INTEGER,
     bandcamp_id     TEXT,           -- Bandcamp order/receipt id (local-only, purchase provenance); repurposed from the dead musicbrainz_id column
+    musicbrainz_release_id TEXT,    -- MusicBrainz release MBID (published as `i` musicbrainz:release:<mbid>)
     added_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -163,6 +164,12 @@ pub struct Release {
     pub cover_art_url: Option<String>,
     pub discogs_id: Option<i64>,
     pub bandcamp_id: Option<String>,
+    // MusicBrainz release MBID (lowercase UUID). Published as a second `i`
+    // tag (`musicbrainz:release:<mbid>`, already allowed by release.v2).
+    // Deliberately not named `musicbrainz_id`: that legacy column held
+    // Bandcamp receipts and is auto-renamed to bandcamp_id on open.
+    #[serde(default)]
+    pub musicbrainz_release_id: Option<String>,
     pub release_type: Option<String>,
     pub category: Option<String>,
     // Acquisition source — the user-assigned category for where/how this
@@ -510,6 +517,7 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     // Release.paired_override. Lets Bandcamp-style dual-nature sources be marked
     // physical per release instead of via one source-wide flag.
     ensure_column(&conn, "releases", "paired_override", "INTEGER")?;
+    ensure_column(&conn, "releases", "musicbrainz_release_id", "TEXT")?;
     // Seed the category for rows we already recognise as Bandcamp (a purchase
     // receipt or a Bandcamp source URL) so their grouping ring reads blue
     // without any manual tagging. Idempotent — only fills rows still unset, so
@@ -1831,6 +1839,217 @@ fn set_release_discogs_id(
     Ok(parsed)
 }
 
+// --- Release link box -------------------------------------------------------
+// One input in the release pane takes any of three kinds of link and routes it
+// to the right field, so the pane needs no extra boxes:
+//   Discogs release      → discogs_id               (`i` discogs:release:<id>)
+//   MusicBrainz release  → musicbrainz_release_id   (`i` musicbrainz:release:<mbid>)
+//   Bandcamp album/track → source                   (`source`)
+// Anything else is rejected with a message saying what was expected, and
+// nothing is written.
+
+#[derive(Debug, PartialEq)]
+enum LinkInput {
+    Clear,
+    Discogs(i64),
+    MusicBrainz(String),
+    Bandcamp(String),
+}
+
+// Kept short: the message sits inline beside the box in the release pane.
+const LINK_EXPECTED: &str = "Not a Discogs, MB or Bandcamp URL!";
+
+// A MusicBrainz id: a UUID, 8-4-4-4-12 hex digits.
+fn is_mbid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+fn leading_digits(s: &str) -> Option<i64> {
+    let d: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    d.parse::<i64>().ok().filter(|&n| n > 0)
+}
+
+fn parse_link_input(raw: &str) -> Result<LinkInput, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Ok(LinkInput::Clear);
+    }
+    // Bare ids and the wire forms.
+    if t.chars().all(|c| c.is_ascii_digit()) {
+        return leading_digits(t)
+            .map(LinkInput::Discogs)
+            .ok_or_else(|| LINK_EXPECTED.to_string());
+    }
+    let lower = t.to_ascii_lowercase();
+    if is_mbid(&lower) {
+        return Ok(LinkInput::MusicBrainz(lower));
+    }
+    if let Some(rest) = lower.strip_prefix("discogs:release:") {
+        if let Some(id) = leading_digits(rest).filter(|_| rest.chars().all(|c| c.is_ascii_digit())) {
+            return Ok(LinkInput::Discogs(id));
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("musicbrainz:release:") {
+        if is_mbid(rest) {
+            return Ok(LinkInput::MusicBrainz(rest.to_string()));
+        }
+    }
+
+    // URLs: split into host + path segments, dropping scheme, query, fragment.
+    let no_scheme = t
+        .strip_prefix("https://")
+        .or_else(|| t.strip_prefix("http://"))
+        .unwrap_or(t);
+    let no_scheme = no_scheme.split(['?', '#']).next().unwrap_or("");
+    let (host, path) = no_scheme.split_once('/').unwrap_or((no_scheme, ""));
+    let host = host.to_ascii_lowercase();
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let on = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
+
+    if on("discogs.com") {
+        // Discogs URLs may carry a language prefix (/fr/release/…).
+        if let Some(i) = segs.iter().position(|s| s.eq_ignore_ascii_case("release")) {
+            if let Some(id) = segs.get(i + 1).and_then(|s| leading_digits(s)) {
+                return Ok(LinkInput::Discogs(id));
+            }
+        }
+        return Err("Not a Discogs release URL!".into());
+    }
+    if on("musicbrainz.org") {
+        match segs.first().map(|s| s.to_ascii_lowercase()).as_deref() {
+            Some("release") => {
+                if let Some(m) = segs.get(1).map(|s| s.to_ascii_lowercase()).filter(|m| is_mbid(m)) {
+                    return Ok(LinkInput::MusicBrainz(m));
+                }
+            }
+            _ => {}
+        }
+        return Err("Not a MB release URL!".into());
+    }
+    if host.ends_with(".bandcamp.com") {
+        if let (Some(kind), Some(slug)) = (segs.first(), segs.get(1)) {
+            let kind = kind.to_ascii_lowercase();
+            if kind == "album" || kind == "track" {
+                return Ok(LinkInput::Bandcamp(format!("https://{host}/{kind}/{slug}")));
+            }
+        }
+        return Err("Not a Bandcamp album/track URL!".into());
+    }
+    Err(LINK_EXPECTED.to_string())
+}
+
+fn discogs_release_url(id: i64) -> String {
+    format!("https://www.discogs.com/release/{id}")
+}
+
+fn musicbrainz_release_url(mbid: &str) -> String {
+    format!("https://musicbrainz.org/release/{mbid}")
+}
+
+// A source ndisc filled in itself from a catalogue id (so it may replace it).
+fn is_catalogue_source(s: &str) -> bool {
+    s.contains("discogs.com/release/") || s.contains("musicbrainz.org/release/")
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkState {
+    discogs_id: Option<i64>,
+    musicbrainz_release_id: Option<String>,
+    source: Option<String>,
+}
+
+// Pure routing: the current state + one parsed input → the new state.
+// Source rules: a Bandcamp link always becomes the source. A catalogue link
+// fills the source only when it's empty or was itself filled from a catalogue
+// id — a Discogs link wins over a MusicBrainz one; a source the user set
+// (Bandcamp, a store page) is never replaced by one. Clearing removes the id
+// the box shows (Discogs first, else MusicBrainz) and any source built from it.
+fn route_link(cur: &LinkState, input: LinkInput) -> LinkState {
+    let mut next = LinkState {
+        discogs_id: cur.discogs_id,
+        musicbrainz_release_id: cur.musicbrainz_release_id.clone(),
+        source: cur.source.clone(),
+    };
+    let src = cur.source.as_deref().map(str::trim).unwrap_or("");
+    let src_empty = src.is_empty();
+    match input {
+        LinkInput::Discogs(id) => {
+            next.discogs_id = Some(id);
+            if src_empty || is_catalogue_source(src) {
+                next.source = Some(discogs_release_url(id));
+            }
+        }
+        LinkInput::MusicBrainz(m) => {
+            if src_empty || src.contains("musicbrainz.org/release/") {
+                next.source = Some(musicbrainz_release_url(&m));
+            }
+            next.musicbrainz_release_id = Some(m);
+        }
+        LinkInput::Bandcamp(url) => {
+            next.source = Some(url);
+        }
+        LinkInput::Clear => {
+            if cur.discogs_id.is_some() {
+                next.discogs_id = None;
+                if src.contains("discogs.com/release/") {
+                    next.source = cur.musicbrainz_release_id.as_deref().map(musicbrainz_release_url);
+                }
+            } else if cur.musicbrainz_release_id.is_some() {
+                next.musicbrainz_release_id = None;
+                if src.contains("musicbrainz.org/release/") {
+                    next.source = None;
+                }
+            }
+        }
+    }
+    next
+}
+
+// Set a release's Discogs / MusicBrainz / Bandcamp link from the one link box.
+// Returns the new state so the pane can update without a reload.
+#[tauri::command]
+fn set_release_link(
+    app: tauri::AppHandle,
+    release_id: i64,
+    value: String,
+) -> Result<LinkState, String> {
+    let input = parse_link_input(&value)?;
+    let conn = open(&app)?;
+    let cur = conn
+        .query_row(
+            "SELECT discogs_id, musicbrainz_release_id, source FROM releases WHERE id = ?1",
+            params![release_id],
+            |r| {
+                Ok(LinkState {
+                    discogs_id: r.get(0)?,
+                    musicbrainz_release_id: r.get(1)?,
+                    source: r.get(2)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let next = route_link(&cur, input);
+    if next != cur {
+        conn.execute(
+            "UPDATE releases
+             SET discogs_id = ?1, musicbrainz_release_id = ?2, source = ?3,
+                 updated_at = strftime('%s','now')
+             WHERE id = ?4",
+            params![next.discogs_id, next.musicbrainz_release_id, next.source, release_id],
+        )
+        .map_err(|e| e.to_string())?;
+        // All three are published (`i` tags + `source`) — mark stale.
+        mark_unpublished(&conn, release_id)?;
+    }
+    Ok(next)
+}
+
 #[tauri::command]
 fn export_markdown(
     app: tauri::AppHandle,
@@ -2140,6 +2359,7 @@ fn row_to_release(row: &rusqlite::Row) -> rusqlite::Result<Release> {
         paired_override: row.get(33)?,
         genre_quaternary: row.get(34)?,
         genre_quinary: row.get(35)?,
+        musicbrainz_release_id: row.get(36)?,
     })
 }
 
@@ -2150,7 +2370,8 @@ const RELEASE_SELECT_COLS: &str =
      release_type, category, genre_primary, genre_secondary, genre_tertiary,
      last_published_at, last_published_naddr, track_count, track_total,
      disc_total, video_count, publish_state, last_published_event_id,
-     source_label, paired_override, genre_quaternary, genre_quinary";
+     source_label, paired_override, genre_quaternary, genre_quinary,
+     musicbrainz_release_id";
 
 #[tauri::command]
 fn list_releases(
@@ -5954,6 +6175,9 @@ fn release_wire_form(r: &Release) -> Result<(Vec<Tag>, String), String> {
     if let Some(d_id) = r.discogs_id {
         push_tag(&mut tags, "i", &format!("discogs:release:{}", d_id))?;
     }
+    if let Some(mb) = r.musicbrainz_release_id.as_deref().filter(|m| is_mbid(m)) {
+        push_tag(&mut tags, "i", &format!("musicbrainz:release:{}", mb))?;
+    }
     // bandcamp_id is intentionally NOT emitted as an `i` tag: the frozen v2
     // schema's `i` namespace is discogs/musicbrainz only, with no Bandcamp slot.
     // The Bandcamp link reaches consumers via the in-contract `source` URL.
@@ -6760,6 +6984,7 @@ async fn merge_releases(
     let release_type = fold_str(&mut folded, &mut wire, "type", true, survivor.release_type, loser.release_type);
     let category = fold_str(&mut folded, &mut wire, "category", true, survivor.category, loser.category);
     let discogs_id = fold_i64(&mut folded, &mut wire, "discogs", true, survivor.discogs_id, loser.discogs_id);
+    let musicbrainz_release_id = fold_str(&mut folded, &mut wire, "musicbrainz", true, survivor.musicbrainz_release_id, loser.musicbrainz_release_id);
     let track_total = fold_i64(&mut folded, &mut wire, "tracks", true, survivor.track_total, loser.track_total);
     let disc_total = fold_i64(&mut folded, &mut wire, "discs", true, survivor.disc_total, loser.disc_total);
     let video_count = fold_i64(&mut folded, &mut wire, "video", true, survivor.video_count, loser.video_count);
@@ -6820,7 +7045,7 @@ async fn merge_releases(
            disc_total = ?15, video_count = ?16, file_path = ?17, bandcamp_id = ?18,
            cover_art_path = ?19, source_label = ?20, track_count = ?21,
            genre_primary = ?22, genre_secondary = ?23, genre_tertiary = ?24,
-           genre_quaternary = ?25, genre_quinary = ?26,
+           genre_quaternary = ?25, genre_quinary = ?26, musicbrainz_release_id = ?27,
            updated_at = strftime('%s','now')
          WHERE id = ?1",
         params![
@@ -6828,6 +7053,7 @@ async fn merge_releases(
             notes, source, cover_art_url, release_type, category, discogs_id,
             track_total, disc_total, video_count, file_path, bandcamp_id,
             cover_art_path, source_label, track_count, gp, gs, gt, gq4, gq5,
+            musicbrainz_release_id,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -10934,6 +11160,7 @@ pub fn run() {
             set_release_paired,
             set_release_catalog_number,
             set_release_discogs_id,
+            set_release_link,
             set_release_disc_total,
             preview_release_tags,
             write_release_tags,
@@ -11198,6 +11425,7 @@ mod schema_v1 {
             cover_art_url: None,
             discogs_id: None,
             bandcamp_id: None,
+            musicbrainz_release_id: None,
             release_type: None,
             category: None,
             genre_primary: None,
@@ -11319,6 +11547,26 @@ mod schema_v1 {
     }
 
     #[test]
+    fn musicbrainz_release_id_emits_a_second_i_tag() {
+        let r = Release {
+            discogs_id: Some(1512644),
+            musicbrainz_release_id: Some("69b0805a-0c4b-4047-8bdb-fb55824f0213".into()),
+            ..base_release()
+        };
+        let ids = i_tags(&release_event(&Keys::generate(), &r).unwrap());
+        assert_eq!(
+            ids,
+            vec![
+                "discogs:release:1512644".to_string(),
+                "musicbrainz:release:69b0805a-0c4b-4047-8bdb-fb55824f0213".to_string(),
+            ]
+        );
+        // A malformed stored value is never emitted.
+        let bad = Release { musicbrainz_release_id: Some("nope".into()), ..base_release() };
+        assert!(i_tags(&release_event(&Keys::generate(), &bad).unwrap()).is_empty());
+    }
+
+    #[test]
     fn source_tag_is_omitted_when_not_an_http_url() {
         let r = Release {
             source: Some("not-a-url".into()),
@@ -11379,6 +11627,7 @@ mod schema_v2 {
             cover_art_url: None,
             discogs_id: None,
             bandcamp_id: None,
+            musicbrainz_release_id: None,
             release_type: None,
             category: None,
             genre_primary: None,
@@ -13035,3 +13284,80 @@ mod enrich_missing_selection {
         assert_eq!(picked(&c), vec![1]);
     }
 }
+
+#[cfg(test)]
+mod release_link_box {
+    use super::{parse_link_input, route_link, LinkInput, LinkState};
+
+    const MB: &str = "69b0805a-0c4b-4047-8bdb-fb55824f0213";
+
+    #[test]
+    fn sorts_the_three_kinds() {
+        assert_eq!(parse_link_input("1512644"), Ok(LinkInput::Discogs(1512644)));
+        assert_eq!(
+            parse_link_input("https://www.discogs.com/release/1512644-Nik-Turners-Sphynx-Xitintoday?redirected=true"),
+            Ok(LinkInput::Discogs(1512644))
+        );
+        assert_eq!(parse_link_input("https://www.discogs.com/fr/release/42"), Ok(LinkInput::Discogs(42)));
+        assert_eq!(parse_link_input("discogs:release:7"), Ok(LinkInput::Discogs(7)));
+        assert_eq!(parse_link_input(MB), Ok(LinkInput::MusicBrainz(MB.into())));
+        assert_eq!(
+            parse_link_input(&format!("https://musicbrainz.org/release/{}", MB.to_uppercase())),
+            Ok(LinkInput::MusicBrainz(MB.into()))
+        );
+        assert_eq!(
+            parse_link_input("https://nikturnermusic.bandcamp.com/album/xitintoday?from=search#x"),
+            Ok(LinkInput::Bandcamp("https://nikturnermusic.bandcamp.com/album/xitintoday".into()))
+        );
+        assert_eq!(
+            parse_link_input("moatun7.bandcamp.com/track/a-song"),
+            Ok(LinkInput::Bandcamp("https://moatun7.bandcamp.com/track/a-song".into()))
+        );
+        assert_eq!(parse_link_input("  "), Ok(LinkInput::Clear));
+    }
+
+    #[test]
+    fn wrong_kinds_explain_themselves() {
+        let err = |s: &str| parse_link_input(s).unwrap_err();
+        assert_eq!(err("https://www.discogs.com/master/1386146"), "Not a Discogs release URL!");
+        assert_eq!(err("https://www.discogs.com/artist/152246"), "Not a Discogs release URL!");
+        assert_eq!(err("https://musicbrainz.org/release-group/ba3fb21f-8c7d-46b9-8f64-5c46b012be9e"), "Not a MB release URL!");
+        assert_eq!(err("https://musicbrainz.org/artist/14fcc498-17c7-41b0-aaec-25f14d679bd5"), "Not a MB release URL!");
+        assert_eq!(err("https://musicbrainz.org/release/not-a-uuid"), "Not a MB release URL!");
+        assert_eq!(err("https://nikturnermusic.bandcamp.com/"), "Not a Bandcamp album/track URL!");
+        assert_eq!(err("https://en.wikipedia.org/wiki/Xitintoday"), "Not a Discogs, MB or Bandcamp URL!");
+        assert_eq!(err("hello"), "Not a Discogs, MB or Bandcamp URL!");
+    }
+
+    fn st(d: Option<i64>, m: Option<&str>, s: Option<&str>) -> LinkState {
+        LinkState { discogs_id: d, musicbrainz_release_id: m.map(Into::into), source: s.map(Into::into) }
+    }
+
+    #[test]
+    fn routes_into_the_right_field() {
+        let bc = "https://x.bandcamp.com/album/y";
+        let dg = "https://www.discogs.com/release/5";
+        let mb = format!("https://musicbrainz.org/release/{MB}");
+        // Discogs fills an empty or catalogue-made source, never a user one.
+        assert_eq!(route_link(&st(None, None, None), LinkInput::Discogs(5)), st(Some(5), None, Some(dg)));
+        assert_eq!(route_link(&st(None, Some(MB), Some(&mb)), LinkInput::Discogs(5)), st(Some(5), Some(MB), Some(dg)));
+        assert_eq!(route_link(&st(None, None, Some(bc)), LinkInput::Discogs(5)), st(Some(5), None, Some(bc)));
+        // MusicBrainz fills only an empty (or MusicBrainz-made) source.
+        assert_eq!(route_link(&st(None, None, None), LinkInput::MusicBrainz(MB.into())), st(None, Some(MB), Some(&mb)));
+        assert_eq!(route_link(&st(Some(5), None, Some(dg)), LinkInput::MusicBrainz(MB.into())), st(Some(5), Some(MB), Some(dg)));
+        // Bandcamp always becomes the source and leaves the ids alone.
+        assert_eq!(route_link(&st(Some(5), Some(MB), Some(dg)), LinkInput::Bandcamp(bc.into())), st(Some(5), Some(MB), Some(bc)));
+    }
+
+    #[test]
+    fn clearing_removes_the_shown_id_and_its_source() {
+        let dg = "https://www.discogs.com/release/5";
+        let mb = format!("https://musicbrainz.org/release/{MB}");
+        let bc = "https://x.bandcamp.com/album/y";
+        assert_eq!(route_link(&st(Some(5), Some(MB), Some(dg)), LinkInput::Clear), st(None, Some(MB), Some(&mb)));
+        assert_eq!(route_link(&st(Some(5), None, Some(dg)), LinkInput::Clear), st(None, None, None));
+        assert_eq!(route_link(&st(None, Some(MB), Some(&mb)), LinkInput::Clear), st(None, None, None));
+        assert_eq!(route_link(&st(Some(5), None, Some(bc)), LinkInput::Clear), st(None, None, Some(bc)));
+    }
+}
+

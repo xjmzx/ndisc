@@ -21,6 +21,29 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.10 — 2026-11-09
+
+### Added
+- **One link box for Discogs, MusicBrainz and Bandcamp.** The release pane's
+  "discogs id" box now takes any of three links and files it in the right place:
+  a Discogs release → Discogs id (as before, with enrich); a MusicBrainz release
+  (or a bare MBID) → a new MusicBrainz release id; a Bandcamp album/track →
+  the release's `source` URL. Nothing new on screen — the box shows the Discogs
+  id, else the MusicBrainz id, and Source shows whichever URL applies. A
+  Bandcamp link always becomes the source; a catalogue link only fills an empty
+  or catalogue-made source. Any other link (a Discogs master, a MusicBrainz
+  release group, an artist page, Wikipedia…) is refused with a short inline
+  note (e.g. "Not a Discogs release URL!"), and nothing is stored.
+- MusicBrainz release ids publish as a second `i` tag,
+  `musicbrainz:release:<mbid>` — already allowed by `release.v2`, so **no
+  contract change**. glmps and nview show it as plain text until they learn to
+  link it. Merges carry the id across.
+
+### Fixed
+- An inline edit that the app refused (e.g. an unrecognised link) now shows its
+  reason while the box is still open; before, the message was hidden until the
+  box closed, so a refused entry looked like it simply hadn't saved.
+
 ## 0.6.9 — 2026-11-09
 
 ### Fixed

@@ -18,6 +18,8 @@ export interface Release {
   coverArtUrl?: string | null;
   discogsId?: number | null;
   bandcampId?: string | null;
+  // MusicBrainz release MBID — published as `i` musicbrainz:release:<mbid>.
+  musicbrainzReleaseId?: string | null;
   releaseType?: string | null;
   category?: string | null;
   // Acquisition source — the user-assigned category for where/how this release
@@ -375,6 +377,24 @@ export async function setReleaseCatalogNumber(
 // Set/clear a release's Discogs id from free text (bare integer or a
 // discogs.com/release/… URL). Returns the parsed id (null when cleared);
 // rejects unparseable input. Also keeps the `source` URL coherent.
+// The release pane's one link box: a Discogs release, a MusicBrainz release or
+// a Bandcamp album/track link (or a bare Discogs id / MBID). The backend sorts
+// it into discogs_id, musicbrainz_release_id or source and returns the new
+// state; anything else rejects with a message saying what was expected.
+// Empty clears the id the box shows (Discogs first, else MusicBrainz).
+export interface ReleaseLinkState {
+  discogsId: number | null;
+  musicbrainzReleaseId: string | null;
+  source: string | null;
+}
+
+export async function setReleaseLink(
+  releaseId: number,
+  value: string,
+): Promise<ReleaseLinkState> {
+  return invoke<ReleaseLinkState>("set_release_link", { releaseId, value });
+}
+
 export async function setReleaseDiscogsId(
   releaseId: number,
   value: string,
