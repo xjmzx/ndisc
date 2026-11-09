@@ -21,6 +21,14 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Added
+- **Copy artist and title.** A small copy button at the right of the release
+  pane's title bar copies `Artist - Title` (as stored, not the uppercase the
+  bar shows) — for pasting into a store or Discogs search. Clicking it doesn't
+  collapse the release.
+
 ## 0.6.10 — 2026-11-09
 
 ### Added

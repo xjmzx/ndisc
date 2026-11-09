@@ -189,6 +189,7 @@ export function ReleaseDetail({
   const [lastPublish, setLastPublish] =
     useState<{ naddr: string; eventId: string } | null>(null);
   const [naddrCopied, setNaddrCopied] = useState(false);
+  const [nameCopied, setNameCopied] = useState(false);
 
   // Reset on release switch. Reseed lastPublish from the DB-persisted naddr
   // when the release has one, so the copy/njump.me buttons stay active across
@@ -206,6 +207,19 @@ export function ReleaseDetail({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [release.id]);
+
+  // Header copy button: "Artist - Title" as stored (not the uppercase the
+  // header shows) — handy for pasting into a store or Discogs search.
+  async function copyName(e: { stopPropagation(): void }) {
+    e.stopPropagation(); // don't toggle collapse
+    try {
+      await navigator.clipboard.writeText(`${release.artist} - ${release.title}`);
+      setNameCopied(true);
+      setTimeout(() => setNameCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function copyNaddr() {
     if (!lastPublish) return;
@@ -739,6 +753,17 @@ export function ReleaseDetail({
         </>
       }
       icon={<FileMusic size={16} />}
+      right={
+        <button
+          type="button"
+          onClick={copyName}
+          title={nameCopied ? "copied" : "Copy artist - title"}
+          aria-label="Copy artist and title"
+          className="flex items-center p-1 rounded text-muted hover:text-accent hover:bg-fg/10 transition-colors"
+        >
+          {nameCopied ? <Check size={14} /> : <Copy size={14} />}
+        </button>
+      }
       collapsed={collapsed}
       onTitleClick={onToggleCollapsed}
     >
