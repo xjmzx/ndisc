@@ -21,7 +21,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
+## 0.6.12 — 2026-11-09
 
 ### Fixed
 - **Discogs shop links no longer pass for Discogs releases.** Discogs' new
