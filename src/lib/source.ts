@@ -28,6 +28,12 @@ export const SOURCE_PLATFORMS: SourcePlatform[] = [
   // CPU's own shop (Bandcamp-backed; sells downloads and vinyl). White reads
   // well on the dark panel and stands apart from the grey of "no source".
   { key: "cpu", label: "CPU Records", domain: "shop.cpurecords.net", color: "#ffffff" },
+  // Streaming/catalogue links (the link box saves these as the source). Not
+  // seeded as digital: a link here is a listing, not a download you own — a
+  // user's own source settings (e.g. an "Apple Music" label marked digital)
+  // still win over these defaults.
+  { key: "applemusic", label: "Apple Music", domain: "music.apple.com", color: "#fa2d48" },
+  { key: "spotify", label: "Spotify", domain: "open.spotify.com", color: "#1db954" },
   // Physical marketplace — no domain inference: a Discogs catalogue link is a
   // pairing signal (discogsId), not an acquisition source to auto-tint. Its
   // muted grey applies only when "Discogs" is the chosen sourceLabel.

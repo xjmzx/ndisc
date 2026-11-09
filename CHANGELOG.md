@@ -21,7 +21,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
+## 0.6.11 — 2026-11-09
 
 ### Added
 - **Copy artist and title.** A small copy button at the right of the release
@@ -34,6 +34,9 @@ wave; an app-only change bumps ndisc alone. See
   reader lands in their own store; Spotify links lose the `?si=` share code.
   Artist, song and playlist pages are refused, as are short share links
   (`spotify.link`), whose real address can't be read.
+- Apple Music (red) and Spotify (green) are now built-in sources, so a link
+  to either colours the source dot by itself. Your own settings for a source
+  of the same name still take precedence.
 
 ## 0.6.10 — 2026-11-09
 
