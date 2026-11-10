@@ -287,13 +287,13 @@ export default function App() {
   const [filterContext, setFilterContext] = useState<FilterContext>({
     query: "",
     medium: null,
-    needsCoverOnly: false,
     publishStateFilter: null,
     labelFilter: null,
     genreFilter: null,
     videoFilter: null,
     coverLinkFilter: null,
     sourceFilter: null,
+    sourceLinkFilter: null,
     count: 0,
     visibleIds: [],
   });

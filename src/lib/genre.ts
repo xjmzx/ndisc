@@ -105,16 +105,16 @@ export const GENRE_COMBINING = [
 // the 2026-11 round). Must match GENRE_SLOT_CAP in src-tauri/src/lib.rs.
 export const GENRE_SLOT_CAP = 5;
 
-// The house ordering rule (mirrors electronic_first in the backend): when
-// `electronic` is present it is the first genre, and the rest keep their
-// order. Takes dense slots, returns dense slots of the same length; nothing is
-// added or dropped.
-export function electronicFirst(slots: (string | null)[]): (string | null)[] {
+// The house ordering rule (mirrors house_genre_order in the backend), in three
+// bands: `electronic` first, then the genres, then the combining forms (dub,
+// acid, post, minimal…), each band keeping its order — `dub, reggae` is saved
+// as `reggae, dub`. Takes dense slots, returns dense slots of the same length;
+// nothing is added or dropped.
+export function houseGenreOrder(slots: (string | null)[]): (string | null)[] {
+  const combining = new Set<string>(GENRE_COMBINING);
+  const band = (g: string) => (g === "electronic" ? 0 : combining.has(g) ? 2 : 1);
   const present = slots.filter((s): s is string => !!s);
-  const ordered = [
-    ...present.filter((g) => g === "electronic"),
-    ...present.filter((g) => g !== "electronic"),
-  ];
+  const ordered = [0, 1, 2].flatMap((b) => present.filter((g) => band(g) === b));
   return slots.map((_, i) => ordered[i] ?? null);
 }
 

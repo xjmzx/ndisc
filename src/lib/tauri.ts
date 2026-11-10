@@ -74,6 +74,9 @@ export type VideoFilter = "with_video" | "without_video";
 // Presence of a published web image link (cover_art_url), distinct from a
 // local cover.jpg (cover_art_path) — "with_link" only counts the web URL.
 export type CoverLinkFilter = "with_link" | "without_link";
+// Presence of the release's published source link (`source`), distinct from
+// the acquisition source name (`sourceLabel`, SourceFilter below).
+export type SourceLinkFilter = "with_source" | "without_source";
 // Acquisition-source filter, by the source you chose (`sourceLabel`):
 // "unset" = no source chosen, for finding the releases still to fill in;
 // "source:<name>" = releases with that source (case-insensitive).
@@ -188,6 +191,7 @@ export async function listReleases(
   videoFilter?: VideoFilter,
   coverLinkFilter?: CoverLinkFilter,
   sourceFilter?: SourceFilter,
+  sourceLinkFilter?: SourceLinkFilter,
 ): Promise<Release[]> {
   return invoke<Release[]>("list_releases", {
     query,
@@ -199,6 +203,7 @@ export async function listReleases(
     videoFilter,
     coverLinkFilter,
     sourceFilter,
+    sourceLinkFilter,
   });
 }
 

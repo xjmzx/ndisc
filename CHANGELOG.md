@@ -21,6 +21,33 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.13 — 2026-11-10
+
+### Added
+- **Apple Music Classical links** (`classical.music.apple.com/<country>/album/<id>`)
+  are accepted in the link box. Classical shares Apple Music's album numbers,
+  so the link is saved in the regular form, `music.apple.com/album/<id>` —
+  it opens for anyone, without the Classical app, and colours the source dot
+  as Apple Music.
+- **Electronic checkbox** at the start of the genre line. Ticking it puts
+  `electronic` first; the slots beside it hold the other genres and no longer
+  offer `electronic`. What's published is unchanged: the same five ordered
+  `genre` tags, electronic first when present.
+- **Source link filter** (link icon): has a source link / no source link /
+  any. Separate from the acquisition-source menu.
+
+### Changed
+- **Genres save in house order: electronic, then genres, then combining
+  forms** (dub, acid, post, minimal…), each band keeping the order you gave
+  it. `dub, reggae` is saved as `reggae, dub`, so the primary genre is a genre
+  whenever there is one. The catalogue was brought into this order, and given
+  the missing Discogs family genres, on 2026-11-10.
+- **One image filter instead of two.** The web-image filter now uses an image
+  icon, struck through for "no web image", and that state shows the inline
+  URL box on each row — the job the separate "without a cover" button did.
+  That button is gone; a local cover.jpg no longer counts, since publishing
+  needs a web link.
+
 ## 0.6.12 — 2026-11-09
 
 ### Fixed

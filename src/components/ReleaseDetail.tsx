@@ -36,7 +36,7 @@ import { Section } from "./Section";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
-import { electronicFirst, genreDisplay, GENRE_ORDER, GENRE_SLOT_CAP } from "../lib/genre";
+import { houseGenreOrder, genreDisplay, GENRE_ORDER, GENRE_SLOT_CAP } from "../lib/genre";
 import {
   clearReleasePath,
   enrichDiscogsRelease,
@@ -112,11 +112,27 @@ function genreOptionsForSlot(
   const excluded = new Set<string>(
     currentSlots.slice(0, slotIndex).filter((s): s is string => !!s),
   );
+  excluded.add("electronic"); // owned by the checkbox
   return GENRE_ORDER.filter((o) => !excluded.has(o)).sort((a, b) =>
     genreDisplay(a).localeCompare(genreDisplay(b), undefined, {
       sensitivity: "base",
     }),
   );
+}
+
+// Splits stored genre slots into the electronic checkbox and the other genres
+// (dense, padded to the slots left once electronic takes one).
+function splitGenres(slots: (string | null)[]): {
+  electronic: boolean;
+  others: (string | null)[];
+} {
+  const electronic = slots.includes("electronic");
+  const rest = slots.filter((s): s is string => !!s && s !== "electronic");
+  const room = GENRE_SLOT_CAP - (electronic ? 1 : 0);
+  return {
+    electronic,
+    others: Array.from({ length: room }, (_, i) => rest[i] ?? null),
+  };
 }
 
 // Placeholder suffixes for the empty genre slots ("+ 2nd", …).
@@ -636,30 +652,41 @@ export function ReleaseDetail({
     onChanged({ ...release, pairedOverride: v });
   }
 
-  // Changes a single genre slot. Clears any later slot that now repeats an
-  // earlier one (pick `dub` in slot 1 when slot 3 was `dub`), then compacts
-  // to keep density (no holes) — clearing a slot shifts the later ones up.
-  // Then `electronic`, if present, moves to the front (the backend applies the
-  // same rule; doing it here too keeps the pickers in step). Writes all five
-  // slots at once via setReleaseGenres.
-  async function onChangeGenreSlot(slot: number, newValue: string | null) {
+  // The genre line is the electronic checkbox plus the other genres. Saving
+  // applies the house order — electronic, then genres, then combining forms —
+  // which the backend applies too. Writes all five slots at
+  // once via setReleaseGenres.
+  async function saveGenres(electronic: boolean, others: (string | null)[]) {
     if (!release.id) return;
-    const slots = genreSlots(release);
-    slots[slot] = newValue;
-    for (let i = slot + 1; i < GENRE_SLOT_CAP; i++) {
-      if (slots[i]) {
-        const allowed = new Set(genreOptionsForSlot(i, slots));
-        if (!allowed.has(slots[i] as string)) slots[i] = null;
-      }
-    }
-    const present = slots.filter((s): s is string => !!s);
-    const dense = electronicFirst(
+    const present = [
+      ...(electronic ? ["electronic"] : []),
+      ...others.filter((s): s is string => !!s && s !== "electronic"),
+    ];
+    const dense = houseGenreOrder(
       GENRE_SLOT_FIELDS.map((_, i) => present[i] ?? null),
     );
     await setReleaseGenres(release.id, dense);
     applyEdit(
       Object.fromEntries(GENRE_SLOT_FIELDS.map((f, i) => [f, dense[i]])),
     );
+  }
+
+  // Changes one of the other-genre slots. Clears any later slot that now
+  // repeats an earlier one (pick `dub` in slot 1 when slot 3 was `dub`); the
+  // save compacts, so clearing a slot shifts the later ones up.
+  async function onChangeGenreSlot(slot: number, newValue: string | null) {
+    const { electronic, others } = splitGenres(genreSlots(release));
+    others[slot] = newValue;
+    for (let i = slot + 1; i < others.length; i++) {
+      if (others[i] && !genreOptionsForSlot(i, others).includes(others[i] as string)) {
+        others[i] = null;
+      }
+    }
+    await saveGenres(electronic, others);
+  }
+
+  async function onToggleElectronic(on: boolean) {
+    await saveGenres(on, splitGenres(genreSlots(release)).others);
   }
 
   async function onChangeCatalogNumber(v: string | null) {
@@ -1039,22 +1066,44 @@ export function ReleaseDetail({
           )}
         </div>
         {(() => {
-          const slots = genreSlots(release);
+          const { electronic, others } = splitGenres(genreSlots(release));
+          // Ticking is refused only when five other genres already fill
+          // every slot (the cap is five including electronic).
+          const full = !electronic && others.every(Boolean);
           // Progressive disclosure — each slot appears once the one before it
           // is set, so an untagged release shows one picker and a full one
-          // five. Grouped so the slots wrap together, not between other fields.
+          // all of them. Grouped so the line wraps together.
           return (
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              {slots.map((value, i) =>
-                i === 0 || slots[i - 1] ? (
+              <label
+                title={
+                  full
+                    ? "All five genre slots are taken — clear one to add electronic"
+                    : "Electronic — published as the first genre"
+                }
+                className={
+                  "h-6 inline-flex items-center gap-1.5 px-1.5 text-[11px] " +
+                  "text-fg/80 select-none whitespace-nowrap " +
+                  (full ? "opacity-50 pointer-events-none" : "cursor-pointer")
+                }
+              >
+                <TickBox
+                  checked={electronic}
+                  onChange={onToggleElectronic}
+                  ariaLabel="electronic"
+                />
+                electronic
+              </label>
+              {others.map((value, i) =>
+                i === 0 || others[i - 1] ? (
                   <EditableEnum
                     key={i}
                     value={value}
-                    options={genreOptionsForSlot(i, slots)}
+                    options={genreOptionsForSlot(i, others)}
                     onChange={(v) => onChangeGenreSlot(i, v)}
                     ariaLabel={`genre ${i + 1}`}
                     displayFn={genreDisplay}
-                    placeholder={i === 0 ? "genre" : `+ ${ORDINALS[i]}`}
+                    placeholder={i === 0 ? "genre" : `+ ${ORDINALS[i + (electronic ? 1 : 0)]}`}
                     width={i === 0 ? "w-28" : "w-24"}
                   />
                 ) : null,

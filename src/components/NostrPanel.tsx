@@ -69,13 +69,13 @@ function isFilterActive(f: FilterContext): boolean {
   return (
     f.query.trim() !== "" ||
     f.medium !== null ||
-    f.needsCoverOnly ||
     f.publishStateFilter !== null ||
     f.labelFilter !== null ||
     f.genreFilter !== null ||
     f.videoFilter !== null ||
     f.coverLinkFilter !== null ||
-    f.sourceFilter !== null
+    f.sourceFilter !== null ||
+    f.sourceLinkFilter !== null
   );
 }
 
@@ -95,7 +95,8 @@ function describeFilter(f: FilterContext): string {
   if (f.sourceFilter?.startsWith("source:"))
     parts.push(`source ${f.sourceFilter.slice("source:".length)}`);
   if (f.sourceFilter === "unset") parts.push("no source set");
-  if (f.needsCoverOnly) parts.push("no cover");
+  if (f.sourceLinkFilter === "with_source") parts.push("has source link");
+  if (f.sourceLinkFilter === "without_source") parts.push("no source link");
   if (f.query.trim()) parts.push(`search "${f.query.trim()}"`);
   return parts.join(", ");
 }

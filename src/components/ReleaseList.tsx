@@ -13,9 +13,11 @@ import {
   FolderSync,
   FolderX,
   ImageDown,
+  Image as ImageIcon,
   ImageOff,
   ImageUp,
   Link2,
+  Link2Off,
   Music,
   ShoppingBag,
   MoreVertical,
@@ -68,6 +70,7 @@ import {
   type ExtractSummary,
   type ImportProgress,
   type CoverLinkFilter,
+  type SourceLinkFilter,
   type SourceFilter,
   type GenreFilter,
   type LabelFilter,
@@ -124,13 +127,13 @@ import { cn } from "../lib/cn";
 export interface FilterContext {
   query: string;
   medium: "physical" | "digital" | null;
-  needsCoverOnly: boolean;
   publishStateFilter: PublishState | null;
   labelFilter: LabelFilter | null;
   genreFilter: GenreFilter | null;
   videoFilter: VideoFilter | null;
   coverLinkFilter: CoverLinkFilter | null;
   sourceFilter: SourceFilter | null;
+  sourceLinkFilter: SourceLinkFilter | null;
   count: number;
   visibleIds: number[];
 }
@@ -177,7 +180,6 @@ export function ReleaseList({
 }: Props) {
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
-  const [needsCoverOnly, setNeedsCoverOnly] = useState(false);
   const [publishStateFilter, setPublishStateFilter] =
     useState<"" | PublishState>("");
   const [labelFilter, setLabelFilter] = useState<"" | LabelFilter>("");
@@ -187,6 +189,12 @@ export function ReleaseList({
   const [coverLinkFilter, setCoverLinkFilter] = useState<"" | CoverLinkFilter>(
     "",
   );
+  // "No web image" doubles as the cover-fixing mode: each row gets an inline
+  // URL box. A local cover.jpg doesn't count — publishing needs a web link.
+  const needsCoverOnly = coverLinkFilter === "without_link";
+  const [sourceLinkFilter, setSourceLinkFilter] = useState<
+    "" | SourceLinkFilter
+  >("");
   const [items, setItems] = useState<Release[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1174,13 +1182,14 @@ export function ReleaseList({
       const list = await listReleases(
         query,
         medium || undefined,
-        needsCoverOnly ? true : undefined,
+        undefined, // needsCover — superseded by the web-image filter
         publishStateFilter || undefined,
         labelFilter || undefined,
         genreFilter || undefined,
         videoFilter || undefined,
         coverLinkFilter || undefined,
         sourceFilter || undefined,
+        sourceLinkFilter || undefined,
       );
       setItems(list);
     } catch (e) {
@@ -1193,7 +1202,7 @@ export function ReleaseList({
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, medium, needsCoverOnly, publishStateFilter, labelFilter, genreFilter, videoFilter, coverLinkFilter, sourceFilter]);
+  }, [reloadKey, medium, publishStateFilter, labelFilter, genreFilter, videoFilter, coverLinkFilter, sourceFilter, sourceLinkFilter]);
 
   // Suspect-duplicate group count for the toolbar badge (non-dismissed only).
   // Cheap read; refreshed on the same beat as the list.
@@ -1237,13 +1246,13 @@ export function ReleaseList({
     onFilterChange({
       query,
       medium: medium === "" ? null : medium,
-      needsCoverOnly,
       publishStateFilter: publishStateFilter === "" ? null : publishStateFilter,
       labelFilter: labelFilter === "" ? null : labelFilter,
       genreFilter: genreFilter === "" ? null : genreFilter,
       videoFilter: videoFilter === "" ? null : videoFilter,
       coverLinkFilter: coverLinkFilter === "" ? null : coverLinkFilter,
       sourceFilter: sourceFilter === "" ? null : sourceFilter,
+      sourceLinkFilter: sourceLinkFilter === "" ? null : sourceLinkFilter,
       count: items.length,
       visibleIds,
     });
@@ -1251,18 +1260,18 @@ export function ReleaseList({
   }, [
     query,
     medium,
-    needsCoverOnly,
     publishStateFilter,
     labelFilter,
     genreFilter,
     videoFilter,
     coverLinkFilter,
     sourceFilter,
+    sourceLinkFilter,
     visibleIdsKey,
     onFilterChange,
   ]);
 
-  // When the no-cover filter is turned on, autofocus the first row's URL
+  // When the no-web-image filter is turned on, autofocus the first row's URL
   // input once the list has loaded.
   useEffect(() => {
     if (needsCoverOnly) {
@@ -1317,7 +1326,7 @@ export function ReleaseList({
             </>
           )}
           {needsCoverOnly && (
-            <span className="ml-1 text-warn">· no cover</span>
+            <span className="ml-1 text-warn">· no web image</span>
           )}
         </span>
       }
@@ -1391,32 +1400,28 @@ export function ReleaseList({
           tooltipOutlined="Video: audio-only (click to clear)"
         />
         <FilterToggle
-          Icon={Link2}
+          Icon={ImageIcon}
+          OutlinedIcon={ImageOff}
+          noFill
           value={coverLinkFilter}
           onChange={(v) => setCoverLinkFilter(v as "" | CoverLinkFilter)}
           filledValue="with_link"
           outlinedValue="without_link"
           tooltipDefault="Filter by web image link — click cycles has link / no link / any"
           tooltipFilled="Web image: has link (click for no link)"
-          tooltipOutlined="Web image: no link (click to clear)"
+          tooltipOutlined="Web image: no link — paste a URL on each row (click to clear)"
         />
-        <button
-          onClick={() => setNeedsCoverOnly((v) => !v)}
-          className={cn(
-            "p-2 rounded-md text-fg",
-            needsCoverOnly
-              ? "bg-accent text-bg"
-              : "bg-surface hover:bg-surfaceHover",
-          )}
-          title={
-            needsCoverOnly
-              ? "Showing only releases without a cover (click to clear)"
-              : "Show only releases without a cover"
-          }
-          aria-pressed={needsCoverOnly}
-        >
-          <ImageOff size={14} />
-        </button>
+        <FilterToggle
+          Icon={Link2}
+          OutlinedIcon={Link2Off}
+          value={sourceLinkFilter}
+          onChange={(v) => setSourceLinkFilter(v as "" | SourceLinkFilter)}
+          filledValue="with_source"
+          outlinedValue="without_source"
+          tooltipDefault="Filter by source link — click cycles has link / no link / any"
+          tooltipFilled="Source: has link (click for no link)"
+          tooltipOutlined="Source: no link (click to clear)"
+        />
         {dupCount > 0 && (
           <button
             onClick={() => setDupOpen(true)}
@@ -2392,7 +2397,7 @@ export function ReleaseList({
         {items.length === 0 && !loading && !error && (
           <li className="px-3 py-3 text-muted text-xs">
             {needsCoverOnly
-              ? "All releases in this view have cover art."
+              ? "All releases in this view have a web image link."
               : "Empty library — add your first release on the right."}
           </li>
         )}
@@ -2704,6 +2709,11 @@ export function ReleaseList({
 // needsCover and maintenance icon buttons so the whole row reads uniform.
 interface FilterToggleProps {
   Icon: LucideIcon;
+  // Icon for the outlined ("without") state, e.g. ImageOff; defaults to Icon.
+  OutlinedIcon?: LucideIcon;
+  // Skip the solid fill in the filled state (an image glyph filled solid
+  // loses its picture).
+  noFill?: boolean;
   value: string;
   onChange: (v: string) => void;
   filledValue: string;
@@ -2759,6 +2769,8 @@ function StateDot({
 
 function FilterToggle({
   Icon,
+  OutlinedIcon,
+  noFill,
   value,
   onChange,
   filledValue,
@@ -2811,10 +2823,11 @@ function FilterToggle({
             : undefined
       }
     >
-      <Icon
-        size={14}
-        fill={state === "filled" ? "currentColor" : "none"}
-      />
+      {state === "outlined" && OutlinedIcon ? (
+        <OutlinedIcon size={14} />
+      ) : (
+        <Icon size={14} fill={state === "filled" && !noFill ? "currentColor" : "none"} />
+      )}
     </button>
   );
 }

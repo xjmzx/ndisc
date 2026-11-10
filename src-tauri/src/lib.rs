@@ -1198,7 +1198,7 @@ fn restore_release(app: tauri::AppHandle, release: Release) -> Result<i64, Strin
 fn add_release(app: tauri::AppHandle, release: Release) -> Result<i64, String> {
     // Same ordering rule as set_release_genres, so a release added with genres
     // starts out in house order.
-    let g = electronic_first(vec![
+    let g = house_genre_order(vec![
         release.genre_primary.clone(),
         release.genre_secondary.clone(),
         release.genre_tertiary.clone(),
@@ -1605,30 +1605,35 @@ fn validate_genre_slots(slots: &[Option<String>]) -> Result<(), String> {
     Ok(())
 }
 
-/// The house ordering rule: when `electronic` is present it is the first
-/// genre, and the rest keep the order they were given. `electronic` marks the
-/// electronic/dance family, so every other slug on the release reads as its
-/// own genre or as secondary to it. Takes dense slots and returns dense slots
-/// of the same length; nothing is added or dropped, so it can't overflow the
-/// cap. This is ndisc's convention as the emitter — release.v2 itself allows
-/// any order.
-fn electronic_first(slots: Vec<Option<String>>) -> Vec<Option<String>> {
+/// The house ordering rule, in three bands: `electronic` first, then the
+/// genres, then the combining forms (dub, acid, post, minimal…), each band
+/// keeping the order it was given. So `dub, reggae` is stored `reggae, dub`
+/// and `acid, house, electronic` as `electronic, house, acid`: the primary
+/// slot always names a genre when there is one, and the modifiers follow.
+/// Takes dense slots and returns dense slots of the same length; nothing is
+/// added or dropped, so it can't overflow the cap. This is ndisc's convention
+/// as the emitter — release.v2 itself allows any order.
+fn house_genre_order(slots: Vec<Option<String>>) -> Vec<Option<String>> {
     let len = slots.len();
     let present: Vec<String> = slots.into_iter().flatten().collect();
-    let mut ordered: Vec<String> = present
-        .iter()
-        .filter(|g| g.as_str() == "electronic")
-        .cloned()
-        .collect();
-    ordered.extend(present.into_iter().filter(|g| g.as_str() != "electronic"));
+    let band = |g: &str| {
+        if g == "electronic" {
+            0
+        } else if GENRE_COMBINING.contains(&g) {
+            2
+        } else {
+            1
+        }
+    };
+    let mut ordered = present;
+    ordered.sort_by_key(|g| band(g)); // stable: order within a band is kept
     let mut out: Vec<Option<String>> = ordered.into_iter().map(Some).collect();
     out.resize(len.max(out.len()), None);
     out
 }
 
 /// Ordered genre slots, primary first. Up to GENRE_SLOT_CAP; missing trailing
-/// entries are empty slots. `electronic`, when present, is moved first
-/// (see electronic_first).
+/// entries are empty slots. Saved in house order (see house_genre_order).
 #[tauri::command]
 fn set_release_genres(
     app: tauri::AppHandle,
@@ -1637,7 +1642,7 @@ fn set_release_genres(
 ) -> Result<(), String> {
     let slots: Vec<Option<String>> = genres.into_iter().map(normalize_field).collect();
     validate_genre_slots(&slots)?;
-    let mut slots = electronic_first(slots);
+    let mut slots = house_genre_order(slots);
     slots.resize(GENRE_SLOT_CAP, None);
     let conn = open(&app)?;
     conn.execute(
@@ -1967,8 +1972,9 @@ fn parse_link_input(raw: &str) -> Result<LinkInput, String> {
     }
     // Apple Music: …/<country>/album/<name>/<id>. Saved without the country so
     // every reader lands in their own store (Apple redirects). The old iTunes
-    // form ends in id<digits>.
-    if host == "music.apple.com" || host == "itunes.apple.com" {
+    // form ends in id<digits>. Apple Music Classical shares the same album
+    // numbers, so its links are saved in the regular (universal) form too.
+    if host == "music.apple.com" || host == "itunes.apple.com" || host == "classical.music.apple.com" {
         if let Some(i) = segs.iter().position(|s| s.eq_ignore_ascii_case("album")) {
             if let Some(last) = segs.get(i + 1..).and_then(|r| r.last()) {
                 let digits = last.strip_prefix("id").unwrap_or(last);
@@ -2148,6 +2154,7 @@ fn export_markdown(
         None, // video_filter — export is not video-scoped
         None, // cover_link_filter — export is not cover-link-scoped
         None, // source_filter — export is not source-scoped
+        None, // source_link_filter — export is not source-link-scoped
     )?;
     let md = build_markdown(&releases);
     std::fs::write(&dest_path, md).map_err(|e| e.to_string())?;
@@ -2462,6 +2469,7 @@ fn list_releases(
     video_filter: Option<String>,
     cover_link_filter: Option<String>,
     source_filter: Option<String>,
+    source_link_filter: Option<String>,
 ) -> Result<Vec<Release>, String> {
     let conn = open(&app)?;
     let q = query.unwrap_or_default();
@@ -2516,6 +2524,14 @@ fn list_releases(
         _ => "",
     };
 
+    // Published source link presence (`source`, the release's URL) — distinct
+    // from the acquisition source name below.
+    let source_link_clause = match source_link_filter.as_deref() {
+        Some("with_source") => "AND source IS NOT NULL AND source <> ''",
+        Some("without_source") => "AND (source IS NULL OR source = '')",
+        _ => "",
+    };
+
     // Acquisition source, by the source you chose (source_label):
     //   "unset"        → no source chosen;
     //   "source:<name>" → that source (case-insensitive), bound as ?4 so any
@@ -2544,6 +2560,7 @@ fn list_releases(
            {genre}
            {video}
            {cover_link}
+           {source_link}
            {source}
          ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
         cols = RELEASE_SELECT_COLS,
@@ -2553,6 +2570,7 @@ fn list_releases(
         genre = genre_clause,
         video = video_clause,
         cover_link = cover_link_clause,
+        source_link = source_link_clause,
         source = source_clause,
     );
     let mut stmt = conn
@@ -11995,30 +12013,45 @@ mod schema_v2 {
     }
 
     #[test]
-    fn electronic_first_moves_electronic_to_the_front() {
+    fn house_order_is_electronic_then_genres_then_combining() {
         let s = |v: &[&str]| -> Vec<Option<String>> {
             v.iter().map(|x| if x.is_empty() { None } else { Some(x.to_string()) }).collect()
         };
         // Moved to the front; the rest keep their order; length kept.
         assert_eq!(
-            electronic_first(s(&["downtempo", "dub", "electronic", "", ""])),
+            house_genre_order(s(&["downtempo", "dub", "electronic", "", ""])),
             s(&["electronic", "downtempo", "dub", "", ""])
         );
         // Already first, absent, or empty: unchanged.
         assert_eq!(
-            electronic_first(s(&["electronic", "techno"])),
+            house_genre_order(s(&["electronic", "techno"])),
             s(&["electronic", "techno"])
         );
         assert_eq!(
-            electronic_first(s(&["hip-hop", "turntablism", ""])),
+            house_genre_order(s(&["hip-hop", "turntablism", ""])),
             s(&["hip-hop", "turntablism", ""])
         );
-        assert_eq!(electronic_first(s(&["", ""])), s(&["", ""]));
+        assert_eq!(house_genre_order(s(&["", ""])), s(&["", ""]));
         // A full set of five: reordered, nothing dropped.
         assert_eq!(
-            electronic_first(s(&["jazz", "funk", "soul", "dub", "electronic"])),
+            house_genre_order(s(&["jazz", "funk", "soul", "dub", "electronic"])),
             s(&["electronic", "jazz", "funk", "soul", "dub"])
         );
+        // Combining forms go after the genres, each band keeping its order.
+        assert_eq!(
+            house_genre_order(s(&["dub", "reggae"])),
+            s(&["reggae", "dub"])
+        );
+        assert_eq!(
+            house_genre_order(s(&["minimal", "acid", "electronic", "techno", "house"])),
+            s(&["electronic", "techno", "house", "minimal", "acid"])
+        );
+        assert_eq!(
+            house_genre_order(s(&["contemporary", "classical", "minimal", ""])),
+            s(&["classical", "contemporary", "minimal", ""])
+        );
+        // Only combining forms: unchanged.
+        assert_eq!(house_genre_order(s(&["dub", "abstract"])), s(&["dub", "abstract"]));
     }
 
     #[test]
@@ -13397,6 +13430,10 @@ mod release_link_box {
         assert_eq!(parse_link_input("https://music.apple.com/tm/album/midori-no-okinawa-ep/356347307?i=356347310"), apple);
         assert_eq!(parse_link_input("https://music.apple.com/album/356347307"), apple);
         assert_eq!(parse_link_input("https://itunes.apple.com/gb/album/midori/id356347307?uo=4"), apple);
+        assert_eq!(
+            parse_link_input("https://classical.music.apple.com/in/album/978526152"),
+            Ok(LinkInput::Store("https://music.apple.com/album/978526152".into()))
+        );
         // Spotify: share code and intl prefix dropped; id case kept.
         let spot = Ok(LinkInput::Store("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy".into()));
         assert_eq!(parse_link_input("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy?si=Xyz123"), spot);
