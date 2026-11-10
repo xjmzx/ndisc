@@ -21,7 +21,7 @@ import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 
 // Minimal full-screen tabular view for batch-editing release metadata. Dense,
 // functional, no cover art / colours / badges — density over decoration. Only
-// the two fields with per-row setters today (label, comment=notes) are inline
+// the fields with per-row setters today (label, source, notes) are inline
 // editable; artist/album/year are read-only here (edit them in the detail
 // panel until they grow setters). Sorting is client-side over the full list.
 
@@ -37,10 +37,12 @@ type SortKey =
   | "notes"
   | "year";
 type SortDir = "asc" | "desc";
+// Fields the selection bar can set on every ticked row at once.
+type BulkField = "sourceLabel" | "label" | "notes";
 
 interface Column {
   key: SortKey;
-  // Header label — "album" maps to title, "comment" to notes, per the spec.
+  // Header label — "album" maps to title, notes keeps its own name (the field is published).
   label: string;
   get: (r: Release) => string | number | null | undefined;
   editable: boolean;
@@ -53,7 +55,7 @@ const COLUMNS: Column[] = [
   { key: "title", label: "album", get: (r) => r.title, editable: false },
   { key: "label", label: "label", get: (r) => r.label, editable: true },
   { key: "sourceLabel", label: "source", get: (r) => r.sourceLabel, editable: true },
-  { key: "notes", label: "comment", get: (r) => r.notes, editable: true },
+  { key: "notes", label: "notes", get: (r) => r.notes, editable: true },
   { key: "year", label: "year", get: (r) => r.year, editable: false, numeric: true },
 ];
 
@@ -291,18 +293,19 @@ export function BatchEditView({
   }, [selected.size]);
 
   // Apply one value to every ticked release, one at a time. Source is
-  // local-only (no republish); label is published data, so those rows join
-  // the republish queue. An empty value clears the field.
-  async function applyToSelected(field: "sourceLabel" | "label", raw: string) {
+  // local-only (no republish); label and notes are published data, so those
+  // rows join the republish queue. An empty value clears the field.
+  async function applyToSelected(field: BulkField, raw: string) {
     const value = raw.trim() === "" ? null : raw.trim();
     const ids = sorted.flatMap((r) => (r.id != null && selected.has(r.id) ? [r.id] : []));
-    // A label is published data, so changing many at once asks first.
-    if (field === "label") {
+    // Label and notes are published data, so changing many at once asks first.
+    if (field !== "sourceLabel") {
+      const what = field === "label" ? "label" : "notes";
       const ok = await ask(
         value
-          ? `Set the label to "${value}" on ${ids.length} releases? They'll need republishing.`
-          : `Clear the label on ${ids.length} releases? They'll need republishing.`,
-        { title: "Set label", kind: "warning" },
+          ? `Set the ${what} to "${value}" on ${ids.length} releases? They'll need republishing.`
+          : `Clear the ${what} on ${ids.length} releases? They'll need republishing.`,
+        { title: `Set ${what}`, kind: "warning" },
       );
       if (!ok) return;
     }
@@ -313,8 +316,14 @@ export function BatchEditView({
         await setReleaseSource(id, value);
         patchRow(id, { sourceLabel: value });
       } else {
-        await setReleaseLabel(id, value);
-        patchRow(id, { label: value, lastPublishedAt: null, lastPublishedNaddr: null });
+        if (field === "label") {
+          await setReleaseLabel(id, value);
+          patchRow(id, { label: value });
+        } else {
+          await setReleaseNotes(id, value);
+          patchRow(id, { notes: value });
+        }
+        patchRow(id, { lastPublishedAt: null, lastPublishedNaddr: null });
         setEditedIds((s) => new Set(s).add(id));
       }
       touch(id);
@@ -686,11 +695,12 @@ function SelectionBar({
 }: {
   count: number;
   applying: string | null;
-  onApply: (field: "sourceLabel" | "label", value: string) => Promise<void>;
+  onApply: (field: BulkField, value: string) => Promise<void>;
   onClear: () => void;
 }) {
   const [source, setSource] = useState("");
   const [label, setLabel] = useState("");
+  const [notes, setNotes] = useState("");
   const busy = applying != null;
   const field = (
     value: string,
@@ -731,6 +741,7 @@ function SelectionBar({
       </span>
       {field(source, setSource, "source…", "batch-source-names", () => void onApply("sourceLabel", source), "Set source")}
       {field(label, setLabel, "label…", undefined, () => void onApply("label", label), "Set label")}
+      {field(notes, setNotes, "notes…", undefined, () => void onApply("notes", notes), "Set notes")}
       <button
         type="button"
         onClick={onClear}

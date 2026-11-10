@@ -21,6 +21,14 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.14 — 2026-11-10
+
+### Added
+- Batch edit: set or clear the notes on every ticked row at once, beside the existing source and label fields. Like label, it asks first and queues the rows for republishing.
+
+### Changed
+- Batch edit: the "comment" column is now called "notes". It always was the release notes, which are published as the event's content; the name suggested the files' own COMMENT tag.
+
 ## 0.6.13 — 2026-11-10
 
 ### Added
