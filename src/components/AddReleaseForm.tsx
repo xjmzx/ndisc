@@ -148,7 +148,7 @@ export function AddReleaseForm({
           label="source url"
           value={release.source ?? ""}
           onChange={(v) => set("source", v)}
-          placeholder="https://www.discogs.com/master/… or https://user.bandcamp.com/album/…"
+          placeholder="https://www.discogs.com/release/… or https://user.bandcamp.com/album/…"
         />
         {/* cover url + Save on ONE row: the Save button tucks up beside the last
             field as an icon-only disk (no label, slightly smaller), so the form

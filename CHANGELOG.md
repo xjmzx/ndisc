@@ -21,6 +21,15 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.15 — 2026-11-12
+
+### Added
+- Ignored folders: a Trash button on each folder still on disk moves it to the system Trash. The folder stays on the list, marked trashed, so a restored copy isn't imported; Un-ignore is the override. Refused for anything outside the library root or holding a release's folder.
+- Ignored folders: "clear N not on disk" drops the rows whose folder is gone. Trashed folders are kept.
+
+### Fixed
+- Add Release: the source-URL example now shows a Discogs release link instead of a master link. ndisc links to the edition you own, and the link box rejects master links.
+
 ## 0.6.14 — 2026-11-10
 
 ### Added

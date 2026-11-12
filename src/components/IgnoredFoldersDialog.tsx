@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderX, Loader2, Undo2, X } from "lucide-react";
+import { FolderX, Loader2, Trash2, Undo2, X } from "lucide-react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
+  clearMissingIgnoredFolders,
   forgetMergedPath,
   listMergedPaths,
+  trashIgnoredFolder,
   type MergedPath,
 } from "../lib/tauri";
 
 // Folders a rescan is told to skip (the `merged_paths` table): releases deleted
 // with "keep files, don't re-import", and the losing copies of resolved
 // duplicates. Un-ignoring drops the row; the next rescan imports the folder.
+// Trash moves a folder still on disk to the OS Trash and keeps the row, marked
+// trashed, so a restored copy stays out until it is un-ignored. "Clear not on
+// disk" drops rows whose folder is gone — except trashed ones, for that reason.
 //
 // Rows whose folder is on disk with audio are the ones a rescan is hiding right
 // now — a re-rip into an old path lands here silently — so they sort first.
@@ -27,6 +33,8 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   const hiddenCount = rows?.filter((r) => r.hasAudio).length ?? 0;
+  const missingCount = rows?.filter((r) => !r.exists && !r.trashed).length ?? 0;
+  const [cleared, setCleared] = useState<number | null>(null);
 
   const shown = useMemo(() => {
     if (!rows) return [];
@@ -51,6 +59,54 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
       await forgetMergedPath(path);
       setRows((prev) => prev?.filter((r) => r.path !== path) ?? null);
       setFreed((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function trashFolder(path: string) {
+    const ok = await ask(
+      `Move this folder and everything in it to the Trash?\n\n${path}\n\n` +
+        "It stays on the ignore list, marked trashed, so a rescan won't import " +
+        "it if it's restored. Un-ignore it later to allow that.",
+      { title: "Trash ignored folder", kind: "warning" },
+    );
+    if (!ok) return;
+    setBusy(path);
+    setError(null);
+    try {
+      await trashIgnoredFolder(path);
+      setRows(
+        (prev) =>
+          prev?.map((r) =>
+            r.path === path
+              ? { ...r, trashed: true, exists: false, hasAudio: false }
+              : r,
+          ) ?? null,
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearMissing() {
+    const ok = await ask(
+      `Drop ${missingCount} ignored folder${missingCount === 1 ? "" : "s"} that ` +
+        "no longer exist on disk? If one comes back at the same path, a rescan " +
+        "will import it. Trashed folders are kept.",
+      { title: "Clear folders not on disk", kind: "warning" },
+    );
+    if (!ok) return;
+    setBusy("__clear__");
+    setError(null);
+    try {
+      const n = await clearMissingIgnoredFolders();
+      setCleared(n);
+      setRows(await listMergedPaths());
     } catch (e) {
       setError(String(e));
     } finally {
@@ -92,8 +148,10 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
 
         <p className="text-[11px] text-muted mb-3">
           A rescan skips these folders. Un-ignore one and the next rescan
-          imports it as a new release. Highlighted rows are on disk with audio
-          in them — a rescan is hiding them now.
+          imports it as a new release; that works for trashed folders too, once
+          they're back on disk. Highlighted rows are on disk with audio in them
+          — a rescan is hiding them now. Trash moves a folder to the system
+          Trash and keeps it ignored.
         </p>
 
         {!rows ? (
@@ -127,6 +185,18 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
               >
                 {hiddenOnly ? "show all" : `hiding audio only (${hiddenCount})`}
               </button>
+              {missingCount > 0 && (
+                <button
+                  onClick={clearMissing}
+                  disabled={busy !== null}
+                  title="Drop rows whose folder is gone from disk (trashed rows are kept)"
+                  className="shrink-0 text-[11px] text-muted hover:text-fg disabled:opacity-40"
+                >
+                  {busy === "__clear__"
+                    ? "clearing…"
+                    : `clear ${missingCount} not on disk`}
+                </button>
+              )}
             </div>
 
             <ul className="flex-1 min-h-0 overflow-y-auto space-y-1">
@@ -154,6 +224,24 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
                       {new Date(r.mergedAt * 1000).toLocaleDateString()}
                     </span>
                   </span>
+                  {r.exists && (
+                    <button
+                      onClick={() => trashFolder(r.path)}
+                      disabled={busy !== null}
+                      title="Move this folder to the Trash; it stays ignored"
+                      aria-label="Trash folder"
+                      className="shrink-0 px-1.5 py-0.5 rounded text-muted
+                                 hover:text-alert hover:bg-alert/10 text-[11px]
+                                 transition-colors inline-flex items-center
+                                 disabled:opacity-40"
+                    >
+                      {busy === r.path ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={11} />
+                      )}
+                    </button>
+                  )}
                   <button
                     onClick={() => unIgnore(r.path)}
                     disabled={busy !== null}
@@ -179,6 +267,11 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
               )}
             </ul>
 
+            {cleared !== null && (
+              <p className="mt-3 text-[11px] text-ok">
+                Cleared {cleared} folder{cleared === 1 ? "" : "s"} not on disk.
+              </p>
+            )}
             {freed > 0 && (
               <p className="mt-3 text-[11px] text-ok">
                 {freed} folder{freed === 1 ? "" : "s"} un-ignored — rescan the
@@ -204,10 +297,18 @@ function describe(r: MergedPath): string {
     : r.hasAudio
       ? "on disk, has audio"
       : "on disk, no audio";
-  if (r.survivorId === null) return `deleted, files kept · ${state}`;
-  const kept =
-    r.survivorArtist || r.survivorTitle
-      ? `${r.survivorArtist ?? "?"} — ${r.survivorTitle ?? "?"}`
-      : `release #${r.survivorId} (gone)`;
-  return `duplicate of ${kept}${r.trashed ? " · trashed" : ""} · ${state}`;
+  if (r.trashed && !r.exists) {
+    return r.survivorId === null
+      ? "deleted, folder trashed"
+      : `duplicate of ${survivor(r)}, folder trashed`;
+  }
+  if (r.survivorId === null)
+    return `deleted, ${r.trashed ? "trashed earlier" : "files kept"} · ${state}`;
+  return `duplicate of ${survivor(r)}${r.trashed ? " · trashed" : ""} · ${state}`;
+}
+
+function survivor(r: MergedPath): string {
+  return r.survivorArtist || r.survivorTitle
+    ? `${r.survivorArtist ?? "?"} — ${r.survivorTitle ?? "?"}`
+    : `release #${r.survivorId} (gone)`;
 }

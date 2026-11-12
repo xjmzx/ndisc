@@ -6955,6 +6955,94 @@ fn forget_merged_path(app: tauri::AppHandle, path: String) -> Result<(), String>
     Ok(())
 }
 
+/// Move an ignored folder to the OS trash and keep its `merged_paths` row,
+/// now marked `trashed = 1`, so a copy restored from the Trash (or re-ripped
+/// into the same path) still isn't imported. Un-ignore (`forget_merged_path`)
+/// is the override for a folder you want back.
+///
+/// Refuses unless the path is an ignored folder, sits strictly inside the
+/// library root, and holds no folder a release in the catalogue points at.
+#[tauri::command]
+async fn trash_ignored_folder(app: tauri::AppHandle, path: String) -> Result<ResolveSummary, String> {
+    let (target, files, bytes) = check_ignored_folder_trashable(&app, &path)?;
+    let moved = target.clone();
+    tauri::async_runtime::spawn_blocking(move || trash::delete(&moved))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("trash failed for {}: {e}", target.display()))?;
+    open(&app)?
+        .execute("UPDATE merged_paths SET trashed = 1 WHERE path = ?1", params![path])
+        .map_err(|e| e.to_string())?;
+    Ok(ResolveSummary { trashed_dir: path, files, bytes, retracted: false })
+}
+
+/// The refusals for `trash_ignored_folder`, kept synchronous so no database
+/// handle is held across the await.
+fn check_ignored_folder_trashable(
+    app: &tauri::AppHandle,
+    path: &str,
+) -> Result<(PathBuf, usize, u64), String> {
+    let app = app.clone();
+    let conn = open(&app)?;
+    let known: bool = conn
+        .query_row("SELECT 1 FROM merged_paths WHERE path = ?1", params![path], |_| Ok(true))
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(false);
+    if !known {
+        return Err(format!("{path} is not an ignored folder"));
+    }
+    let (target, files, bytes) = guard_library_dir(&app, path)?;
+    let root = PathBuf::from(library_root(&app)?)
+        .canonicalize()
+        .map_err(|e| format!("library root: {e}"))?;
+    if target == root {
+        return Err("refused: that is the library root itself".into());
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, file_path FROM releases WHERE file_path IS NOT NULL AND file_path <> ''")
+        .map_err(|e| e.to_string())?;
+    let in_use = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .find(|(_, fp)| {
+            let p = PathBuf::from(fp);
+            let p = p.canonicalize().unwrap_or(p);
+            p.starts_with(&target)
+        });
+    drop(stmt);
+    if let Some((id, fp)) = in_use {
+        return Err(format!("refused: release #{id} lives in that folder ({fp})"));
+    }
+    Ok((target, files, bytes))
+}
+
+/// Drop ignored-folder rows whose folder is no longer on disk. Rows marked
+/// trashed are kept on purpose: they are what stops a restored copy from being
+/// re-imported. Returns how many rows were dropped.
+#[tauri::command]
+async fn clear_missing_ignored_folders(app: tauri::AppHandle) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open(&app)?;
+        let paths: Vec<String> = conn
+            .prepare("SELECT path FROM merged_paths WHERE trashed = 0")
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .filter(|p| !Path::new(p).is_dir())
+            .collect();
+        for p in &paths {
+            conn.execute("DELETE FROM merged_paths WHERE path = ?1", params![p])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(paths.len())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveSummary {
@@ -11274,6 +11362,8 @@ pub fn run() {
             delete_release_with_files,
             delete_release_ignore_path,
             forget_merged_path,
+            trash_ignored_folder,
+            clear_missing_ignored_folders,
             list_merged_paths,
             find_duplicate_groups,
             recount_tracks,

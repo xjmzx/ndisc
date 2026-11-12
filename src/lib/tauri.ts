@@ -1393,6 +1393,18 @@ export async function forgetMergedPath(path: string): Promise<void> {
   return invoke("forget_merged_path", { path });
 }
 
+/** Move an ignored folder to the Trash. Its row stays, marked trashed, so a
+ *  restored copy is still skipped; un-ignore it to allow an import again. */
+export async function trashIgnoredFolder(path: string): Promise<ResolveSummary> {
+  return invoke<ResolveSummary>("trash_ignored_folder", { path });
+}
+
+/** Drop ignored-folder rows whose folder is gone from disk (trashed rows are
+ *  kept). Returns how many were dropped. */
+export async function clearMissingIgnoredFolders(): Promise<number> {
+  return invoke<number>("clear_missing_ignored_folders");
+}
+
 /** Decrement the persisted orphan snapshot by one when an orphan is resolved
  *  (relocated/deleted) outside a full reconcile, so the header count tracks
  *  reality without an expensive re-scan. Clamped at 0. Returns the new count. */
