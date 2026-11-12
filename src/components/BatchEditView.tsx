@@ -757,7 +757,7 @@ function SelectionBar({
 
 // A tick box drawn by hand: the native checkbox renders near-black on the dark
 // panel. Unticked is a light grey square, ticked fills with the accent colour.
-function Tick({
+export function Tick({
   checked,
   onClick,
   title,

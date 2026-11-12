@@ -8,6 +8,7 @@ import {
   trashIgnoredFolder,
   type MergedPath,
 } from "../lib/tauri";
+import { Tick } from "./BatchEditView";
 
 // Folders a rescan is told to skip (the `merged_paths` table): releases deleted
 // with "keep files, don't re-import", and the losing copies of resolved
@@ -15,6 +16,9 @@ import {
 // Trash moves a folder still on disk to the OS Trash and keeps the row, marked
 // trashed, so a restored copy stays out until it is un-ignored. "Clear not on
 // disk" drops rows whose folder is gone — except trashed ones, for that reason.
+// A trashed row's own button is Drop: it forgets the folder entirely, which is
+// the same operation as Un-ignore, named for what the user means by it.
+// Tick boxes select rows for the batch bar (shift-click ticks a run).
 //
 // Rows whose folder is on disk with audio are the ones a rescan is hiding right
 // now — a re-rip into an old path lands here silently — so they sort first.
@@ -35,6 +39,9 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
   const hiddenCount = rows?.filter((r) => r.hasAudio).length ?? 0;
   const missingCount = rows?.filter((r) => !r.exists && !r.trashed).length ?? 0;
   const [cleared, setCleared] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
 
   const shown = useMemo(() => {
     if (!rows) return [];
@@ -52,13 +59,120 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
       .sort((a, b) => Number(b.hasAudio) - Number(a.hasAudio));
   }, [rows, query, hiddenOnly]);
 
-  async function unIgnore(path: string) {
+  const isTrashed = (r: MergedPath) => r.trashed && !r.exists;
+  const picked = shown.filter((r) => selected.has(r.path));
+  const toTrash = picked.filter((r) => r.exists);
+  const toDrop = picked.filter(isTrashed);
+  const toUnignore = picked.filter((r) => !isTrashed(r));
+  const allTicked = shown.length > 0 && shown.every((r) => selected.has(r.path));
+
+  function toggle(path: string, e: React.MouseEvent) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const on = !prev.has(path);
+      if (e.shiftKey && anchor) {
+        const a = shown.findIndex((r) => r.path === anchor);
+        const b = shown.findIndex((r) => r.path === path);
+        if (a >= 0 && b >= 0) {
+          for (const r of shown.slice(Math.min(a, b), Math.max(a, b) + 1)) {
+            if (on) next.add(r.path);
+            else next.delete(r.path);
+          }
+          return next;
+        }
+      }
+      if (on) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+    setAnchor(path);
+  }
+
+  // Run one action over many rows, one at a time, keeping going past a refusal
+  // so one bad folder doesn't stop the rest; the first error is shown.
+  async function runBatch(
+    verb: string,
+    list: MergedPath[],
+    one: (path: string) => Promise<void>,
+  ) {
+    setBusy("__batch__");
+    setError(null);
+    let failed = 0;
+    let firstError: string | null = null;
+    for (const [i, r] of list.entries()) {
+      setProgress(`${verb} ${i + 1}/${list.length}`);
+      try {
+        await one(r.path);
+      } catch (e) {
+        failed++;
+        firstError ??= `${r.path}: ${String(e)}`;
+      }
+    }
+    setProgress(null);
+    setBusy(null);
+    setSelected(new Set());
+    if (failed) setError(`${failed} failed — ${firstError}`);
+  }
+
+  async function trashSelected() {
+    const n = toTrash.length;
+    const ok = await ask(
+      `Move ${n} folder${n === 1 ? "" : "s"} and everything in them to the Trash?\n\n` +
+        "They stay on the ignore list, marked trashed, so a rescan won't import " +
+        "them if they're restored.",
+      { title: "Trash ignored folders", kind: "warning" },
+    );
+    if (!ok) return;
+    await runBatch("trashing", toTrash, async (path) => {
+      await trashIgnoredFolder(path);
+      setRows(
+        (prev) =>
+          prev?.map((r) =>
+            r.path === path
+              ? { ...r, trashed: true, exists: false, hasAudio: false }
+              : r,
+          ) ?? null,
+      );
+    });
+  }
+
+  async function dropSelected() {
+    const n = toDrop.length;
+    const ok = await ask(
+      `Drop ${n} trashed folder${n === 1 ? "" : "s"} from the discography?\n\n` +
+        "ndisc forgets them entirely. If one ever comes back at the same path, " +
+        "a rescan imports it.",
+      { title: "Drop trashed folders", kind: "warning" },
+    );
+    if (!ok) return;
+    await runBatch("dropping", toDrop, async (path) => {
+      await forgetMergedPath(path);
+      setRows((prev) => prev?.filter((r) => r.path !== path) ?? null);
+    });
+  }
+
+  async function unIgnoreSelected() {
+    const n = toUnignore.length;
+    const ok = await ask(
+      `Un-ignore ${n} folder${n === 1 ? "" : "s"}? The next rescan imports ` +
+        `${n === 1 ? "it" : "them"} as new releases.`,
+      { title: "Un-ignore folders", kind: "info" },
+    );
+    if (!ok) return;
+    await runBatch("un-ignoring", toUnignore, async (path) => {
+      await forgetMergedPath(path);
+      setRows((prev) => prev?.filter((r) => r.path !== path) ?? null);
+      setFreed((x) => x + 1);
+    });
+  }
+
+  async function unIgnore(path: string, drop: boolean) {
     setBusy(path);
     setError(null);
     try {
       await forgetMergedPath(path);
       setRows((prev) => prev?.filter((r) => r.path !== path) ?? null);
-      setFreed((n) => n + 1);
+      if (!drop) setFreed((n) => n + 1);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -199,6 +313,70 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
+            <div className="flex items-center gap-3 mb-2 px-2 min-h-[1.5rem] text-[11px]">
+              <Tick
+                checked={allTicked}
+                onClick={() =>
+                  setSelected(
+                    allTicked ? new Set() : new Set(shown.map((r) => r.path)),
+                  )
+                }
+                title={allTicked ? "Untick all" : "Tick every folder shown"}
+                label="Select all shown"
+              />
+              {selected.size === 0 ? (
+                <span className="text-muted">
+                  tick folders to act on several at once (shift-click for a run)
+                </span>
+              ) : (
+                <>
+                  <span className="text-accent font-medium">
+                    {progress ?? `${picked.length} selected`}
+                  </span>
+                  {toTrash.length > 0 && (
+                    <button
+                      onClick={trashSelected}
+                      disabled={busy !== null}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded
+                                 bg-alert/15 text-alert hover:bg-alert/25
+                                 disabled:opacity-40"
+                    >
+                      <Trash2 size={11} /> Trash {toTrash.length}
+                    </button>
+                  )}
+                  {toDrop.length > 0 && (
+                    <button
+                      onClick={dropSelected}
+                      disabled={busy !== null}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded
+                                 bg-alert/15 text-alert hover:bg-alert/25
+                                 disabled:opacity-40"
+                    >
+                      <X size={11} /> Drop {toDrop.length}
+                    </button>
+                  )}
+                  {toUnignore.length > 0 && (
+                    <button
+                      onClick={unIgnoreSelected}
+                      disabled={busy !== null}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded
+                                 bg-accent/15 text-accent hover:bg-accent/25
+                                 disabled:opacity-40"
+                    >
+                      <Undo2 size={11} /> Un-ignore {toUnignore.length}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setSelected(new Set())}
+                    disabled={busy !== null}
+                    className="ml-auto text-muted hover:text-fg disabled:opacity-40"
+                  >
+                    clear
+                  </button>
+                </>
+              )}
+            </div>
+
             <ul className="flex-1 min-h-0 overflow-y-auto space-y-1">
               {shown.map((r) => (
                 <li
@@ -210,6 +388,14 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
                       : "bg-surface/20")
                   }
                 >
+                  <span className="pt-0.5">
+                    <Tick
+                      checked={selected.has(r.path)}
+                      onClick={(e) => toggle(r.path, e)}
+                      title="Select (shift-click for a run)"
+                      label={`Select ${r.path}`}
+                    />
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span
                       className={
@@ -243,9 +429,13 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
                     </button>
                   )}
                   <button
-                    onClick={() => unIgnore(r.path)}
+                    onClick={() => unIgnore(r.path, isTrashed(r))}
                     disabled={busy !== null}
-                    title="Drop this folder from the ignore list — the next rescan imports it"
+                    title={
+                      isTrashed(r)
+                        ? "Drop from the discography — ndisc forgets this folder entirely; if it ever comes back, a rescan imports it"
+                        : "Drop this folder from the ignore list — the next rescan imports it"
+                    }
                     className="shrink-0 px-2 py-0.5 rounded bg-accent/15 text-accent
                                hover:bg-accent hover:text-bg text-[11px] font-medium
                                transition-colors inline-flex items-center gap-1
@@ -253,10 +443,12 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
                   >
                     {busy === r.path ? (
                       <Loader2 size={11} className="animate-spin" />
+                    ) : isTrashed(r) ? (
+                      <X size={11} />
                     ) : (
                       <Undo2 size={11} />
                     )}
-                    Un-ignore
+                    {isTrashed(r) ? "Drop" : "Un-ignore"}
                   </button>
                 </li>
               ))}

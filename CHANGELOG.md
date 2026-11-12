@@ -21,6 +21,12 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.16 — 2026-11-12
+
+### Added
+- Ignored folders: tick boxes (shift-click for a run, plus tick-all) and a batch bar to Trash, Drop or Un-ignore many folders at once. Each asks once, then works through the list; a refused folder doesn't stop the rest.
+- Ignored folders: trashed folders get **Drop** instead of Un-ignore — it removes the folder from the discography entirely. If it ever reappears at the same path, a rescan imports it.
+
 ## 0.6.15 — 2026-11-12
 
 ### Added
