@@ -21,6 +21,20 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.18 — 2026-11-12
+
+### Changed
+- Release detail: the cover is 200 × 200 (was 195) — half the 400 × 400 cover art, so it's pixel-exact on a 2× screen.
+- Add release is laid out as a mirror of Release detail: the same 200 × 200 cover square (it previews the cover URL as you type it), with Digital / Physical, artist, title and year · format · condition beside it; under it the same rows as detail — cover URL | notes, then type · category · label · source · catalog · country · link, then electronic + genres — at the same widths; Save at the bottom where detail has its action bar.
+- Release detail and Add release lay their fields out in the same three fixed rows (type · category · label · source / catalog · country · link / electronic + genres), 8px apart, and Add release's inputs take detail's resting style — faint fill, thin border, italic placeholders.
+- Genres sit apart from the release's fields under a faint rule, the same divider that sets off the action bar.
+- New genre picker, shared by Release detail and Add release: quick checkboxes for electronic, rock, jazz, hip-hop, reggae, pop and classical, then every other style and combining form as a removable chip, added from one "+ style…" field that suggests as you type — grouped like the contract, most-used first, with counts. Replaces the per-slot dropdowns; still five slugs at most, still saved in house order.
+- Add release gains notes, the acquisition source and genres. The link box works as it does in detail — a Discogs or MusicBrainz release link links the release, a store link becomes its source.
+- The Add release heading drops its + icon, so it lines up with a release's name in Release detail.
+
+### Added
+- A way back to Add release once a release is selected: a + button in Release detail's header, or click the selected release in the list again to deselect it.
+
 ## 0.6.17 — 2026-11-12
 
 ### Changed

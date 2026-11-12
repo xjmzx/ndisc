@@ -11,6 +11,7 @@ import {
   ImageUp,
   StickyNote,
   Image as ImageIcon,
+  Plus,
   Loader2,
   Pencil,
   RefreshCcw,
@@ -32,10 +33,13 @@ import { MergeConfirm, hasLiveEvent } from "./MergeConfirm";
 import { DeleteDialog, fmtBytes } from "./DeleteDialog";
 import { WriteTagsDialog } from "./WriteTagsDialog";
 import { Section } from "./Section";
+import { CoverArt } from "./CoverArt";
+import { TickBox } from "./TickBox";
+import { GenrePicker } from "./GenrePicker";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
-import { houseGenreOrder, genreDisplay, GENRE_ORDER, GENRE_SLOT_CAP } from "../lib/genre";
+import { houseGenreOrder } from "../lib/genre";
 import {
   clearReleasePath,
   enrichDiscogsRelease,
@@ -99,43 +103,7 @@ const CATEGORY_OPTIONS = [
   "miscellaneous",
 ];
 
-// Flat, alphabetical genre options for one slot — the 41 active slugs (from
-// lib/genre, so a retired compound pair can never be offered) minus anything
-// already chosen in an earlier slot. The release-viewer dropdown lists genres
-// only: no family grouping. Sorted by display label (case-insensitive), so
-// `rnb` sorts as "R&B". All slugs are pure peers — no parent+sub gating.
-function genreOptionsForSlot(
-  slotIndex: number,
-  currentSlots: (string | null)[],
-): string[] {
-  const excluded = new Set<string>(
-    currentSlots.slice(0, slotIndex).filter((s): s is string => !!s),
-  );
-  excluded.add("electronic"); // owned by the checkbox
-  return GENRE_ORDER.filter((o) => !excluded.has(o)).sort((a, b) =>
-    genreDisplay(a).localeCompare(genreDisplay(b), undefined, {
-      sensitivity: "base",
-    }),
-  );
-}
-
-// Splits stored genre slots into the electronic checkbox and the other genres
-// (dense, padded to the slots left once electronic takes one).
-function splitGenres(slots: (string | null)[]): {
-  electronic: boolean;
-  others: (string | null)[];
-} {
-  const electronic = slots.includes("electronic");
-  const rest = slots.filter((s): s is string => !!s && s !== "electronic");
-  const room = GENRE_SLOT_CAP - (electronic ? 1 : 0);
-  return {
-    electronic,
-    others: Array.from({ length: room }, (_, i) => rest[i] ?? null),
-  };
-}
-
 // Placeholder suffixes for the empty genre slots ("+ 2nd", …).
-const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th"];
 
 // Compact display form for a NIP-19 naddr: first 12 + last 8 around an ellipsis.
 // The full string is still available for selection (DOM has the abbreviated
@@ -164,6 +132,8 @@ interface Props {
   showUndoToast?: (message: string, undo: () => void | Promise<void>) => void;
   // Extra classes for the card (Home makes it fill the column).
   className?: string;
+  // Back to the Add release card (clears the selection).
+  onNew?: () => void;
 }
 
 // Status block at the bottom of the detail panel shows exactly one of:
@@ -185,6 +155,7 @@ export function ReleaseDetail({
   onChanged,
   showUndoToast,
   className,
+  onNew,
 }: Props) {
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
@@ -652,37 +623,17 @@ export function ReleaseDetail({
   // applies the house order — electronic, then genres, then combining forms —
   // which the backend applies too. Writes all five slots at
   // once via setReleaseGenres.
-  async function saveGenres(electronic: boolean, others: (string | null)[]) {
+  // Save the picker's slug list in house order (electronic → genres →
+  // combining forms), padded to the five slots.
+  async function saveGenreList(list: string[]) {
     if (!release.id) return;
-    const present = [
-      ...(electronic ? ["electronic"] : []),
-      ...others.filter((s): s is string => !!s && s !== "electronic"),
-    ];
     const dense = houseGenreOrder(
-      GENRE_SLOT_FIELDS.map((_, i) => present[i] ?? null),
+      GENRE_SLOT_FIELDS.map((_, i) => list[i] ?? null),
     );
     await setReleaseGenres(release.id, dense);
     applyEdit(
       Object.fromEntries(GENRE_SLOT_FIELDS.map((f, i) => [f, dense[i]])),
     );
-  }
-
-  // Changes one of the other-genre slots. Clears any later slot that now
-  // repeats an earlier one (pick `dub` in slot 1 when slot 3 was `dub`); the
-  // save compacts, so clearing a slot shifts the later ones up.
-  async function onChangeGenreSlot(slot: number, newValue: string | null) {
-    const { electronic, others } = splitGenres(genreSlots(release));
-    others[slot] = newValue;
-    for (let i = slot + 1; i < others.length; i++) {
-      if (others[i] && !genreOptionsForSlot(i, others).includes(others[i] as string)) {
-        others[i] = null;
-      }
-    }
-    await saveGenres(electronic, others);
-  }
-
-  async function onToggleElectronic(on: boolean) {
-    await saveGenres(on, splitGenres(genreSlots(release)).others);
   }
 
   async function onChangeCatalogNumber(v: string | null) {
@@ -776,15 +727,28 @@ export function ReleaseDetail({
         </>
       }
       right={
-        <button
-          type="button"
-          onClick={copyName}
-          title={nameCopied ? "copied" : "Copy artist - title"}
-          aria-label="Copy artist and title"
-          className="flex items-center p-1 rounded text-muted hover:text-accent hover:bg-fg/10 transition-colors"
-        >
-          {nameCopied ? <Check size={14} /> : <Copy size={14} />}
-        </button>
+        <span className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={copyName}
+            title={nameCopied ? "copied" : "Copy artist - title"}
+            aria-label="Copy artist and title"
+            className="flex items-center p-1 rounded text-muted hover:text-accent hover:bg-fg/10 transition-colors"
+          >
+            {nameCopied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+          {onNew && (
+            <button
+              type="button"
+              onClick={onNew}
+              title="Add a release"
+              aria-label="Add a release"
+              className="flex items-center p-1 rounded text-muted hover:text-accent hover:bg-fg/10 transition-colors"
+            >
+              <Plus size={14} />
+            </button>
+          )}
+        </span>
       }
       className={className}
     >
@@ -928,7 +892,12 @@ export function ReleaseDetail({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-2 text-xs">
+      {/* Three fixed rows, mirrored in Add release: type · category · label ·
+          source · +physical / catalog · country · link · folder / electronic
+          + genres. Separate rows (not one wrapping line) so the breaks hold
+          at any width and the row spacing is exactly the 8px between them. */}
+      <div className="mt-3 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <EditableEnum
           value={release.releaseType ?? null}
           options={TYPE_OPTIONS}
@@ -962,6 +931,8 @@ export function ReleaseDetail({
           onChange={onChangeSource}
         />
         <PairedToggle release={release} onChange={onChangePaired} />
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <EditableText
           value={release.catalogNumber ?? null}
           onChange={onChangeCatalogNumber}
@@ -1059,52 +1030,15 @@ export function ReleaseDetail({
             </button>
           )}
         </div>
-        {(() => {
-          const { electronic, others } = splitGenres(genreSlots(release));
-          // Ticking is refused only when five other genres already fill
-          // every slot (the cap is five including electronic).
-          const full = !electronic && others.every(Boolean);
-          // Progressive disclosure — each slot appears once the one before it
-          // is set, so an untagged release shows one picker and a full one
-          // all of them. Grouped so the line wraps together.
-          return (
-            <div className="inline-flex flex-wrap items-center gap-1.5">
-              <label
-                title={
-                  full
-                    ? "All five genre slots are taken — clear one to add electronic"
-                    : "Electronic — published as the first genre"
-                }
-                className={
-                  "h-6 inline-flex items-center gap-1.5 px-1.5 text-[11px] " +
-                  "text-fg/80 select-none whitespace-nowrap " +
-                  (full ? "opacity-50 pointer-events-none" : "cursor-pointer")
-                }
-              >
-                <TickBox
-                  checked={electronic}
-                  onChange={onToggleElectronic}
-                  ariaLabel="electronic"
-                />
-                electronic
-              </label>
-              {others.map((value, i) =>
-                i === 0 || others[i - 1] ? (
-                  <EditableEnum
-                    key={i}
-                    value={value}
-                    options={genreOptionsForSlot(i, others)}
-                    onChange={(v) => onChangeGenreSlot(i, v)}
-                    ariaLabel={`genre ${i + 1}`}
-                    displayFn={genreDisplay}
-                    placeholder={i === 0 ? "genre" : `+ ${ORDINALS[i + (electronic ? 1 : 0)]}`}
-                    width={i === 0 ? "w-28" : "w-24"}
-                  />
-                ) : null,
-              )}
-            </div>
-          );
-        })()}
+      </div>
+      {/* Genres sit apart from the release's fields: the same faint rule
+          and spacing that separate the action bar below. */}
+      <div className="!mt-4 pt-3 border-t border-surface/60 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <GenrePicker
+          value={genreSlots(release).filter((g): g is string => !!g)}
+          onChange={saveGenreList}
+        />
+      </div>
       </div>
 
       <div className="mt-4 pt-3 border-t border-surface/60">
@@ -1604,42 +1538,6 @@ function EditableText({
   );
 }
 
-// A themed checkbox. The native control is drawn by the platform — on Linux
-// (WebKitGTK) that is the desktop's own accent-coloured box, oversized for a
-// 10px label and with its tick clipped — so the box is ours: a rounded square
-// in the same surface/border family as the field chips beside it, with the
-// tick as an icon on top. The real <input> stays, for keyboard and a11y.
-function TickBox({
-  checked,
-  onChange,
-  ariaLabel,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  ariaLabel?: string;
-}) {
-  return (
-    <span className="relative shrink-0 grid place-items-center w-3.5 h-3.5">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        aria-label={ariaLabel}
-        className="peer appearance-none m-0 w-3.5 h-3.5 rounded-[3px] cursor-pointer
-                   border border-muted/40 bg-surface/40 transition-colors
-                   hover:border-accent/50 checked:border-accent/70
-                   checked:bg-accent/15 focus-visible:outline
-                   focus-visible:outline-1 focus-visible:outline-accent"
-      />
-      <Check
-        size={10}
-        strokeWidth={3}
-        className="pointer-events-none absolute text-accent opacity-0
-                   peer-checked:opacity-100"
-      />
-    </span>
-  );
-}
 
 interface EditableSourceProps {
   value: string | null;
@@ -2148,54 +2046,6 @@ function NotesField({
         />
       )}
     </span>
-  );
-}
-
-interface CoverArtProps {
-  src: string | null;
-  alt: string;
-}
-
-function CoverArt({ src, alt }: CoverArtProps) {
-  // Track load failures so a broken URL/path falls back to the placeholder
-  // instead of leaving a blank box. Reset when the release changes.
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
-
-  const showImage = src != null && !failed;
-
-  return (
-    <div
-      className={
-        "shrink-0 w-[195px] h-[195px] rounded-md overflow-hidden flex " +
-        "items-center justify-center " +
-        (showImage
-          ? "bg-surface"
-          : "border-2 border-dashed border-mauve/50 bg-mauve/5")
-      }
-    >
-      {showImage ? (
-        <img
-          src={src ?? undefined}
-          alt={alt}
-          className="w-full h-full object-cover"
-          loading="lazy"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <div
-          className="text-mauve/70 flex flex-col items-center gap-1.5
-                     text-[10px] text-center px-2"
-        >
-          <ImageIcon size={28} strokeWidth={1.5} />
-          <span className="uppercase tracking-wide">
-            {failed ? "cover failed to load" : "no cover"}
-          </span>
-        </div>
-      )}
-    </div>
   );
 }
 

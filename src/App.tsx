@@ -427,7 +427,13 @@ export default function App() {
 
   // Selecting a release ends any label-editing session, so the LABEL panel
   // follows the release instead of staying on the picked label.
+  // Clicking the release that's already selected deselects it — back to the
+  // Add release card.
   function selectRelease(release: Release) {
+    if (selected?.id === release.id) {
+      setSelected(null);
+      return;
+    }
     setSelected(release);
     setLabelFormOpen(false);
   }
@@ -673,6 +679,7 @@ export default function App() {
                 onChanged={handleReleaseChanged}
                 showUndoToast={showUndoToast}
                 className="lg:flex-1 lg:shrink-0"
+                onNew={() => setSelected(null)}
               />
             ) : (
               <AddReleaseForm
