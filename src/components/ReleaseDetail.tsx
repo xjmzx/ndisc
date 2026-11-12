@@ -1712,7 +1712,7 @@ function EditableSource({ value, onChange }: EditableSourceProps) {
                        cursor-pointer p-0.5"
           />
           <label
-            title="This source gives you a digital copy you own — lets a physical release from it count as a physical+digital pairing"
+            title={`Every release from ${value} comes with a download you own, so its physical releases count as physical + digital too. A setting for the whole source; for one release, use +digital instead.`}
             className="h-6 inline-flex items-center gap-1.5 px-1 text-[10px]
                        text-fg/80 cursor-pointer select-none"
           >
@@ -1723,7 +1723,7 @@ function EditableSource({ value, onChange }: EditableSourceProps) {
                 setBump((n) => n + 1);
               }}
             />
-            digital
+            gives downloads
           </label>
           <button
             type="button"

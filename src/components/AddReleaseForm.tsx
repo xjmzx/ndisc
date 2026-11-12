@@ -34,7 +34,8 @@ const EMPTY: Release = {
   artist: "",
   title: "",
   year: new Date().getFullYear(),
-  medium: "physical",
+  // No default: Digital or Physical must be chosen before Save.
+  medium: null,
   format: "",
   label: "",
   catalogNumber: "",
@@ -69,6 +70,7 @@ export function AddReleaseForm({
 
   function set<K extends keyof Release>(key: K, value: Release[K]) {
     setRelease((r) => ({ ...r, [key]: value }));
+    setError(null);
   }
 
   function reset() {
@@ -78,10 +80,20 @@ export function AddReleaseForm({
     setGenres([]);
   }
 
+  // The essentials a release needs before it can be saved; everything else
+  // can come later from the link and Enrich.
+  const missing = [
+    !release.medium && "digital or physical",
+    !release.artist.trim() && "artist",
+    !release.title.trim() && "title",
+    release.year == null && "year",
+    !(release.format ?? "").trim() && "format",
+  ].filter((m): m is string => !!m);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!release.artist.trim() || !release.title.trim()) {
-      setError("artist and title are required");
+    if (missing.length) {
+      setError(`needs ${missing.join(", ")}`);
       return;
     }
     setSaving(true);
@@ -128,16 +140,26 @@ export function AddReleaseForm({
   const coverPreview = /^https?:\/\/[^/\s]+\/\S+/.test(typedCover)
     ? typedCover
     : null;
-  const physical = (release.medium ?? "physical") === "physical";
+  const physical = release.medium === "physical";
 
   return (
     <Section title="Add release" className={className}>
-      <form onSubmit={onSubmit} className="text-xs flex flex-col">
+      <form
+        onSubmit={onSubmit}
+        // Enter in a field never saves: only the Save button does, so a
+        // half-filled release can't slip into the library.
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") {
+            e.preventDefault();
+          }
+        }}
+        className="text-xs flex flex-col"
+      >
         <div className="flex gap-4 items-stretch">
           <CoverArt src={coverPreview} alt="cover preview" />
           <div className="flex-1 min-w-0 flex flex-col gap-2">
             <MediumToggle
-              value={(release.medium ?? "physical") as Medium}
+              value={release.medium ?? null}
               onChange={(m) => set("medium", m)}
             />
             <input
@@ -290,8 +312,14 @@ export function AddReleaseForm({
         <div className="mt-4 pt-3 border-t border-surface/60 flex items-center gap-3">
           <button
             type="submit"
-            disabled={saving}
-            title={saving ? "saving…" : "Save release"}
+            disabled={saving || missing.length > 0}
+            title={
+              saving
+                ? "saving…"
+                : missing.length
+                  ? `Fill in ${missing.join(", ")} first`
+                  : "Save release"
+            }
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md
                        bg-accent text-bg font-semibold hover:opacity-90
                        disabled:opacity-50"
@@ -303,6 +331,9 @@ export function AddReleaseForm({
             )}
             Save release
           </button>
+          {missing.length > 0 && !error && (
+            <span className="text-muted">needs {missing.join(", ")}</span>
+          )}
           {error && <span className="text-alert">{error}</span>}
         </div>
       </form>
@@ -329,7 +360,7 @@ function MediumToggle({
   value,
   onChange,
 }: {
-  value: Medium;
+  value: Medium | null;
   onChange: (v: Medium) => void;
 }) {
   return (

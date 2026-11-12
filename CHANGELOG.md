@@ -21,6 +21,12 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.19 — 2026-11-12
+
+### Changed
+- Add release: Enter in a field no longer saves — only the Save button does — and Save stays off until Digital or Physical is chosen (neither is preselected any more) and artist, title, year and format are filled, with what's missing named beside it.
+- The source editor's tick is now "gives downloads", with a tooltip saying it applies to every release from that source, so it no longer reads as a second copy of a release's own +digital tick.
+
 ## 0.6.18 — 2026-11-12
 
 ### Changed
