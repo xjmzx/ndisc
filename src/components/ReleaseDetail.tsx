@@ -5,7 +5,6 @@ import {
   Copy,
   Disc,
   ExternalLink,
-  FileMusic,
   FolderOpen,
   FolderPlus,
   ImageDown,
@@ -163,10 +162,8 @@ interface Props {
   onDeleted: () => void;
   onChanged: (updated: Release) => void;
   showUndoToast?: (message: string, undo: () => void | Promise<void>) => void;
-  // Collapse the detail card to its header strip — the shared suite gesture.
-  // When collapsed the header (artist / title) reads as a one-line summary.
-  collapsed?: boolean;
-  onToggleCollapsed?: () => void;
+  // Extra classes for the card (Home makes it fill the column).
+  className?: string;
 }
 
 // Status block at the bottom of the detail panel shows exactly one of:
@@ -187,8 +184,7 @@ export function ReleaseDetail({
   onDeleted,
   onChanged,
   showUndoToast,
-  collapsed,
-  onToggleCollapsed,
+  className,
 }: Props) {
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
@@ -779,7 +775,6 @@ export function ReleaseDetail({
           <span className="text-accent">{release.title}</span>
         </>
       }
-      icon={<FileMusic size={16} />}
       right={
         <button
           type="button"
@@ -791,8 +786,7 @@ export function ReleaseDetail({
           {nameCopied ? <Check size={14} /> : <Copy size={14} />}
         </button>
       }
-      collapsed={collapsed}
-      onTitleClick={onToggleCollapsed}
+      className={className}
     >
       <div className="flex gap-4 items-stretch">
         <CoverArt

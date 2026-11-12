@@ -21,6 +21,15 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.17 — 2026-11-12
+
+### Changed
+- Labels have their own view: a tag button in the header, next to Batch edit, holds the label list and the label-art editor side by side at full height.
+- Home: under the release card is now a single publishing row — a relay summary button (● 3 relays · 2 servers, the dot purple when every relay answers, amber when some do, red when none do) and Publish / Unpublish library side by side — so the release card keeps the column.
+- Relays and Blossom servers moved to a **Relays & servers** window, opened from that summary button or the release list's ⋮ menu: one row per server with its full URL, relay health or primary/mirror role, and remove; add fields and Publish server list below.
+- Add release and release detail no longer collapse: the card fills the column, so the publishing row sits at the bottom, level with the release list.
+- Dropped the decorative section icons on the release list, release detail and publishing panel.
+
 ## 0.6.16 — 2026-11-12
 
 ### Added

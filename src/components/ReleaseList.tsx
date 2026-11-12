@@ -148,6 +148,8 @@ interface Props {
   blossomServers: string[];
   // Label-art URLs, so "Mirror covers" copies those along with the covers.
   labelImageUrls: string[];
+  // Opens the Relays & servers window (lives with the publishing strip).
+  onOpenRelays?: () => void;
 }
 
 type MediumFilter = "" | "physical" | "digital";
@@ -177,6 +179,7 @@ export function ReleaseList({
   relays,
   blossomServers,
   labelImageUrls,
+  onOpenRelays,
 }: Props) {
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
@@ -1301,7 +1304,6 @@ export function ReleaseList({
   return (
     <Section
       title=""
-      icon={<Disc3 size={16} />}
       bodyClassName="lg:min-h-0"
       right={
         <span className="text-xs text-muted">
@@ -1555,6 +1557,19 @@ export function ReleaseList({
                   setIgnoredOpen(true);
                 }}
               />
+              {onOpenRelays && (
+                <MaintMenuItem
+                  icon={<Radio size={14} />}
+                  label="Relays & servers…"
+                  detail="Where releases publish and covers are stored"
+                  active={false}
+                  disabled={false}
+                  onClick={() => {
+                    setMaintMenuOpen(false);
+                    onOpenRelays();
+                  }}
+                />
+              )}
               <MaintMenuItem
                 icon={<FolderCog size={14} />}
                 label="Set library folder…"

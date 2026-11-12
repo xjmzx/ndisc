@@ -9,6 +9,7 @@ import {
   Table2,
   Radio,
   Home,
+  Tag,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -80,7 +81,6 @@ const THEME_STORAGE_KEY = "ndisc.theme";
 // Collapse the release-detail / add-release card to its header strip so the
 // Nostr + Label panels grow up to fill the right column. Shared suite gesture
 // (cf. ndisc.smpl / ndisc.tree flank collapse). Persisted.
-const DETAIL_COLLAPSED_KEY = "ndisc.detailCollapsed";
 /** Monochrome is the default: chrome greyscale, meaning keeps its colour. */
 type Theme = "fizx" | "upleb" | "mono";
 
@@ -302,14 +302,11 @@ export default function App() {
   // nav (title, library stats chip, toolbar) persists across views. Phase 3
   // wires the LineChart toolbar button to flip this state.
   const [view, setView] = useState<
-    "library" | "stats" | "table" | "current"
+    "library" | "stats" | "table" | "labels" | "current"
   >("library");
-  const [detailCollapsed, setDetailCollapsed] = useState(
-    () => localStorage.getItem(DETAIL_COLLAPSED_KEY) === "1",
-  );
-  useEffect(() => {
-    localStorage.setItem(DETAIL_COLLAPSED_KEY, detailCollapsed ? "1" : "0");
-  }, [detailCollapsed]);
+  // Relays & servers window — opened from the publishing strip on Home or the
+  // release list's ⋮ menu.
+  const [relaysOpen, setRelaysOpen] = useState(false);
 
   useEffect(() => {
     initDb()
@@ -625,6 +622,14 @@ export default function App() {
           </ToolbarIconButton>
           <ToolbarIconButton
             tone="digital"
+            pressed={view === "labels"}
+            title="Labels — the label list and label art"
+            onClick={() => setView("labels")}
+          >
+            <Tag size={14} />
+          </ToolbarIconButton>
+          <ToolbarIconButton
+            tone="digital"
             pressed={view === "current"}
             title="Current — the feed-note channel"
             onClick={() => setView("current")}
@@ -648,16 +653,15 @@ export default function App() {
               relays={relays}
               blossomServers={blossomServers}
               labelImageUrls={labelImageUrls}
+              onOpenRelays={() => setRelaysOpen(true)}
             />
           </div>
           <div
             className={cn(
-              "flex flex-col gap-2 lg:min-h-0 [scrollbar-gutter:stable]",
-              // Expanded: the column scrolls as a whole (the detail card is
-              // tall). Collapsed: the card is a strip, so the column stops
-              // scrolling and the panel grid below flexes to fill the freed
-              // height — the panels grow up into view.
-              detailCollapsed ? "lg:overflow-hidden" : "lg:overflow-y-auto",
+              "flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]",
+              // The card grows to fill the column, so the publishing strip
+              // sits at the bottom, level with the release list. A card taller
+              // than the window just makes the column scroll.
             )}
           >
             {selected ? (
@@ -668,22 +672,18 @@ export default function App() {
                 onDeleted={reload}
                 onChanged={handleReleaseChanged}
                 showUndoToast={showUndoToast}
-                collapsed={detailCollapsed}
-                onToggleCollapsed={() => setDetailCollapsed((v) => !v)}
+                className="lg:flex-1 lg:shrink-0"
               />
             ) : (
               <AddReleaseForm
                 onAdded={reload}
-                collapsed={detailCollapsed}
-                onToggleCollapsed={() => setDetailCollapsed((v) => !v)}
+                className="lg:flex-1 lg:shrink-0"
               />
             )}
-            <div
-              className={cn(
-                "grid grid-cols-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,4fr)] gap-2 items-stretch",
-                detailCollapsed && "lg:flex-1 lg:min-h-0",
-              )}
-            >
+            {/* Publishing strip, one row: it acts on the release list's
+                current filter, so it stays on Home beside the list. Relays and
+                Blossom servers open in their own window from here. */}
+            <div>
               <NostrPanel
                 relays={relays}
                 setRelays={setRelays}
@@ -693,14 +693,25 @@ export default function App() {
                 npub={npub}
                 onIdentityChanged={onIdentityChanged}
                 keyringStore={keyringStore}
-                roomy={detailCollapsed}
+                relaysOpen={relaysOpen}
+                setRelaysOpen={setRelaysOpen}
               />
+            </div>
+          </div>
+        </div>
+      ) : view === "stats" ? (
+        <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]">
+          <StatsView reloadKey={reloadKey} />
+        </div>
+      ) : view === "labels" ? (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]
+                        gap-2 items-stretch lg:flex-1 lg:min-h-0">
               <LabelviewPanel
                 labels={labels}
                 setLabels={setLabels}
                 reloadKey={reloadKey}
                 onPick={promptAddLabel}
-                fill={detailCollapsed}
+                fill
               />
               <LabelPanel
                 labels={labels}
@@ -717,14 +728,8 @@ export default function App() {
                 setFormUrl={setLabelFormUrl}
                 formSite={labelFormSite}
                 setFormSite={setLabelFormSite}
-                roomy={detailCollapsed}
+                roomy
               />
-            </div>
-          </div>
-        </div>
-      ) : view === "stats" ? (
-        <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]">
-          <StatsView reloadKey={reloadKey} />
         </div>
       ) : view === "table" ? (
         <div className="lg:flex-1 lg:min-h-0">

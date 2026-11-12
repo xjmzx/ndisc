@@ -4,11 +4,10 @@ import {
   Circle,
   Copy,
   KeyRound,
-  Library,
-  Radio,
   ShieldCheck,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
@@ -43,12 +42,10 @@ interface NostrPanelProps {
   // to end (see its doc comment in lib.rs). Shares the one value App.tsx already
   // fetches for the footer, so the two cannot drift apart again.
   keyringStore: string;
-  // True when the detail card is collapsed and this column has spare height.
-  // The panel then spends that height on richer relay rows (a liveness dot +
-  // round-trip readout) instead of stretching whitespace. Deliberately additive
-  // ONLY in this mode: with the detail card expanded the rows stay exactly as
-  // they were, so nothing below is pushed down. Mirrors LabelviewPanel's `fill`.
-  roomy?: boolean;
+  // The Relays & servers window. Lifted to App so the release list's ⋮ menu
+  // can open it too.
+  relaysOpen: boolean;
+  setRelaysOpen: (open: boolean) => void;
 }
 
 type Phase = "loggedOut" | "reveal" | "loggedIn";
@@ -110,22 +107,19 @@ export function NostrPanel({
   npub,
   onIdentityChanged,
   keyringStore,
-  roomy = false,
+  relaysOpen,
+  setRelaysOpen,
 }: NostrPanelProps) {
   const [newRelay, setNewRelay] = useState("");
 
-  // Relay liveness, keyed by url. Only probed while `roomy` — the dots are the
-  // only consumer, so there is no point paying for the network round trip when
-  // they aren't on screen.
+  // Relay liveness, keyed by url. Probed whenever an identity is loaded: the
+  // summary button on Home shows it, and the Relays & servers window lists it.
   const [health, setHealth] = useState<Map<string, RelayHealth>>(new Map());
   const [checking, setChecking] = useState(false);
   const relayKey = relays.join(",");
-  // Count against the CURRENT relay list, not the health map — a relay removed
-  // between probes would otherwise still be counted as connected.
-  const connectedCount = relays.filter((r) => health.get(r)?.ok).length;
 
   useEffect(() => {
-    if (!roomy || !npub || relays.length === 0) return;
+    if (!npub || relays.length === 0) return;
     let cancelled = false;
 
     async function probe() {
@@ -149,7 +143,7 @@ export function NostrPanel({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [roomy, npub, relayKey]);
+  }, [npub, relayKey]);
 
   const [revealedNsec, setRevealedNsec] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
@@ -319,12 +313,26 @@ export function NostrPanel({
     }
   }
 
+  // Summary dot: purple when every relay answers, amber when some do, red when
+  // none do, grey while unknown.
+  const connectedCount = relays.filter((r) => health.get(r)?.ok).length;
+  const relayDotClass =
+    relays.length === 0
+      ? "text-alert"
+      : health.size === 0
+        ? "text-muted"
+        : connectedCount === relays.length
+          ? "text-nostr"
+          : connectedCount === 0
+            ? "text-alert"
+            : "text-warn";
+
   function confirmRevealed() {
     setRevealedNsec(null);
   }
 
   return (
-    <Section title="" icon={<Radio size={16} />}>
+    <Section title="">
       {phase === "loggedOut" && (
         <>
           <p className="text-xs text-muted">
@@ -409,262 +417,76 @@ export function NostrPanel({
 
       {phase === "loggedIn" && npub && (
         <>
-          <div className="max-w-md">
-            <div className="flex items-baseline justify-between gap-2 mb-1">
-              <span className="text-xs text-muted">Relays</span>
-              {/* Roomy-only rollup of the dots below — one glance answers "is
-                  my relay set healthy?" without reading each row. */}
-              {roomy && relays.length > 0 && (
-                <span className="text-[10px] font-mono text-muted">
-                  {checking && health.size === 0 ? (
-                    "checking…"
-                  ) : (
-                    <>
-                      <span
-                        className={
-                          connectedCount === relays.length
-                            ? "text-nostr"
-                            : connectedCount === 0
-                              ? "text-alert"
-                              : "text-warn"
-                        }
-                      >
-                        {connectedCount}
-                      </span>
-                      /{relays.length} connected
-                    </>
-                  )}
-                </span>
-              )}
-            </div>
-            <ul className="space-y-1 mb-2">
-              {relays.map((r) => {
-                const h = health.get(r);
-                return (
-                  <li
-                    key={r}
-                    className={cn(
-                      `px-2 rounded bg-bg/50 font-mono text-xs flex
-                       items-center justify-between gap-2`,
-                      roomy ? "py-2" : "py-1",
-                    )}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{r}</span>
-                      {roomy && (
-                        <span className="block mt-0.5 text-[10px] text-muted">
-                          {h?.ok
-                            ? `connected · ${h.rttMs}ms`
-                            : h
-                              ? "unreachable"
-                              : checking
-                                ? "checking…"
-                                : "—"}
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      className={cn(
-                        "flex shrink-0 items-center gap-1.5",
-                        // Dot ABOVE the remove button — stacking is what buys
-                        // the row its extra height, so the reclaimed space is
-                        // paid for with information rather than padding.
-                        roomy ? "flex-col" : "flex-row",
-                      )}
-                    >
-                      {roomy && (
-                        <Circle
-                          size={7}
-                          fill="currentColor"
-                          className={cn(
-                            "shrink-0",
-                            h?.ok
-                              ? "text-nostr"
-                              : h
-                                ? "text-alert"
-                                : "text-muted animate-pulse",
-                          )}
-                          aria-label={
-                            h?.ok
-                              ? `${r} connected`
-                              : h
-                                ? `${r} unreachable`
-                                : `${r} status unknown`
-                          }
-                        >
-                          <title>
-                            {h?.ok
-                              ? `Connected — answered a REQ in ${h.rttMs}ms`
-                              : (h?.error ?? "Checking relay…")}
-                          </title>
-                        </Circle>
-                      )}
-                      <button
-                        onClick={() => setRelays(relays.filter((x) => x !== r))}
-                        className="text-muted hover:text-alert text-xs"
-                        aria-label={`Remove ${r}`}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newRelay}
-                onChange={(e) => setNewRelay(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addRelay()}
-                placeholder="wss://relay.example.com"
-                className="flex-1 px-3 py-1.5 rounded-md bg-surface text-fg
-                           placeholder:text-muted outline-none border
-                           border-transparent focus:border-accent/50 text-xs
-                           font-mono"
-                spellCheck={false}
-              />
-              <button
-                onClick={addRelay}
-                disabled={!newRelay.trim()}
-                className={`${DB_BUTTON_CLS} disabled:opacity-50`}
-              >
-                Add
-              </button>
-            </div>
-          </div>
-
-          {/* Blossom servers — where cover images live. Closed by default:
-              it is set once and rarely touched, and an open list here would
-              push the publish region down in the panel's tight (non-roomy)
-              layout. */}
-          <details className="max-w-md mt-3">
-            <summary className="text-xs text-muted cursor-pointer select-none">
-              Blossom servers{" "}
-              <span className="font-mono text-[10px]">
-                {blossomServers.length === 0 ? "none" : blossomServers.length}
-              </span>
-            </summary>
-            <p className="mt-1 mb-2 text-[10px] text-muted">
-              Cover images are stored here by their hash. The first server is
-              the one a release's cover URL points at; the others are mirrors.
-            </p>
-            <ul className="space-y-1 mb-2">
-              {blossomServers.map((s, i) => (
-                <li
-                  key={s}
-                  className="px-2 py-1 rounded bg-bg/50 font-mono text-xs flex
-                             items-center justify-between gap-2"
-                >
-                  <span className="min-w-0 flex-1 truncate">{s}</span>
-                  <span className="shrink-0 text-[10px] text-muted">
-                    {i === 0 ? "primary" : "mirror"}
-                  </span>
-                  <button
-                    onClick={() =>
-                      setBlossomServers(blossomServers.filter((x) => x !== s))
-                    }
-                    className="shrink-0 text-muted hover:text-alert text-xs"
-                    aria-label={`Remove ${s}`}
-                  >
-                    ✕
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newBlossom}
-                onChange={(e) => setNewBlossom(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addBlossom()}
-                placeholder="https://blossom.example.com"
-                className="flex-1 px-3 py-1.5 rounded-md bg-surface text-fg
-                           placeholder:text-muted outline-none border
-                           border-transparent focus:border-accent/50 text-xs
-                           font-mono"
-                spellCheck={false}
-              />
-              <button
-                onClick={addBlossom}
-                disabled={!newBlossom.trim()}
-                className={`${DB_BUTTON_CLS} disabled:opacity-50`}
-              >
-                Add
-              </button>
-            </div>
-            {blossomServers.length > 0 && (
-              <button
-                onClick={onPublishBlossomServers}
-                disabled={publishingBlossom || relays.length === 0}
-                className="mt-2 px-2 py-1 rounded bg-nostr/15 text-nostr
-                           hover:bg-nostr hover:text-bg text-[10px] font-medium
-                           transition-colors disabled:opacity-50"
-                title="Publish this list to your relays (kind:10063) so readers can find a cover by its hash on any of these servers"
-              >
-                {publishingBlossom ? "publishing…" : "Publish server list"}
-              </button>
-            )}
-            {blossomNote && (
-              <div
-                className={cn(
-                  "mt-1 text-[10px]",
-                  blossomNote.ok ? "text-ok" : "text-alert",
-                )}
-              >
-                {blossomNote.text}
-              </div>
-            )}
-          </details>
-
-          {/* Publishing is a different KIND of act from relay configuration:
-              the rows above edit local settings, this broadcasts to the
-              network and is not fully reversible. Rules top and bottom close
-              the region off so that boundary is stated rather than implied by
-              whitespace — and so the buttons never read as the tail of the
-              relay list. */}
-          <div
-            className={cn(
-              "max-w-md border-y border-surface",
-              roomy ? "mt-5 pt-3 pb-4" : "mt-4 pt-2.5 pb-3",
-            )}
-          >
-            {/* Icon, not the word "Library" — the heading only needs to say
-                "this region is about the library as a whole", and at this size
-                the shelf-of-books reads faster than 7 characters of type. */}
-            {/* text-accent to match the Section header icons (Section sets
-                text-accent on its header) — this is a region heading, so it
-                should read as one. */}
-            <div
-              className="text-accent"
-              title="Library — publish or retract releases as a set"
+          {/* One row: relay + server summary (opens the Relays & servers
+              window) on the left, publishing on the right. Publishing stays
+              on Home because it acts on the release list's current filter. */}
+          <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-8">
+            <button
+              type="button"
+              onClick={() => setRelaysOpen(true)}
+              title="Relays and Blossom servers — open the list"
+              className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5
+                         rounded-md bg-surface hover:bg-surfaceHover text-xs
+                         text-fg transition-colors"
             >
-              <Library size={16} aria-label="Library" />
+              <Circle
+                size={8}
+                fill="currentColor"
+                className={cn("shrink-0", relayDotClass)}
+                aria-hidden="true"
+              />
+              <span>
+                <span className="font-mono">{relays.length}</span>{" "}
+                {relays.length === 1 ? "relay" : "relays"} ·{" "}
+                <span className="font-mono">{blossomServers.length}</span>{" "}
+                {blossomServers.length === 1 ? "server" : "servers"}
+              </span>
+            </button>
+            <div className="flex-1 min-w-0">
+                <PublishLibraryBlock
+                  phase={publishPhase}
+                  action={libraryAction}
+                  progress={publishProgress}
+                  summary={publishSummary}
+                  relayCount={relays.length}
+                  error={publishError}
+                  filterContext={filterContext}
+                  onAskConfirm={(action) => {
+                    setLibraryAction(action);
+                    setPublishError(null);
+                    setPublishPhase("confirm");
+                  }}
+                  onCancel={() => setPublishPhase("idle")}
+                  onConfirm={runLibraryOp}
+                  onAcknowledgeDone={() => {
+                    setPublishPhase("idle");
+                    setPublishProgress(null);
+                    setPublishSummary(null);
+                  }}
+                />
             </div>
-            <PublishLibraryBlock
-              phase={publishPhase}
-              action={libraryAction}
-              progress={publishProgress}
-              summary={publishSummary}
-              relayCount={relays.length}
-              error={publishError}
-              filterContext={filterContext}
-              onAskConfirm={(action) => {
-                setLibraryAction(action);
-                setPublishError(null);
-                setPublishPhase("confirm");
-              }}
-              onCancel={() => setPublishPhase("idle")}
-              onConfirm={runLibraryOp}
-              onAcknowledgeDone={() => {
-                setPublishPhase("idle");
-                setPublishProgress(null);
-                setPublishSummary(null);
-              }}
-            />
           </div>
-
           {error && <div className="mt-2 text-alert text-xs">{error}</div>}
+          {relaysOpen && (
+            <RelaysDialog
+              relays={relays}
+              setRelays={setRelays}
+              health={health}
+              checking={checking}
+              newRelay={newRelay}
+              setNewRelay={setNewRelay}
+              addRelay={addRelay}
+              blossomServers={blossomServers}
+              setBlossomServers={setBlossomServers}
+              newBlossom={newBlossom}
+              setNewBlossom={setNewBlossom}
+              addBlossom={addBlossom}
+              onPublishBlossomServers={onPublishBlossomServers}
+              publishingBlossom={publishingBlossom}
+              blossomNote={blossomNote}
+              onClose={() => setRelaysOpen(false)}
+            />
+          )}
         </>
       )}
     </Section>
@@ -707,10 +529,11 @@ function PublishLibraryBlock({
   if (phase === "idle") {
     return (
       <>
+        <div className="flex gap-2">
         <button
           onClick={() => onAskConfirm("publish")}
           disabled={disabled}
-          className={`${DB_BUTTON_CLS} mt-3 w-full justify-center font-semibold
+          className={`${DB_BUTTON_CLS} flex-1 min-w-0 justify-center font-semibold
                       disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           <Upload size={14} />{" "}
@@ -726,7 +549,7 @@ function PublishLibraryBlock({
              Publish inverts its fill, so holding this one still and shifting
              only the icon + label (black → mauve) keeps the destructive action
              from flashing a big solid block under the cursor. */
-          className="mt-2 w-full flex items-center justify-center gap-1.5
+          className="flex-1 min-w-0 flex items-center justify-center gap-1.5
                      px-3 py-1.5 rounded-md text-xs bg-mauve/35 text-bg
                      font-semibold hover:text-mauve
                      disabled:opacity-50 disabled:cursor-not-allowed
@@ -735,6 +558,7 @@ function PublishLibraryBlock({
           <Trash2 size={14} />{" "}
           {filterActive ? `Unpublish ${countLabel}` : "Unpublish library"}
         </button>
+        </div>
         {filterActive && (
           <div className="mt-1 text-[10px] text-muted text-center">
             filter: {filterDescription}
@@ -757,7 +581,7 @@ function PublishLibraryBlock({
       "Each release in your library"
     );
     return (
-      <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 p-3">
+      <div className="rounded-md border border-warn/40 bg-warn/10 p-3">
         <div className="flex items-center gap-2 text-warn font-semibold text-xs">
           <AlertTriangle size={14} />{" "}
           {action === "publish"
@@ -964,6 +788,199 @@ function FieldRow({
         >
           <Copy size={11} /> {copied ? "✓" : ""}
         </button>
+      </div>
+    </div>
+  );
+}
+
+interface RelaysDialogProps {
+  relays: string[];
+  setRelays: (r: string[]) => void;
+  health: Map<string, RelayHealth>;
+  checking: boolean;
+  newRelay: string;
+  setNewRelay: (v: string) => void;
+  addRelay: () => void;
+  blossomServers: string[];
+  setBlossomServers: (s: string[]) => void;
+  newBlossom: string;
+  setNewBlossom: (v: string) => void;
+  addBlossom: () => void;
+  onPublishBlossomServers: () => void;
+  publishingBlossom: boolean;
+  blossomNote: { ok: boolean; text: string } | null;
+  onClose: () => void;
+}
+
+// Relays and Blossom servers, as plain rows: set up once, checked now and
+// then, so they live in a window rather than on Home. Rows scale to any
+// number of servers without reflowing anything else.
+function RelaysDialog(p: RelaysDialogProps) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && p.onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [p.onClose]);
+
+  const input =
+    "flex-1 min-w-0 px-3 py-1.5 rounded-md bg-surface text-fg placeholder:text-muted " +
+    "outline-none border border-transparent focus:border-accent/50 text-xs font-mono";
+  const row = "flex items-center gap-3 px-2 py-1.5 rounded bg-surface/30 text-xs";
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-start justify-center p-4
+                 bg-bg/70 backdrop-blur-sm"
+      onClick={p.onClose}
+    >
+      <div
+        className="w-full max-w-2xl mt-16 max-h-[calc(100%-6rem)] overflow-y-auto
+                   rounded-lg border border-surface/70 bg-panel shadow-xl p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-fg">Relays &amp; servers</h3>
+          <button
+            onClick={p.onClose}
+            className="text-muted hover:text-fg"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <h4 className="text-xs text-muted mb-1">
+          Relays — where releases are published
+          {p.checking && <span className="ml-2 text-[10px]">checking…</span>}
+        </h4>
+        <ul className="space-y-1 mb-2">
+          {p.relays.map((r) => {
+            const h = p.health.get(r);
+            return (
+              <li key={r} className={row}>
+                <Circle
+                  size={8}
+                  fill="currentColor"
+                  className={cn(
+                    "shrink-0",
+                    h?.ok ? "text-nostr" : h ? "text-alert" : "text-muted",
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-fg">{r}</span>
+                <span
+                  className={cn(
+                    "shrink-0 w-32 text-right text-[11px]",
+                    h?.ok ? "text-muted" : h ? "text-alert" : "text-muted",
+                  )}
+                  title={h && !h.ok ? (h.error ?? "unreachable") : undefined}
+                >
+                  {h?.ok
+                    ? `connected · ${h.rttMs}ms`
+                    : h
+                      ? "unreachable"
+                      : p.checking
+                        ? "checking…"
+                        : "—"}
+                </span>
+                <button
+                  onClick={() => p.setRelays(p.relays.filter((x) => x !== r))}
+                  className="shrink-0 text-muted hover:text-alert"
+                  aria-label={`Remove ${r}`}
+                >
+                  <X size={13} />
+                </button>
+              </li>
+            );
+          })}
+          {p.relays.length === 0 && (
+            <li className="px-2 py-1.5 text-xs text-alert">
+              No relays — add one to publish.
+            </li>
+          )}
+        </ul>
+        <div className="flex gap-2 mb-5">
+          <input
+            type="text"
+            value={p.newRelay}
+            onChange={(e) => p.setNewRelay(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && p.addRelay()}
+            placeholder="wss://relay.example.com"
+            className={input}
+            spellCheck={false}
+          />
+          <button
+            onClick={p.addRelay}
+            disabled={!p.newRelay.trim()}
+            className={`${DB_BUTTON_CLS} disabled:opacity-50`}
+          >
+            Add
+          </button>
+        </div>
+
+        <h4 className="text-xs text-muted mb-1">
+          Blossom servers — where cover images are stored, by their hash. The
+          first is the primary that cover URLs point at; the rest are mirrors.
+        </h4>
+        <ul className="space-y-1 mb-2">
+          {p.blossomServers.map((srv, i) => (
+            <li key={srv} className={row}>
+              <span className="min-w-0 flex-1 truncate font-mono text-fg">{srv}</span>
+              <span className="shrink-0 w-32 text-right text-[11px] text-muted">
+                {i === 0 ? "primary" : "mirror"}
+              </span>
+              <button
+                onClick={() =>
+                  p.setBlossomServers(p.blossomServers.filter((x) => x !== srv))
+                }
+                className="shrink-0 text-muted hover:text-alert"
+                aria-label={`Remove ${srv}`}
+              >
+                <X size={13} />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={p.newBlossom}
+            onChange={(e) => p.setNewBlossom(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && p.addBlossom()}
+            placeholder="https://blossom.example.com"
+            className={input}
+            spellCheck={false}
+          />
+          <button
+            onClick={p.addBlossom}
+            disabled={!p.newBlossom.trim()}
+            className={`${DB_BUTTON_CLS} disabled:opacity-50`}
+          >
+            Add
+          </button>
+        </div>
+        {p.blossomServers.length > 0 && (
+          <button
+            onClick={p.onPublishBlossomServers}
+            disabled={p.publishingBlossom || p.relays.length === 0}
+            className="mt-2 px-2 py-1 rounded bg-nostr/15 text-nostr
+                       hover:bg-nostr hover:text-bg text-[11px] font-medium
+                       transition-colors disabled:opacity-50"
+            title="Publish this list to your relays (kind:10063) so readers can find a cover by its hash on any of these servers"
+          >
+            {p.publishingBlossom ? "publishing…" : "Publish server list"}
+          </button>
+        )}
+        {p.blossomNote && (
+          <div
+            className={cn(
+              "mt-1 text-[11px]",
+              p.blossomNote.ok ? "text-ok" : "text-alert",
+            )}
+          >
+            {p.blossomNote.text}
+          </div>
+        )}
       </div>
     </div>
   );

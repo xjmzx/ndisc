@@ -5,9 +5,8 @@ import { addRelease, type Release } from "../lib/tauri";
 
 interface Props {
   onAdded: () => void;
-  // Collapse the add-release card to its header strip — shared suite gesture.
-  collapsed?: boolean;
-  onToggleCollapsed?: () => void;
+  // Extra classes for the card (Home makes it fill the column).
+  className?: string;
 }
 
 type Medium = "physical" | "digital";
@@ -31,8 +30,7 @@ const EMPTY: Release = {
 
 export function AddReleaseForm({
   onAdded,
-  collapsed,
-  onToggleCollapsed,
+  className,
 }: Props) {
   const [release, setRelease] = useState<Release>(EMPTY);
   const [saving, setSaving] = useState(false);
@@ -69,8 +67,7 @@ export function AddReleaseForm({
     <Section
       title="Add release"
       icon={<Plus size={16} />}
-      collapsed={collapsed}
-      onTitleClick={onToggleCollapsed}
+      className={className}
     >
       <form onSubmit={onSubmit} className="text-xs space-y-1.5">
         <MediumToggle
