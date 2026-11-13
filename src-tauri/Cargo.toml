@@ -1,6 +1,6 @@
 [package]
 name = "ndisc"
-version = "0.6.20"
+version = "0.6.21"
 description = "Music discography library — physical & digital releases, with Nostr sharing"
 authors = ["xjmzx"]
 edition = "2021"
@@ -40,6 +40,7 @@ nostr = "0.43"
 nostr-sdk = "0.43"
 # tokio's `time::sleep` for polite relay throttling in publish_library.
 tokio = { version = "1", features = ["time"] }
+futures = "0.3"
 # HTTP client for downloading cover images from nostr.build / Blossom hosts.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # Blossom authorization header: the signed kind:24242 event travels base64-

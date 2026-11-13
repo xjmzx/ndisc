@@ -5618,6 +5618,10 @@ async fn fetch_head(http: &reqwest::Client, url: &str, n: usize) -> Result<Vec<u
     let response = http
         .get(url)
         .header(reqwest::header::RANGE, format!("bytes=0-{}", n - 1))
+        // A header read is small; one that has not finished by now has
+        // stalled, and waiting out the client's two-minute upload timeout
+        // would hold the whole check up.
+        .timeout(Duration::from_secs(15))
         .send()
         .await
         .map_err(|e| format!("fetch {url}: {e}"))?;
@@ -5734,45 +5738,53 @@ async fn check_local_covers(app: tauri::AppHandle) -> Result<LocalCoverCheck, St
         });
     }
 
-    // Size the published images eight at a time: each is one ranged read, so
-    // the wait is the network's, not ours.
+    // Size the published images, up to eight reads in flight. A new read
+    // starts as soon as any one finishes, so a slow one holds up only itself.
+    // A failed read is tried once more before it becomes a warning.
+    use futures::stream::{self, StreamExt};
     let http = cover_http_client()?;
     let n = to_size.len();
-    let mut done = 0usize;
-    let mut rest = to_size.into_iter().peekable();
-    while rest.peek().is_some() {
-        let batch: Vec<LocalCoverItem> = rest.by_ref().take(8).collect();
-        let handles: Vec<_> = batch
-            .iter()
-            .map(|item| {
-                let http = http.clone();
-                let url = item.published_url.clone();
-                tauri::async_runtime::spawn(async move { fetch_head(&http, &url, 128 * 1024).await })
-            })
-            .collect();
-        for (mut item, handle) in batch.into_iter().zip(handles) {
-            done += 1;
-            let _ = app.emit(
-                "cover-local:progress",
-                ImportProgress {
-                    current: done,
-                    total: n,
-                    current_dir: format!("sizing {} — {}", item.artist, item.title),
-                },
-            );
-            match handle.await.map_err(|e| e.to_string()).and_then(|r| r) {
-                Ok(head) => item.published_dims = blossom::image_dims(&head),
-                Err(e) => result
-                    .warnings
-                    .push(format!("{} — {}: {e}", item.artist, item.title)),
+    let mut sized: Vec<(usize, LocalCoverItem, Result<Vec<u8>, String>)> =
+        Vec::with_capacity(n);
+    let mut reads = stream::iter(to_size.into_iter().enumerate())
+        .map(|(i, item)| {
+            let http = http.clone();
+            async move {
+                let mut head = fetch_head(&http, &item.published_url, 128 * 1024).await;
+                if head.is_err() {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    head = fetch_head(&http, &item.published_url, 128 * 1024).await;
+                }
+                (i, item, head)
             }
-            item.published_larger = match (item.local_dims, item.published_dims) {
-                (Some(l), Some(p)) => blossom::is_larger_same_shape(l, p),
-                _ => false,
-            };
-            item.shrunk = item.published_larger && item.changed_since_publish;
-            result.differing.push(item);
+        })
+        .buffer_unordered(8);
+    while let Some((i, item, head)) = reads.next().await {
+        let _ = app.emit(
+            "cover-local:progress",
+            ImportProgress {
+                current: sized.len() + 1,
+                total: n,
+                current_dir: format!("sizing {} — {}", item.artist, item.title),
+            },
+        );
+        sized.push((i, item, head));
+    }
+    // Back into catalogue order.
+    sized.sort_by_key(|(i, _, _)| *i);
+    for (_, mut item, head) in sized {
+        match head {
+            Ok(head) => item.published_dims = blossom::image_dims(&head),
+            Err(e) => result
+                .warnings
+                .push(format!("{} — {}: {e}", item.artist, item.title)),
         }
+        item.published_larger = match (item.local_dims, item.published_dims) {
+            (Some(l), Some(p)) => blossom::is_larger_same_shape(l, p),
+            _ => false,
+        };
+        item.shrunk = item.published_larger && item.changed_since_publish;
+        result.differing.push(item);
     }
     Ok(result)
 }

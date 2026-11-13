@@ -21,6 +21,11 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.21 — 2026-11-13
+
+### Fixed
+- Local covers vs Blossom: one stalled read no longer slows the whole check. Sizing the published images keeps eight reads in flight and starts the next as soon as any finishes (it used to wait for each group of eight to complete), a read gives up after 15 s instead of two minutes, and a failed read is tried once more before it becomes a warning.
+
 ## 0.6.20 — 2026-11-13
 
 ### Added
