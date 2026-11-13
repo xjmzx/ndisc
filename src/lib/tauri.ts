@@ -1100,6 +1100,28 @@ export async function tidyArtworkNames(apply: boolean): Promise<ArtworkTidy> {
   return invoke<ArtworkTidy>("tidy_artwork_names", { apply });
 }
 
+export interface FolderAssignment {
+  releaseId: number;
+  artist: string;
+  title: string;
+  medium: string;
+  folder: string;
+  // "create" | "link" | "taken"; after an apply "ok" or the error.
+  action: string;
+}
+
+export interface FolderAssignments {
+  root: string;
+  items: FolderAssignment[];
+  done: number;
+}
+
+// Give every release without a folder one under the library root
+// (<root>/<Artist>/<Title>). apply=false only reports. Publishes nothing.
+export async function assignReleaseFolders(apply: boolean): Promise<FolderAssignments> {
+  return invoke<FolderAssignments>("assign_release_folders", { apply });
+}
+
 export interface CoverMirroring {
   primary: string;
   mirrors: string[];

@@ -590,6 +590,23 @@ mod blossom;
 mod master_key;
 
 #[cfg(test)]
+mod release_folders {
+    use super::*;
+
+    #[test]
+    fn folder_names_are_safe_everywhere() {
+        assert_eq!(safe_folder_name("Vulcan Princess / Arcturus"), "Vulcan Princess _ Arcturus");
+        assert_eq!(safe_folder_name("ex:el"), "ex_el");
+        assert_eq!(safe_folder_name("You Should Get Out More..."), "You Should Get Out More");
+        assert_eq!(safe_folder_name("  A   B  "), "A B");
+        assert_eq!(safe_folder_name("Anybody Home ?"), "Anybody Home _");
+        assert_eq!(safe_folder_name("a<b>c\"d|e*f\\g"), "a_b_c_d_e_f_g");
+        assert_eq!(safe_folder_name("..."), "_");
+        assert_eq!(safe_folder_name("Funkstörung"), "Funkstörung");
+    }
+}
+
+#[cfg(test)]
 mod artwork_names {
     use super::*;
 
@@ -4755,6 +4772,162 @@ fn update_release_path(
 /// count against), clearing the derived present-count so completeness falls
 /// back to present = total. The opposite of update_release_path; used when a
 /// path was attached in error or the files have moved out of the library.
+/// A folder name that is valid on Linux, macOS and Windows: the characters
+/// Windows forbids (`<>:"/\\|?*` and control characters) become `_`, runs of
+/// whitespace collapse to one space, and trailing dots and spaces go (Windows
+/// drops them silently). Empty after that, it is `_`.
+fn safe_folder_name(name: &str) -> String {
+    let replaced: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let collapsed = replaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim_end_matches(['.', ' ']).trim_start().to_string();
+    if trimmed.is_empty() {
+        "_".into()
+    } else {
+        trimmed
+    }
+}
+
+/// One release without a folder, as the folder assignment sees it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAssignment {
+    pub release_id: i64,
+    pub artist: String,
+    pub title: String,
+    pub medium: String,
+    pub folder: String,
+    /// "create" (nothing there yet), "link" (an unlinked folder of that name
+    /// exists and will be used), or "taken" (it belongs to another release;
+    /// left alone). After an apply: "ok", or the error.
+    pub action: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAssignments {
+    pub root: String,
+    pub items: Vec<FolderAssignment>,
+    pub done: usize,
+}
+
+/// Give every release without a folder one under the library root:
+/// `<root>/<Artist>/<Title>`, names made safe for every OS. An artist folder
+/// that already exists under another capitalisation is reused, so a release
+/// joins its artist's other releases. A release folder that already exists is
+/// linked when no release owns it, and left alone (reported) when one does.
+///
+/// With `apply = false` it only reports. With `apply = true` it creates the
+/// folders and records `file_path`. It does NOT refresh the release: an empty
+/// folder must read as "no rip yet", and refresh already bails on a folder
+/// with no audio or video, so the track counts stay as they are. Library
+/// discovery imports only folders holding audio and skips linked ones, so an
+/// artwork-only folder never becomes a release of its own, and a rip added
+/// later lands in this release. Nothing is published; `file_path` is not part
+/// of the event. Follow with "Reconcile published covers" to download each
+/// release's published cover into its new folder.
+#[tauri::command]
+fn assign_release_folders(app: tauri::AppHandle, apply: bool) -> Result<FolderAssignments, String> {
+    let root = PathBuf::from(library_root(&app)?);
+    if !root.is_dir() {
+        return Err(format!("library root {} is not a folder", root.display()));
+    }
+    let conn = open(&app)?;
+    let rows: Vec<(i64, String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, artist, title, COALESCE(medium, '') FROM releases
+                  WHERE file_path IS NULL OR TRIM(file_path) = ''
+                  ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    // Existing artist folders by lower-cased name, to reuse their spelling.
+    let artist_dirs: HashMap<String, String> = std::fs::read_dir(&root)
+        .map_err(|e| format!("read {}: {e}", root.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .map(|n| (n.to_lowercase(), n))
+        .collect();
+
+    let mut out = FolderAssignments {
+        root: root.to_string_lossy().into_owned(),
+        items: Vec::new(),
+        done: 0,
+    };
+    let mut planned: HashSet<PathBuf> = HashSet::new();
+    for (id, artist, title, medium) in rows {
+        let a = safe_folder_name(&artist);
+        let a = artist_dirs.get(&a.to_lowercase()).cloned().unwrap_or(a);
+        let folder = root.join(&a).join(safe_folder_name(&title));
+        let folder_str = folder.to_string_lossy().into_owned();
+        let action = if !planned.insert(folder.clone()) {
+            "taken".to_string() // two releases without folders want one name
+        } else if folder.exists() {
+            let owned: bool = conn
+                .query_row(
+                    "SELECT 1 FROM releases WHERE file_path = ?1 LIMIT 1",
+                    params![folder_str],
+                    |_| Ok(true),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(false);
+            if owned { "taken".into() } else { "link".into() }
+        } else {
+            "create".into()
+        };
+        out.items.push(FolderAssignment {
+            release_id: id,
+            artist,
+            title,
+            medium,
+            folder: folder_str,
+            action,
+        });
+    }
+    if !apply {
+        return Ok(out);
+    }
+    for item in out.items.iter_mut() {
+        if item.action == "taken" {
+            continue;
+        }
+        let made = if item.action == "create" {
+            std::fs::create_dir_all(&item.folder).map_err(|e| format!("create folder: {e}"))
+        } else {
+            Ok(())
+        };
+        let linked = made.and_then(|_| {
+            conn.execute(
+                "UPDATE releases SET file_path = ?1, updated_at = strftime('%s','now')
+                  WHERE id = ?2 AND (file_path IS NULL OR TRIM(file_path) = '')",
+                params![item.folder, item.release_id],
+            )
+            .map_err(|e| e.to_string())
+        });
+        match linked {
+            Ok(_) => {
+                item.action = "ok".into();
+                out.done += 1;
+            }
+            Err(e) => item.action = e,
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 fn clear_release_path(app: tauri::AppHandle, release_id: i64) -> Result<(), String> {
     let conn = open(&app)?;
@@ -12008,6 +12181,7 @@ pub fn run() {
             clear_release_notes,
             publish_blossom_servers,
             update_release_path,
+            assign_release_folders,
             inspect_release_path,
             clear_release_path,
             generate_keypair,

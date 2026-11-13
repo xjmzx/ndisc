@@ -17,6 +17,7 @@ import {
   ImageOff,
   ImageUp,
   FileImage,
+  FolderPlus,
   Images,
   Link2,
   Link2Off,
@@ -62,6 +63,7 @@ import {
   mirrorCoversToBlossom,
   checkLocalCovers,
   tidyArtworkNames,
+  assignReleaseFolders,
   uploadLocalCovers,
   rescanLocalCovers,
   scanLibraryChanges,
@@ -91,6 +93,7 @@ import {
   type CoverMirroring,
   type LocalCoverCheck,
   type ArtworkTidy,
+  type FolderAssignments,
   type LocalCoverUploads,
   type PurgeSummary,
   type ReconcileSummary,
@@ -288,7 +291,8 @@ export function ReleaseList({
     | "coverMigrate"
     | "coverMirror"
     | "localCovers"
-    | "artworkNames";
+    | "artworkNames"
+    | "folders";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   // "localCovers" runs twice — the check, then the upload — and the progress
   // line says which.
@@ -318,6 +322,7 @@ export function ReleaseList({
     | { kind: "coverMigrate"; data: CoverMigration }
     | { kind: "coverMirror"; data: CoverMirroring }
     | { kind: "artworkNames"; data: ArtworkTidy }
+    | { kind: "folders"; data: FolderAssignments }
     | {
         kind: "localCovers";
         data: LocalCoverCheck;
@@ -515,6 +520,32 @@ export function ReleaseList({
   // Copy the covers on the primary Blossom server to the mirrors — the
   // follow-up to the check pass (runBackgroundOp("coverMirror")). Changes
   // nothing a release publishes; it only adds copies elsewhere.
+  // Create (or link) the listed folders. Changes the library on disk, so it
+  // is confirmed. Nothing is published; covers follow via Reconcile.
+  async function runFolderAssign(fa: FolderAssignments) {
+    const n = fa.items.filter((i) => i.action === "create" || i.action === "link").length;
+    if (activeOp !== null || n === 0) return;
+    const yes = await ask(
+      `Give ${n.toLocaleString()} release${n === 1 ? "" : "s"} a folder under ${fa.root}?\n\n` +
+        "Each gets <Artist>/<Title>, created empty, or an existing unlinked " +
+        "folder of that name is linked. Folders that belong to another release " +
+        "are left alone.\n\nNothing is published. Run “Reconcile published " +
+        "covers” afterwards to download each release's cover into its folder.",
+      { title: "Give every release a folder", kind: "info" },
+    );
+    if (!yes) return;
+    setActiveOp("folders");
+    setError(null);
+    try {
+      setOpSummary({ kind: "folders", data: await assignReleaseFolders(true) });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setActiveOp(null);
+    }
+  }
+
   // Rename each listed folder's only image to cover.<ext>. Changes files on
   // disk, so it is confirmed; every rename is logged and nothing is published.
   async function runArtworkRename(tidy: ArtworkTidy) {
@@ -714,6 +745,23 @@ export function ReleaseList({
 
     if (kind === "localCovers") {
       await runLocalCoverCheck();
+      return;
+    }
+
+    // Release folders — CHECK pass. Local and read-only: lists the releases
+    // with no folder and the one each would get. runFolderAssign applies it.
+    if (kind === "folders") {
+      setActiveOp("folders");
+      setOpSummary(null);
+      setOpProgress(null);
+      setError(null);
+      try {
+        setOpSummary({ kind: "folders", data: await assignReleaseFolders(false) });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
       return;
     }
 
@@ -1672,6 +1720,17 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<FolderPlus size={14} />}
+                label="Give every release a folder"
+                detail="Create <Artist>/<Title> for releases without one"
+                active={activeOp === "folders"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("folders");
+                }}
+              />
+              <MaintMenuItem
                 icon={<FileImage size={14} />}
                 label="Tidy artwork names"
                 detail="Name each folder's only image cover.*"
@@ -2257,6 +2316,57 @@ export function ReleaseList({
                 )}
               </>
             )}
+            {opSummary.kind === "folders" && (
+              <>
+                {opSummary.data.done > 0 && (
+                  <span className="text-ok">
+                    done <span className="font-mono">{opSummary.data.done}</span>
+                  </span>
+                )}
+                {opSummary.data.done === 0 && (
+                  <>
+                    <span className={opSummary.data.items.length > 0 ? "text-warn" : "text-muted"}>
+                      without a folder{" "}
+                      <span className="font-mono">{opSummary.data.items.length}</span>
+                    </span>
+                    <span className="text-muted">
+                      to create{" "}
+                      <span className="font-mono">
+                        {opSummary.data.items.filter((i) => i.action === "create").length}
+                      </span>
+                    </span>
+                    <span className="text-muted">
+                      to link{" "}
+                      <span className="font-mono">
+                        {opSummary.data.items.filter((i) => i.action === "link").length}
+                      </span>
+                    </span>
+                  </>
+                )}
+                {opSummary.data.items.some((i) => i.action === "taken") && (
+                  <span className="text-warn">
+                    name taken{" "}
+                    <span className="font-mono">
+                      {opSummary.data.items.filter((i) => i.action === "taken").length}
+                    </span>
+                  </span>
+                )}
+                {opSummary.data.done === 0 &&
+                  opSummary.data.items.some((i) => i.action === "create" || i.action === "link") && (
+                    <button
+                      onClick={() => runFolderAssign(opSummary.data)}
+                      className="px-2 py-0.5 rounded bg-mauve/15 text-mauve
+                                 hover:bg-mauve hover:text-bg text-[10px]
+                                 font-medium transition-colors"
+                      title="Create or link the listed folders"
+                    >
+                      Give{" "}
+                      {opSummary.data.items.filter((i) => i.action === "create" || i.action === "link").length}{" "}
+                      a folder
+                    </button>
+                  )}
+              </>
+            )}
             {opSummary.kind === "artworkNames" && (
               <>
                 {opSummary.data.renamed > 0 && (
@@ -2441,6 +2551,7 @@ export function ReleaseList({
               opSummary.kind !== "manifest" &&
               opSummary.kind !== "localCovers" &&
               opSummary.kind !== "artworkNames" &&
+              opSummary.kind !== "folders" &&
               opSummary.data.errors.length > 0 && (
                 <span className="text-alert">
                   errors{" "}
@@ -2511,6 +2622,49 @@ export function ReleaseList({
 
       {!activeOp && opSummary?.kind === "coverMigrate" && (
         <CoverMigrationDetails migration={opSummary.data} />
+      )}
+
+      {!activeOp && opSummary?.kind === "folders" && opSummary.data.items.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open>
+          <summary className="cursor-pointer text-xs text-muted">
+            {opSummary.data.done > 0
+              ? `${opSummary.data.done} folder${opSummary.data.done === 1 ? "" : "s"} assigned — run “Reconcile published covers” to fetch their covers`
+              : `${opSummary.data.items.length} release${opSummary.data.items.length === 1 ? "" : "s"} without a folder`}
+          </summary>
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {opSummary.data.items.map((i) => (
+              <li key={i.releaseId} className="px-2 py-1 rounded bg-bg/50">
+                <div className="text-fg">
+                  {i.artist} <span className="text-muted">·</span> {i.title}{" "}
+                  <span className="text-muted">({i.medium || "?"})</span>
+                </div>
+                <div className="text-muted font-mono break-all">
+                  {i.folder.startsWith(opSummary.data.root + "/")
+                    ? i.folder.slice(opSummary.data.root.length + 1)
+                    : i.folder}
+                </div>
+                <div
+                  className={cn(
+                    i.action === "ok" || i.action === "create" || i.action === "link"
+                      ? "text-muted"
+                      : "text-alert",
+                    "break-words",
+                  )}
+                >
+                  {i.action === "create"
+                    ? "will be created"
+                    : i.action === "link"
+                      ? "exists, not linked — will be linked"
+                      : i.action === "taken"
+                        ? "name already belongs to another release — left alone"
+                        : i.action === "ok"
+                          ? "done"
+                          : i.action}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {!activeOp && opSummary?.kind === "artworkNames" && (

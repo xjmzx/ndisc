@@ -21,6 +21,11 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.23 — 2026-11-13
+
+### Added
+- **Give every release a folder** (release list ⋮ menu): for each release with no folder, physical ones included, create `<library root>/<Artist>/<Title>` and attach it, so every release has a place for its artwork and a future rip. Names are made safe for every OS (`/ : ? *` and the like become `_`, trailing dots go), and an artist folder that already exists under another capitalisation is reused. A folder of that name that already exists is linked when no release owns it, and left alone and reported when one does. A check lists every folder first; nothing happens until you confirm. Nothing is published, and an empty folder reads as "no rip yet": the release is not refreshed, so its track counts are untouched. Run **Reconcile published covers** afterwards to download each release's published cover into its new folder.
+
 ## 0.6.22 — 2026-11-13
 
 ### Added
