@@ -425,9 +425,16 @@ export function NostrPanel({
               type="button"
               onClick={() => setRelaysOpen(true)}
               title="Relays and Blossom servers — open the list"
-              className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5
-                         rounded-md bg-surface hover:bg-surfaceHover text-xs
-                         text-fg transition-colors"
+              /* On a wide row the summary and the two publish buttons are
+                 three equal widths. The row has two gaps, gap-8 (2rem) here
+                 and gap-2 (0.5rem) between the buttons, so one third of what
+                 is left is (100% - 2.5rem) / 3; the buttons split the rest
+                 evenly and come out the same. Change either gap and this
+                 calc with it. */
+              className="shrink-0 inline-flex items-center justify-center gap-2
+                         px-3 py-1.5 rounded-md bg-surface hover:bg-surfaceHover
+                         text-xs text-fg transition-colors
+                         lg:w-[calc((100%-2.5rem)/3)]"
             >
               <Circle
                 size={8}
