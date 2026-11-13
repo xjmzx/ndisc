@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ImageOff, Link2Off, List, Search, X } from "lucide-react";
+import { ArrowDownAZ, ArrowDownWideNarrow, Check, ImageOff, Link2Off, List, Search, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { Section } from "./Section";
 import { listDistinctLabels, type LabelCount } from "../lib/tauri";
@@ -17,7 +17,6 @@ interface Props {
   fill?: boolean;
 }
 
-const MAX_DISPLAY = 36;
 // Safety cap on how many label rows we render at once. The list scrolls,
 // so this only guards against a pathological label count; if a library
 // ever exceeds it, pagination would be the next step. It caps what is DRAWN
@@ -30,8 +29,34 @@ function normaliseName(s: string): string {
   return s.trim().toLowerCase();
 }
 
-function truncateForDisplay(s: string): string {
-  return s.length > MAX_DISPLAY ? s.slice(0, MAX_DISPLAY - 1) + "…" : s;
+// The A–Z strip: "#" for names starting with a digit or a symbol, then A–Z.
+const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+
+// The letter a name files under: its first letter with accents removed
+// (Móatún → M), or "#" when it starts with anything else.
+function letterOf(name: string): string {
+  const c = name.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").charAt(0).toUpperCase();
+  return c >= "A" && c <= "Z" ? c : "#";
+}
+
+// Sort order, remembered per viewer. "count" is most releases first.
+type Sort = "count" | "az";
+const SORT_KEY = "ndisc.labelSort";
+
+function readSort(): Sort {
+  try {
+    return localStorage.getItem(SORT_KEY) === "az" ? "az" : "count";
+  } catch {
+    return "count";
+  }
+}
+
+function writeSort(sort: Sort): void {
+  try {
+    localStorage.setItem(SORT_KEY, sort);
+  } catch {
+    // Not remembered; the page still works.
+  }
 }
 
 export function LabelviewPanel({
@@ -45,6 +70,13 @@ export function LabelviewPanel({
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("library");
   const [noArtOnly, setNoArtOnly] = useState(false);
+  const [sort, setSortState] = useState<Sort>(readSort);
+  const setSort = (next: Sort) => {
+    setSortState(next);
+    writeSort(next);
+  };
+  // One letter from the A–Z strip, or null for all of them.
+  const [letter, setLetter] = useState<string | null>(null);
 
   useEffect(() => {
     listDistinctLabels()
@@ -121,13 +153,44 @@ export function LabelviewPanel({
     });
   }, [source, noArtOnly, byName]);
 
-  const filtered = useMemo(() => {
+  const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return artFiltered;
     return artFiltered.filter((n) => n.toLowerCase().includes(q));
   }, [artFiltered, query]);
 
+  // Letters that have at least one label under the current search and art
+  // filter; the rest of the strip is dimmed and inert.
+  const lettersInUse = useMemo(() => new Set(searched.map(letterOf)), [searched]);
+
+  const filtered = useMemo(() => {
+    const byLetter = letter ? searched.filter((n) => letterOf(n) === letter) : searched;
+    if (sort === "count") return byLetter;
+    return [...byLetter].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
+    );
+  }, [searched, letter, sort]);
+
+  // A letter that no longer has labels (the search changed) lets go.
+  useEffect(() => {
+    if (letter && !lettersInUse.has(letter)) setLetter(null);
+  }, [letter, lettersInUse]);
+
   const visible = filtered.slice(0, MAX_ROWS);
+
+  // In A–Z order the list is broken into one run per letter, each under its
+  // own heading. Sorted by count, it is one run.
+  const groups: { letter: string | null; names: string[] }[] = [];
+  if (sort === "az") {
+    for (const name of visible) {
+      const l = letterOf(name);
+      const last = groups[groups.length - 1];
+      if (last && last.letter === l) last.names.push(name);
+      else groups.push({ letter: l, names: [name] });
+    }
+  } else {
+    groups.push({ letter: null, names: visible });
+  }
 
   // How many of the filtered labels have artwork supplied — i.e. a label
   // entry with a non-empty image URL. Mirrors the lit checkmarks in the list.
@@ -211,9 +274,22 @@ export function LabelviewPanel({
       </span>
     ) : null;
 
+  const sortToggle = (
+    <button
+      type="button"
+      onClick={() => setSort(sort === "az" ? "count" : "az")}
+      title={sort === "az" ? "A–Z — sort by release count instead" : "By release count — sort A–Z instead"}
+      aria-label={sort === "az" ? "Sort by release count" : "Sort A to Z"}
+      className="transition-colors p-1 rounded-md hover:bg-surface text-muted hover:text-accent"
+    >
+      {sort === "az" ? <ArrowDownAZ size={12} /> : <ArrowDownWideNarrow size={12} />}
+    </button>
+  );
+
   const headerRight = (
     <div className="flex items-center gap-1">
       {labelledIndicator}
+      {sortToggle}
       {orphansToggle}
       {noArtToggle}
     </div>
@@ -241,26 +317,7 @@ export function LabelviewPanel({
     </div>
   );
 
-  return (
-    <Section
-      title={searchField}
-      icon={<List size={16} />}
-      right={headerRight}
-      className={cn(fill && "min-h-0")}
-      bodyClassName={cn(fill && "min-h-0")}
-    >
-      {/* Compact mode: a fixed height (≈8 rows) absorbing the rows freed by
-          moving search + the labelled indicator into the header, so the panel
-          keeps its footprint (empty library or not). Fill mode (detail card
-          collapsed): the list flexes to fill the freed column height, growing
-          the visible row count to whatever fits (≈24+). */}
-      <ul
-        className={cn(
-          "overflow-y-auto pr-1 space-y-0.5 [scrollbar-gutter:stable]",
-          fill ? "flex-1 min-h-0" : "h-[200px]",
-        )}
-      >
-        {visible.map((name) => {
+  function renderRow(name: string) {
           const entry = byName.get(normaliseName(name));
           const hasImage = entry != null && entry.imageUrl.length > 0;
           if (mode === "orphans") {
@@ -274,7 +331,7 @@ export function LabelviewPanel({
                     <Link2Off size={12} />
                   </span>
                   <span className="truncate flex-1" title={name}>
-                    {truncateForDisplay(name)}
+                    {name}
                   </span>
                   <button
                     type="button"
@@ -350,8 +407,10 @@ export function LabelviewPanel({
                     />
                   ))}
                 </span>
-                <span className="truncate flex-1">
-                  {truncateForDisplay(name)}
+                {/* The full name; CSS cuts it only when the row itself is too
+                    narrow, and the tooltip always has all of it. */}
+                <span className="truncate flex-1" title={name}>
+                  {name}
                 </span>
                 {count > 0 && (
                   <span
@@ -365,7 +424,92 @@ export function LabelviewPanel({
               </button>
             </li>
           );
+  }
+
+  return (
+    <Section
+      title={searchField}
+      icon={<List size={16} />}
+      right={headerRight}
+      className={cn(fill && "min-h-0")}
+      bodyClassName={cn(fill && "min-h-0")}
+    >
+      {/* Compact mode: a fixed height (≈8 rows) absorbing the rows freed by
+          moving search + the labelled indicator into the header, so the panel
+          keeps its footprint (empty library or not). Fill mode (detail card
+          collapsed): the list flexes to fill the freed column height, growing
+          the visible row count to whatever fits (≈24+). */}
+      {/* A–Z strip: jump to one letter; again (or the same letter) for all.
+          Letters with no labels under the current search are dimmed. */}
+      <div className="flex shrink-0 flex-wrap gap-0.5 pb-2 text-[10px] font-mono" aria-label="Filter by first letter">
+        {LETTERS.map((l) => {
+          const used = lettersInUse.has(l);
+          const on = letter === l;
+          return (
+            <button
+              key={l}
+              type="button"
+              disabled={!used}
+              onClick={() => setLetter(on ? null : l)}
+              aria-pressed={on}
+              title={on ? "Show all letters" : `Labels starting with ${l === "#" ? "a digit or symbol" : l}`}
+              className={cn(
+                "w-5 h-5 rounded flex items-center justify-center transition-colors",
+                on
+                  ? "bg-surface text-accent"
+                  : used
+                    ? "text-fg/70 hover:bg-surface hover:text-fg"
+                    : "text-muted/30 cursor-default",
+              )}
+            >
+              {l}
+            </button>
+          );
         })}
+        {/* Back to the whole list, most releases first: clears the letter
+            and the A–Z order in one click. */}
+        <button
+          type="button"
+          onClick={() => {
+            setLetter(null);
+            setSort("count");
+          }}
+          aria-pressed={!letter && sort === "count"}
+          title="All labels, most releases first"
+          className={cn(
+            "ml-auto h-5 px-2 rounded flex items-center gap-1 transition-colors",
+            !letter && sort === "count"
+              ? "bg-surface text-accent"
+              : "text-fg/70 hover:bg-surface hover:text-fg",
+          )}
+        >
+          <ArrowDownWideNarrow size={10} />
+          by count
+        </button>
+      </div>
+      {/* Two columns, filled row by row. In A–Z order each letter starts on a
+          heading across both columns. Compact mode keeps a fixed height;
+          fill mode grows to the column. */}
+      <div
+        className={cn(
+          "overflow-y-auto pr-1 [scrollbar-gutter:stable]",
+          fill ? "flex-1 min-h-0" : "h-[200px]",
+        )}
+      >
+        {groups.map((g) => (
+          <section key={g.letter ?? "all"} className="mb-1">
+            {g.letter && (
+              <h3 className="sticky top-0 z-10 bg-panel px-2 pt-2 pb-1 text-[11px] font-mono text-accent border-b border-surface/60">
+                {g.letter}
+                <span className="ml-2 text-muted">{g.names.length}</span>
+              </h3>
+            )}
+            <ul className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-0.5 pt-0.5">
+              {g.names.map((name) => renderRow(name))}
+            </ul>
+          </section>
+        ))}
+        <ul>
         {filtered.length === 0 && (
           <li className="px-2 py-1 text-[10px] text-muted">
             {noArtOnly
@@ -379,7 +523,8 @@ export function LabelviewPanel({
                   : "no matches"}
           </li>
         )}
-      </ul>
+        </ul>
+      </div>
     </Section>
   );
 }

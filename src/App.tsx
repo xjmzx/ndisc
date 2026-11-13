@@ -711,7 +711,9 @@ export default function App() {
           <StatsView reloadKey={reloadKey} />
         </div>
       ) : view === "labels" ? (
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]
+        // The label list takes three fifths: two columns of names need the
+        // width more than the label editor (a square image over three fields).
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]
                         gap-2 items-stretch lg:flex-1 lg:min-h-0">
               <LabelviewPanel
                 labels={labels}
