@@ -33,7 +33,15 @@ published":
 2. **Published with no local file**: no `cover_art_path`, or it no longer
    resolves. Show the published size (one ranged read, as the sizing pass
    does). Nothing to upload; flag it when it is over the size the library is
-   kept to, or not square.
+   kept to, or not square. Since 0.6.23 every release, physical included, is
+   meant to have a folder ("Give every release a folder"), and "Reconcile
+   published covers" fills it. So a release still without a local cover is a
+   real gap: either its folder lacks an image, or it has no folder yet (16 on
+   2026-11-13: 15 physical and one manual digital entry, before 0.6.23 ran).
+3. **No cover at all**: no cover URL and no local file (1 on 2026-11-13).
+
+With these, the check doubles as a sweep that every release has a local cover
+on disk and a published cover on Blossom, and says which ones do not and why.
 
 Both lists go into the export below.
 
