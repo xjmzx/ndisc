@@ -21,6 +21,14 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.22 — 2026-11-13
+
+### Added
+- **Tidy artwork names** (release list ⋮ menu): for each release folder that holds exactly one image, rename it to `cover.<ext>` (`.jpeg` becomes `.jpg`) and point the release at it. A check lists every rename first; nothing happens until you confirm. Never renames over an existing file, never publishes, and logs each rename (from, to, time) to `artwork-renames.tsv` in ndisc's data folder. Left alone and listed: a sole image in a subfolder, and one named like other artwork (back, tray, inlay, disc, label…). Folders with several images are only counted.
+
+### Changed
+- Extract embedded artwork names the file `cover.<ext>` when the release folder has no image yet, and `cover-extracted.<ext>` otherwise (it was always `cover-extracted`).
+
 ## 0.6.21 — 2026-11-13
 
 ### Fixed

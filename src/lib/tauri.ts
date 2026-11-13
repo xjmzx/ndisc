@@ -1071,6 +1071,35 @@ export async function uploadLocalCovers(
   return invoke<LocalCoverUploads>("upload_local_covers", { releaseIds, servers });
 }
 
+export interface ArtworkRename {
+  releaseId: number;
+  artist: string;
+  title: string;
+  from: string;
+  to: string;
+  // After an apply: "ok", or the error. null in check-only mode.
+  status: string | null;
+}
+
+export interface ArtworkTidy {
+  folders: number;
+  // Folders already holding exactly one image named cover.<ext>.
+  already: number;
+  // Folders with more than one image — left for a person.
+  several: number;
+  renames: ArtworkRename[];
+  skipped: { artist: string; title: string; file: string; reason: string }[];
+  renamed: number;
+  // Where the renames were recorded, after an apply.
+  log: string | null;
+}
+
+// Rename each release folder's only image to cover.<ext> and point the release
+// at it. apply=false only reports. Never overwrites; publishes nothing.
+export async function tidyArtworkNames(apply: boolean): Promise<ArtworkTidy> {
+  return invoke<ArtworkTidy>("tidy_artwork_names", { apply });
+}
+
 export interface CoverMirroring {
   primary: string;
   mirrors: string[];

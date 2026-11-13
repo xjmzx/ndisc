@@ -590,6 +590,43 @@ mod blossom;
 mod master_key;
 
 #[cfg(test)]
+mod artwork_names {
+    use super::*;
+
+    #[test]
+    fn extracted_art_is_the_cover_only_in_an_empty_folder() {
+        assert_eq!(extracted_cover_name(&[], "jpg"), "cover.jpg");
+        assert_eq!(extracted_cover_name(&["cover.png".into()], "jpg"), "cover-extracted.jpg");
+        assert_eq!(extracted_cover_name(&["back.jpg".into()], "png"), "cover-extracted.png");
+    }
+
+    #[test]
+    fn tidy_names() {
+        assert_eq!(tidy_cover_name("folder.jpg").as_deref(), Some("cover.jpg"));
+        assert_eq!(tidy_cover_name("Cover.JPG").as_deref(), Some("cover.jpg"));
+        assert_eq!(tidy_cover_name("cover.jpeg").as_deref(), Some("cover.jpg"));
+        assert_eq!(tidy_cover_name("cover-extracted.png").as_deref(), Some("cover.png"));
+        assert_eq!(tidy_cover_name("shop-name-release.webp").as_deref(), Some("cover.webp"));
+        assert_eq!(tidy_cover_name("cover.jpg"), None);
+        assert_eq!(tidy_cover_name("cover.png"), None);
+        assert_eq!(tidy_cover_name("noext"), None);
+    }
+
+    #[test]
+    fn alternate_art_is_recognised_and_shop_names_are_not() {
+        for s in ["back", "Back", "tray", "cd-label", "disc_2", "back cover", "inlay 1"] {
+            assert!(is_alternate_art_name(s), "{s}");
+        }
+        for s in ["folder", "cover-extracted", "artist-release-name", "R-46375-1247107150", "Front"] {
+            assert!(!is_alternate_art_name(s), "{s}");
+        }
+        // The cover score still vetoes them.
+        assert_eq!(cover_name_score("back", "Album"), 0);
+        assert_eq!(cover_name_score("cover", "Album"), 100);
+    }
+}
+
+#[cfg(test)]
 mod notes_review {
     use super::*;
 
@@ -9448,15 +9485,12 @@ fn is_image_ext(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-// Score a filename stem as a likely album-front cover. Higher = more likely.
-// Returns 0 for files that match alternate-art patterns (back cover, tray,
-// disc art, etc.) so we never prefer those even if no obvious cover exists.
-fn cover_name_score(stem: &str, dir_name: &str) -> u32 {
+/// A file stem that names artwork other than the front cover: back, tray,
+/// inlay, inside, booklet, spine, label, obi or disc, as a standalone token or
+/// a prefix/suffix, or "back cover" / "disc art". Such an image never becomes
+/// the cover, even when it is the only one.
+fn is_alternate_art_name(stem: &str) -> bool {
     let stem_lc = stem.to_lowercase();
-    let dir_lc = dir_name.to_lowercase();
-
-    // Alternate-art patterns: standalone token, qualifier prefix/suffix, or
-    // compound "back cover" forms. Veto outright.
     const NEG: &[&str] = &[
         "back", "tray", "inlay", "inside", "booklet", "spine", "label", "obi",
         "disc",
@@ -9470,7 +9504,7 @@ fn cover_name_score(stem: &str, dir_name: &str) -> u32 {
             || stem_lc.starts_with(&format!("{}-", tok))
             || stem_lc.starts_with(&format!("{} ", tok))
         {
-            return 0;
+            return true;
         }
     }
     if stem_lc.contains("back cover")
@@ -9478,9 +9512,21 @@ fn cover_name_score(stem: &str, dir_name: &str) -> u32 {
         || stem_lc.contains("back-cover")
         || stem_lc.contains("disc art")
     {
-        return 0;
+        return true;
     }
 
+    false
+}
+
+// Score a filename stem as a likely album-front cover. Higher = more likely.
+// Returns 0 for files that match alternate-art patterns (back cover, tray,
+// disc art, etc.) so we never prefer those even if no obvious cover exists.
+fn cover_name_score(stem: &str, dir_name: &str) -> u32 {
+    let stem_lc = stem.to_lowercase();
+    let dir_lc = dir_name.to_lowercase();
+    if is_alternate_art_name(stem) {
+        return 0;
+    }
     // Strict known names.
     match stem_lc.as_str() {
         "cover" | "folder" | "front" => return 100,
@@ -10255,6 +10301,254 @@ fn extract_picture_from(audio_path: &Path) -> Option<(Vec<u8>, &'static str)> {
     Some((data, ext))
 }
 
+/// File names of the images directly in `dir` (not its subfolders).
+fn image_names_in(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|e| e.ok()).map(|e| e.path()))
+        .filter(|p| p.is_file() && is_image_ext(p))
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+        .collect()
+}
+
+/// What to call artwork extracted from a release's audio: `cover.<ext>` when
+/// the folder has no image yet, so a release with only embedded art ends up
+/// with a properly named cover; otherwise `cover-extracted.<ext>`, which never
+/// takes a name an existing image already has.
+fn extracted_cover_name(existing: &[String], ext: &str) -> String {
+    if existing.is_empty() {
+        format!("cover.{ext}")
+    } else {
+        format!("cover-extracted.{ext}")
+    }
+}
+
+/// One rename the artwork-name tidy proposes (or made).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtworkRename {
+    pub release_id: i64,
+    pub artist: String,
+    pub title: String,
+    pub from: String,
+    pub to: String,
+    /// After an apply: "ok", or the error. None in check-only mode.
+    pub status: Option<String>,
+}
+
+/// A release folder the tidy left alone, and why.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtworkSkip {
+    pub artist: String,
+    pub title: String,
+    pub file: String,
+    pub reason: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtworkTidy {
+    /// Release folders looked at.
+    pub folders: usize,
+    /// Of those, already holding exactly one image named `cover.<ext>`.
+    pub already: usize,
+    /// Folders with more than one image — for a person to sort out.
+    pub several: usize,
+    pub renames: Vec<ArtworkRename>,
+    pub skipped: Vec<ArtworkSkip>,
+    pub renamed: usize,
+    /// Where each rename is recorded (from, to), so it can be undone.
+    pub log: Option<String>,
+}
+
+/// The name a folder's only image should have: `cover.` plus its extension in
+/// lower case, `.jpeg` written `.jpg`. None when it already has it.
+fn tidy_cover_name(file_name: &str) -> Option<String> {
+    let (_, ext) = file_name.rsplit_once('.')?;
+    let ext = match ext.to_ascii_lowercase().as_str() {
+        "jpeg" => "jpg".to_string(),
+        e => e.to_string(),
+    };
+    let want = format!("cover.{ext}");
+    (file_name != want).then_some(want)
+}
+
+/// Every image in a release folder, its disc subfolders and any other
+/// subfolder, as paths. Hidden entries are ignored.
+fn images_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.filter_map(|e| e.ok()) {
+            let p = e.path();
+            let hidden = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with('.'))
+                .unwrap_or(true);
+            if hidden {
+                continue;
+            }
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.is_file() && is_image_ext(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Give every release folder that holds exactly one image the name
+/// `cover.<ext>`, and point the release at it.
+///
+/// Only a sole image directly in the release folder is renamed. Left alone,
+/// and listed: a sole image in a subfolder, and one named like other artwork
+/// (back, tray, disc, label… — `is_alternate_art_name`), which should not become
+/// the cover just because it is alone. A folder with several images is only
+/// counted; choosing among them is a person's job.
+///
+/// With `apply = false` it only reports. With `apply = true` it renames, never
+/// over an existing file, sets the release's `cover_art_path` to the new name,
+/// and appends each rename to `artwork-renames.tsv` in the app's data folder.
+/// The cover path is not part of the published event, so nothing goes stale.
+#[tauri::command]
+async fn tidy_artwork_names(app: tauri::AppHandle, apply: bool) -> Result<ArtworkTidy, String> {
+    tauri::async_runtime::spawn_blocking(move || tidy_artwork_names_blocking(app, apply))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn tidy_artwork_names_blocking(app: tauri::AppHandle, apply: bool) -> Result<ArtworkTidy, String> {
+    let rows: Vec<(i64, String, String, String)> = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, artist, title, file_path FROM releases
+                  WHERE file_path IS NOT NULL AND TRIM(file_path) <> ''
+                  ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let mut out = ArtworkTidy {
+        folders: 0,
+        already: 0,
+        several: 0,
+        renames: Vec::new(),
+        skipped: Vec::new(),
+        renamed: 0,
+        log: None,
+    };
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    for (id, artist, title, file_path) in rows {
+        let dir = PathBuf::from(file_path.trim());
+        if !dir.is_dir() || !seen.insert(dir.clone()) {
+            continue;
+        }
+        out.folders += 1;
+        let images = images_under(&dir);
+        if images.len() != 1 {
+            if images.len() > 1 {
+                out.several += 1;
+            }
+            continue;
+        }
+        let img = &images[0];
+        let name = img.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        let shown = img.strip_prefix(&dir).unwrap_or(img).to_string_lossy().into_owned();
+        if img.parent() != Some(dir.as_path()) {
+            out.skipped.push(ArtworkSkip {
+                artist,
+                title,
+                file: shown,
+                reason: "the only image is in a subfolder".into(),
+            });
+            continue;
+        }
+        let stem = img.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if is_alternate_art_name(stem) {
+            out.skipped.push(ArtworkSkip {
+                artist,
+                title,
+                file: shown,
+                reason: "named like other artwork (back, tray, disc, label…)".into(),
+            });
+            continue;
+        }
+        match tidy_cover_name(&name) {
+            None => out.already += 1,
+            Some(to) => out.renames.push(ArtworkRename {
+                release_id: id,
+                artist,
+                title,
+                from: img.to_string_lossy().into_owned(),
+                to: dir.join(&to).to_string_lossy().into_owned(),
+                status: None,
+            }),
+        }
+    }
+    if !apply || out.renames.is_empty() {
+        return Ok(out);
+    }
+
+    // Debug builds keep their own log, like their own DB and config.
+    let log_name = if cfg!(debug_assertions) {
+        "artwork-renames-dev.tsv"
+    } else {
+        "artwork-renames.tsv"
+    };
+    let log_path = app_data_dir(&app)?.join(log_name);
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| format!("open {}: {e}", log_path.display()))?;
+    out.log = Some(log_path.to_string_lossy().into_owned());
+    let conn = open(&app)?;
+    for r in out.renames.iter_mut() {
+        let (from, to) = (Path::new(&r.from), Path::new(&r.to));
+        // A case-only rename (Cover.jpg -> cover.jpg) is the same file on a
+        // case-insensitive filesystem; anything else already there is not ours.
+        let same_file = from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase();
+        if to.exists() && !same_file {
+            r.status = Some(format!("{} already exists", to.display()));
+            continue;
+        }
+        if let Err(e) = std::fs::rename(from, to) {
+            r.status = Some(format!("rename failed: {e}"));
+            continue;
+        }
+        use std::io::Write;
+        let _ = writeln!(log, "{}\t{}\t{}", r.from, r.to, chrono_now_secs());
+        match conn.execute(
+            "UPDATE releases SET cover_art_path = ?1, updated_at = strftime('%s','now') WHERE id = ?2",
+            params![r.to, r.release_id],
+        ) {
+            Ok(_) => {
+                r.status = Some("ok".into());
+                out.renamed += 1;
+            }
+            Err(e) => r.status = Some(format!("renamed, but the DB update failed: {e}")),
+        }
+    }
+    Ok(out)
+}
+
+fn chrono_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 async fn extract_embedded_covers(app: tauri::AppHandle) -> Result<ExtractSummary, String> {
     tauri::async_runtime::spawn_blocking(move || extract_embedded_covers_blocking(app))
@@ -10335,7 +10629,7 @@ fn extract_embedded_covers_blocking(app: tauri::AppHandle) -> Result<ExtractSumm
             continue;
         };
 
-        let out = album_dir.join(format!("cover-extracted.{}", ext));
+        let out = album_dir.join(extracted_cover_name(&image_names_in(&album_dir), ext));
         if let Err(e) = std::fs::write(&out, &data) {
             summary
                 .errors
@@ -11692,6 +11986,7 @@ pub fn run() {
             enrich_discogs_library,
             physical_releases_missing_pressing,
             extract_embedded_covers,
+            tidy_artwork_names,
             rescan_local_covers,
             refresh_release,
             scan_library_changes,

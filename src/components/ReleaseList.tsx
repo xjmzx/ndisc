@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
   ImageOff,
   ImageUp,
+  FileImage,
   Images,
   Link2,
   Link2Off,
@@ -60,6 +61,7 @@ import {
   listReleaseNotes,
   mirrorCoversToBlossom,
   checkLocalCovers,
+  tidyArtworkNames,
   uploadLocalCovers,
   rescanLocalCovers,
   scanLibraryChanges,
@@ -88,6 +90,7 @@ import {
   type NoteGroup,
   type CoverMirroring,
   type LocalCoverCheck,
+  type ArtworkTidy,
   type LocalCoverUploads,
   type PurgeSummary,
   type ReconcileSummary,
@@ -284,7 +287,8 @@ export function ReleaseList({
     | "coverGap"
     | "coverMigrate"
     | "coverMirror"
-    | "localCovers";
+    | "localCovers"
+    | "artworkNames";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
   // "localCovers" runs twice — the check, then the upload — and the progress
   // line says which.
@@ -313,6 +317,7 @@ export function ReleaseList({
     | { kind: "coverGap"; data: PublishedCoverReconcile }
     | { kind: "coverMigrate"; data: CoverMigration }
     | { kind: "coverMirror"; data: CoverMirroring }
+    | { kind: "artworkNames"; data: ArtworkTidy }
     | {
         kind: "localCovers";
         data: LocalCoverCheck;
@@ -510,6 +515,32 @@ export function ReleaseList({
   // Copy the covers on the primary Blossom server to the mirrors — the
   // follow-up to the check pass (runBackgroundOp("coverMirror")). Changes
   // nothing a release publishes; it only adds copies elsewhere.
+  // Rename each listed folder's only image to cover.<ext>. Changes files on
+  // disk, so it is confirmed; every rename is logged and nothing is published.
+  async function runArtworkRename(tidy: ArtworkTidy) {
+    const n = tidy.renames.filter((r) => r.status !== "ok").length;
+    if (activeOp !== null || n === 0) return;
+    const yes = await ask(
+      `Rename ${n.toLocaleString()} image${n === 1 ? "" : "s"} to cover.*?\n\n` +
+        "Each is the only image in its release folder. It is renamed in place " +
+        "(.jpeg becomes .jpg), never over an existing file, and the release " +
+        "points at the new name. Every rename is logged in artwork-renames.tsv " +
+        "in ndisc's data folder.\n\nNothing is published or uploaded.",
+      { title: "Tidy artwork names", kind: "info" },
+    );
+    if (!yes) return;
+    setActiveOp("artworkNames");
+    setError(null);
+    try {
+      setOpSummary({ kind: "artworkNames", data: await tidyArtworkNames(true) });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setActiveOp(null);
+    }
+  }
+
   // Local covers vs Blossom — CHECK pass (runBackgroundOp("localCovers")).
   // Read-only: hashes every published release's cover file against the hash in
   // its Blossom URL, then sizes the mismatches. Network: one ranged read per
@@ -683,6 +714,23 @@ export function ReleaseList({
 
     if (kind === "localCovers") {
       await runLocalCoverCheck();
+      return;
+    }
+
+    // Artwork names — CHECK pass. Read-only and local: lists the folders whose
+    // only image is not yet called cover.<ext>. runArtworkRename applies it.
+    if (kind === "artworkNames") {
+      setActiveOp("artworkNames");
+      setOpSummary(null);
+      setOpProgress(null);
+      setError(null);
+      try {
+        setOpSummary({ kind: "artworkNames", data: await tidyArtworkNames(false) });
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setActiveOp(null);
+      }
       return;
     }
 
@@ -1624,6 +1672,17 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<FileImage size={14} />}
+                label="Tidy artwork names"
+                detail="Name each folder's only image cover.*"
+                active={activeOp === "artworkNames"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("artworkNames");
+                }}
+              />
+              <MaintMenuItem
                 icon={<Images size={14} />}
                 label="Local covers vs Blossom"
                 detail="Find covers changed on disk since publishing, then upload the chosen"
@@ -2198,6 +2257,47 @@ export function ReleaseList({
                 )}
               </>
             )}
+            {opSummary.kind === "artworkNames" && (
+              <>
+                {opSummary.data.renamed > 0 && (
+                  <span className="text-ok">
+                    renamed{" "}
+                    <span className="font-mono">{opSummary.data.renamed}</span>
+                  </span>
+                )}
+                <span
+                  className={
+                    opSummary.data.renames.some((r) => r.status !== "ok")
+                      ? "text-warn"
+                      : "text-muted"
+                  }
+                >
+                  {opSummary.data.renamed > 0 ? "not renamed" : "to rename"}{" "}
+                  <span className="font-mono">
+                    {opSummary.data.renames.filter((r) => r.status !== "ok").length}
+                  </span>
+                </span>
+                <span className="text-muted">
+                  already cover.*{" "}
+                  <span className="font-mono">{opSummary.data.already}</span>
+                </span>
+                <span className="text-muted">
+                  several images{" "}
+                  <span className="font-mono">{opSummary.data.several}</span>
+                </span>
+                {opSummary.data.renamed === 0 && opSummary.data.renames.length > 0 && (
+                  <button
+                    onClick={() => runArtworkRename(opSummary.data)}
+                    className="px-2 py-0.5 rounded bg-mauve/15 text-mauve
+                               hover:bg-mauve hover:text-bg text-[10px]
+                               font-medium transition-colors"
+                    title="Rename each listed image to cover.* in its folder"
+                  >
+                    Rename {opSummary.data.renames.length}
+                  </button>
+                )}
+              </>
+            )}
             {opSummary.kind === "localCovers" && (
               <>
                 {opSummary.uploads && (
@@ -2340,6 +2440,7 @@ export function ReleaseList({
             {opSummary.kind !== "reconcile" &&
               opSummary.kind !== "manifest" &&
               opSummary.kind !== "localCovers" &&
+              opSummary.kind !== "artworkNames" &&
               opSummary.data.errors.length > 0 && (
                 <span className="text-alert">
                   errors{" "}
@@ -2410,6 +2511,10 @@ export function ReleaseList({
 
       {!activeOp && opSummary?.kind === "coverMigrate" && (
         <CoverMigrationDetails migration={opSummary.data} />
+      )}
+
+      {!activeOp && opSummary?.kind === "artworkNames" && (
+        <ArtworkTidyDetails tidy={opSummary.data} />
       )}
 
       {!activeOp && opSummary?.kind === "localCovers" && (
@@ -3415,6 +3520,65 @@ function RelayAuditPanel({
 // count already says how many). After a run: every cover that did not move,
 // with the reason, then the warnings — those are what needs a decision.
 const COVER_MIGRATION_PREVIEW = 100;
+
+// The renames the artwork-name tidy proposes (or the ones that failed, after a
+// run), and the folders it left alone with the reason.
+function ArtworkTidyDetails({ tidy }: { tidy: ArtworkTidy }) {
+  const ran = tidy.renamed > 0 || tidy.renames.some((r) => r.status !== null);
+  const rows = ran ? tidy.renames.filter((r) => r.status !== "ok") : tidy.renames;
+  const base = (p: string) => p.split("/").pop() ?? p;
+  return (
+    <>
+      {ran && tidy.log && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs text-muted break-all">
+          {tidy.renamed.toLocaleString()} renamed · logged in{" "}
+          <span className="font-mono">{tidy.log}</span>
+        </div>
+      )}
+      {rows.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open={!ran}>
+          <summary className={cn("cursor-pointer text-xs", ran ? "text-alert" : "text-warn")}>
+            {ran
+              ? `${rows.length} not renamed`
+              : `${rows.length} folder${rows.length === 1 ? "" : "s"} whose only image is not cover.*`}
+          </summary>
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {rows.map((r) => (
+              <li key={r.releaseId} className="px-2 py-1 rounded bg-bg/50">
+                <div className="text-fg">
+                  {r.artist} <span className="text-muted">·</span> {r.title}
+                </div>
+                <div className="text-muted font-mono break-all">
+                  {base(r.from)} → {base(r.to)}
+                </div>
+                {ran && <div className="text-alert break-words">{r.status}</div>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {tidy.skipped.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary className="text-muted cursor-pointer text-xs">
+            {tidy.skipped.length} left alone
+          </summary>
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {tidy.skipped.map((k, i) => (
+              <li key={i} className="px-2 py-1 rounded bg-bg/50">
+                <div className="text-fg">
+                  {k.artist} <span className="text-muted">·</span> {k.title}
+                </div>
+                <div className="text-muted font-mono break-all">
+                  {k.file} — {k.reason}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+}
 
 // The releases whose cover file differs from the published image, side by
 // side, with a tick per row. Ticked to start: the ones shrunk since publishing
