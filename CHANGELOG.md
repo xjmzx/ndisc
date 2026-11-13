@@ -21,6 +21,11 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.20 — 2026-11-13
+
+### Added
+- **Local covers vs Blossom** (release list ⋮ menu): finds every published release whose cover file on disk is not the image its event points at — by the SHA-256 in the Blossom URL, so nothing is downloaded for a match — and shows the two side by side with their sizes. Upload the ticked ones in one run, exactly as the per-release upload does (primary, then the mirrors, old address kept on record); each is left stale for the ordinary publish, nothing is published. Pre-ticked are only covers shrunk since publishing: the file changed after the last publish *and* the published image is a larger copy of the same shape. A larger published copy beside an unchanged file is flagged instead — there the disk copy is the poorer one.
+
 ## 0.6.19 — 2026-11-12
 
 ### Changed

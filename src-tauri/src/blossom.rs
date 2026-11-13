@@ -112,6 +112,72 @@ pub fn is_on_server(url: &str, server: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The SHA-256 a blob URL names: its last path segment, extension dropped.
+/// None when that segment is not 64 hex digits — a URL on some other host.
+pub fn sha256_in_url(url: &str) -> Option<String> {
+    let path = Url::parse(url.trim()).ok()?.path().to_string();
+    let last = path.rsplit('/').next()?;
+    let stem = last.split('.').next()?;
+    (stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| stem.to_ascii_lowercase())
+}
+
+/// Width and height from the start of a PNG or JPEG, without decoding it.
+///
+/// Enough for the first few tens of KB of a file, so a remote cover's size can
+/// be read from a ranged request. JPEG: walks the markers to the first frame
+/// header (SOF0–SOF15, not DHT/JPG/DAC). Anything else, or a header past the
+/// bytes given, is None.
+pub fn image_dims(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 24 {
+        let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+        let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+        return Some((w, h));
+    }
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut i = 2usize;
+    while i + 9 < bytes.len() {
+        if bytes[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+        let marker = bytes[i + 1];
+        if marker == 0xFF {
+            i += 1; // fill byte
+            continue;
+        }
+        if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            i += 2;
+            continue;
+        }
+        let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
+            let w = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
+            return Some((w, h));
+        }
+        i += 2 + len;
+    }
+    None
+}
+
+/// True when `published` looks like a larger copy of `local`: the same shape
+/// (aspect within 1%) and a longer long side. Half of the "shrunk since
+/// publishing" rule; alone it also matches a low-resolution file on disk
+/// beside a better published copy, which is why the caller also asks whether
+/// the file changed after publishing.
+pub fn is_larger_same_shape(local: (u32, u32), published: (u32, u32)) -> bool {
+    let (lw, lh) = (local.0 as f64, local.1 as f64);
+    let (pw, ph) = (published.0 as f64, published.1 as f64);
+    if lw == 0.0 || lh == 0.0 || pw == 0.0 || ph == 0.0 {
+        return false;
+    }
+    let same_shape = ((lw / lh) - (pw / ph)).abs() / (pw / ph) < 0.01;
+    same_shape && pw.max(ph) > lw.max(lh)
+}
+
 /// Build the `Authorization` header value for one verb on one blob.
 pub fn auth_header(keys: &Keys, verb: &str, sha256: &str, note: &str) -> Result<String, String> {
     use base64::Engine;
@@ -239,6 +305,40 @@ mod tests {
         assert_eq!(sniff_image(b"<!doctype html>"), None);
         assert_eq!(sniff_image(b"RIFF\x00\x00\x00\x00WAVEfmt "), None);
         assert_eq!(sniff_image(b""), None);
+    }
+
+    #[test]
+    fn sha256_is_read_from_a_blob_url() {
+        let h = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert_eq!(sha256_in_url(&format!("https://b.example/{h}.jpg")).as_deref(), Some(h));
+        assert_eq!(sha256_in_url(&format!("https://b.example/{}", h.to_uppercase())).as_deref(), Some(h));
+        assert_eq!(sha256_in_url("https://i.other.example/abc.jpg"), None);
+        assert_eq!(sha256_in_url("not a url"), None);
+    }
+
+    #[test]
+    fn dims_from_png_and_jpeg_headers() {
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&600u32.to_be_bytes());
+        png.extend_from_slice(&512u32.to_be_bytes());
+        assert_eq!(image_dims(&png), Some((600, 512)));
+        // SOI, an APP0 segment to skip, a DHT to skip, then SOF2 (progressive).
+        let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
+        jpg.extend_from_slice(&[0xFF, 0xC4, 0x00, 0x04, 0x00, 0x00]);
+        jpg.extend_from_slice(&[0xFF, 0xC2, 0x00, 0x11, 0x08, 0x04, 0xB0, 0x02, 0x58, 0x03]);
+        assert_eq!(image_dims(&jpg), Some((600, 1200)));
+        assert_eq!(image_dims(&jpg[..10]), None);
+        assert_eq!(image_dims(b"GIF89a.."), None);
+    }
+
+    #[test]
+    fn larger_same_shape() {
+        assert!(is_larger_same_shape((600, 600), (1200, 1200)));
+        assert!(is_larger_same_shape((600, 593), (1425, 1408)));
+        assert!(!is_larger_same_shape((600, 600), (600, 600)));
+        assert!(!is_larger_same_shape((600, 600), (500, 500)));
+        assert!(!is_larger_same_shape((600, 600), (1200, 1000)));
+        assert!(!is_larger_same_shape((0, 0), (10, 10)));
     }
 
     #[test]

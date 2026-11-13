@@ -1023,6 +1023,54 @@ export async function uploadCoverToBlossom(
   return invoke<CoverUpload>("upload_cover_to_blossom", { releaseId, servers });
 }
 
+export interface LocalCoverItem {
+  id: number;
+  artist: string;
+  title: string;
+  localPath: string;
+  publishedUrl: string;
+  localBytes: number;
+  // [width, height]; null when the header could not be read.
+  localDims: [number, number] | null;
+  publishedDims: [number, number] | null;
+  // The file on disk was modified after the release was last published.
+  changedSincePublish: boolean;
+  // The published image is a larger copy of the same shape.
+  publishedLarger: boolean;
+  // Both: shrunk since publishing. A larger published image with an unchanged
+  // file means the copy on disk is the poorer one.
+  shrunk: boolean;
+}
+
+export interface LocalCoverCheck {
+  considered: number;
+  same: number;
+  differing: LocalCoverItem[];
+  warnings: string[];
+}
+
+// Read-only: compare each published release's local cover file with the image
+// its event points at (by the SHA-256 in the Blossom URL), and size both for
+// the ones that differ. Emits `cover-local:started` / `cover-local:progress`.
+export async function checkLocalCovers(): Promise<LocalCoverCheck> {
+  return invoke<LocalCoverCheck>("check_local_covers");
+}
+
+export interface LocalCoverUploads {
+  uploaded: number;
+  results: { id: number; status: string; newUrl: string | null }[];
+  warnings: string[];
+}
+
+// Upload the local cover of each release, as the per-release button does.
+// Leaves each uploaded release stale; never publishes.
+export async function uploadLocalCovers(
+  releaseIds: number[],
+  servers: string[],
+): Promise<LocalCoverUploads> {
+  return invoke<LocalCoverUploads>("upload_local_covers", { releaseIds, servers });
+}
+
 export interface CoverMirroring {
   primary: string;
   mirrors: string[];

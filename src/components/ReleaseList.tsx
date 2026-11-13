@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
   ImageOff,
   ImageUp,
+  Images,
   Link2,
   Link2Off,
   Music,
@@ -58,6 +59,8 @@ import {
   migrateCoversToBlossom,
   listReleaseNotes,
   mirrorCoversToBlossom,
+  checkLocalCovers,
+  uploadLocalCovers,
   rescanLocalCovers,
   scanLibraryChanges,
   setCoverArtUrl,
@@ -84,6 +87,8 @@ import {
   type CoverMigration,
   type NoteGroup,
   type CoverMirroring,
+  type LocalCoverCheck,
+  type LocalCoverUploads,
   type PurgeSummary,
   type ReconcileSummary,
   type ContentAudit,
@@ -95,6 +100,7 @@ import {
   type VideoFilter,
 } from "../lib/tauri";
 import { coverImageSrc } from "../lib/cover";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { getDismissedDupKeys } from "../lib/dupDismiss";
 import type { ReleaseDrift } from "../lib/tauri";
 import { withoutDismissed } from "../lib/driftDismiss";
@@ -277,8 +283,12 @@ export function ReleaseList({
     | "manifest"
     | "coverGap"
     | "coverMigrate"
-    | "coverMirror";
+    | "coverMirror"
+    | "localCovers";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
+  // "localCovers" runs twice — the check, then the upload — and the progress
+  // line says which.
+  const [localUploading, setLocalUploading] = useState(false);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   // Rows for the drift review dialog, captured from the last scan summary.
   // null = dialog closed.
@@ -303,6 +313,11 @@ export function ReleaseList({
     | { kind: "coverGap"; data: PublishedCoverReconcile }
     | { kind: "coverMigrate"; data: CoverMigration }
     | { kind: "coverMirror"; data: CoverMirroring }
+    | {
+        kind: "localCovers";
+        data: LocalCoverCheck;
+        uploads: LocalCoverUploads | null;
+      }
     | null
   >(null);
 
@@ -495,6 +510,85 @@ export function ReleaseList({
   // Copy the covers on the primary Blossom server to the mirrors — the
   // follow-up to the check pass (runBackgroundOp("coverMirror")). Changes
   // nothing a release publishes; it only adds copies elsewhere.
+  // Local covers vs Blossom — CHECK pass (runBackgroundOp("localCovers")).
+  // Read-only: hashes every published release's cover file against the hash in
+  // its Blossom URL, then sizes the mismatches. Network: one ranged read per
+  // mismatch, nothing signed.
+  async function runLocalCoverCheck() {
+    setActiveOp("localCovers");
+    setOpSummary(null);
+    setOpProgress({ current: 0, total: 0, currentDir: "" });
+    setError(null);
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<number>("cover-local:started", (e) => {
+          setOpProgress({ current: 0, total: e.payload, currentDir: "" });
+        }),
+      );
+      unlisteners.push(
+        await listen<ImportProgress>("cover-local:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const data = await checkLocalCovers();
+      setOpSummary({ kind: "localCovers", data, uploads: null });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
+
+  // Upload the chosen local covers to Blossom. Signs uploads and re-points each
+  // release, so it is an explicit, confirmed step after the check. It does not
+  // publish — uploaded releases are left stale for the ordinary publish step.
+  async function runLocalCoverUpload(check: LocalCoverCheck, ids: number[]) {
+    if (activeOp !== null || ids.length === 0) return;
+    if (blossomServers.length === 0) {
+      setError(
+        "No Blossom server is set yet — add one under “Blossom servers” in the Nostr panel first.",
+      );
+      return;
+    }
+    const n = ids.length;
+    const yes = await ask(
+      `Upload ${n.toLocaleString()} local cover${n === 1 ? "" : "s"} to ${blossomServers[0]}?\n\n` +
+        "Each release's cover file on disk is uploaded under its SHA-256 and " +
+        "copied to the mirrors. The release then points at it and is marked " +
+        "stale; the old address is kept on record and nothing is deleted.\n\n" +
+        "Nothing is published. Readers keep seeing the old covers until you " +
+        "publish the stale releases.",
+      { title: "Upload local covers", kind: "info" },
+    );
+    if (!yes) return;
+
+    setActiveOp("localCovers");
+    setLocalUploading(true);
+    setOpProgress({ current: 0, total: n, currentDir: "" });
+    setError(null);
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<ImportProgress>("cover-local:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const uploads = await uploadLocalCovers(ids, blossomServers);
+      setOpSummary({ kind: "localCovers", data: check, uploads });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setLocalUploading(false);
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
+
   async function runCoverMirrorFix(mirroring: CoverMirroring) {
     if (activeOp !== null || mirroring.pending === 0) return;
     const n = mirroring.pending;
@@ -586,6 +680,11 @@ export function ReleaseList({
 
   async function runBackgroundOp(kind: OpKind) {
     if (activeOp !== null) return;
+
+    if (kind === "localCovers") {
+      await runLocalCoverCheck();
+      return;
+    }
 
     // Export the published set for the other suite apps (ntree samples only
     // released material). ndisc is the only app that knows what is published;
@@ -1525,6 +1624,17 @@ export function ReleaseList({
                 }}
               />
               <MaintMenuItem
+                icon={<Images size={14} />}
+                label="Local covers vs Blossom"
+                detail="Find covers changed on disk since publishing, then upload the chosen"
+                active={activeOp === "localCovers"}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  runBackgroundOp("localCovers");
+                }}
+              />
+              <MaintMenuItem
                 icon={<Copy size={14} />}
                 label="Mirror covers"
                 detail="Copy covers and label art on Blossom to the mirrors"
@@ -1716,6 +1826,10 @@ export function ReleaseList({
                           ? "moving covers to Blossom"
                           : activeOp === "coverMirror"
                             ? "copying covers to the mirrors"
+                            : activeOp === "localCovers"
+                              ? localUploading
+                                ? "uploading local covers to Blossom"
+                                : "comparing local covers with Blossom"
                             : activeOp === "contentAudit"
                           ? "comparing published events with the catalogue"
                           : activeOp === "repressing"
@@ -2084,6 +2198,34 @@ export function ReleaseList({
                 )}
               </>
             )}
+            {opSummary.kind === "localCovers" && (
+              <>
+                {opSummary.uploads && (
+                  <span className="text-ok">
+                    uploaded{" "}
+                    <span className="font-mono">{opSummary.uploads.uploaded}</span>
+                  </span>
+                )}
+                <span
+                  className={
+                    opSummary.data.differing.length > 0 ? "text-warn" : "text-muted"
+                  }
+                >
+                  differ{" "}
+                  <span className="font-mono">{opSummary.data.differing.length}</span>
+                </span>
+                <span className="text-muted">
+                  same as published{" "}
+                  <span className="font-mono">{opSummary.data.same}</span>
+                </span>
+                {opSummary.data.warnings.length > 0 && (
+                  <span className="text-warn">
+                    warnings{" "}
+                    <span className="font-mono">{opSummary.data.warnings.length}</span>
+                  </span>
+                )}
+              </>
+            )}
             {opSummary.kind === "coverMirror" && (
               <>
                 {opSummary.data.mirrored > 0 && (
@@ -2197,6 +2339,7 @@ export function ReleaseList({
             )}
             {opSummary.kind !== "reconcile" &&
               opSummary.kind !== "manifest" &&
+              opSummary.kind !== "localCovers" &&
               opSummary.data.errors.length > 0 && (
                 <span className="text-alert">
                   errors{" "}
@@ -2267,6 +2410,14 @@ export function ReleaseList({
 
       {!activeOp && opSummary?.kind === "coverMigrate" && (
         <CoverMigrationDetails migration={opSummary.data} />
+      )}
+
+      {!activeOp && opSummary?.kind === "localCovers" && (
+        <LocalCoverDetails
+          check={opSummary.data}
+          uploads={opSummary.uploads}
+          onUpload={(ids) => runLocalCoverUpload(opSummary.data, ids)}
+        />
       )}
 
       {!activeOp &&
@@ -3264,6 +3415,165 @@ function RelayAuditPanel({
 // count already says how many). After a run: every cover that did not move,
 // with the reason, then the warnings — those are what needs a decision.
 const COVER_MIGRATION_PREVIEW = 100;
+
+// The releases whose cover file differs from the published image, side by
+// side, with a tick per row. Ticked to start: the ones shrunk since publishing
+// (changed on disk, and the published image is a larger copy of the same
+// shape), where uploading changes the download size and nothing a reader
+// sees. A larger published copy beside an UNCHANGED file is the opposite —
+// the disk copy is the poorer one — and is flagged, never pre-ticked.
+function LocalCoverDetails({
+  check,
+  uploads,
+  onUpload,
+}: {
+  check: LocalCoverCheck;
+  uploads: LocalCoverUploads | null;
+  onUpload: (ids: number[]) => void;
+}) {
+  const done = useMemo(() => {
+    const m = new Map<number, string>();
+    uploads?.results.forEach((r) => m.set(r.id, r.status));
+    return m;
+  }, [uploads]);
+  const rows = check.differing.filter((d) => done.get(d.id) !== "ok");
+  const [picked, setPicked] = useState<Set<number>>(
+    () => new Set(check.differing.filter((d) => d.shrunk).map((d) => d.id)),
+  );
+  const chosen = rows.filter((r) => picked.has(r.id)).map((r) => r.id);
+  const larger = rows.filter((r) => r.shrunk).length;
+  const failed = uploads?.results.filter((r) => r.status !== "ok") ?? [];
+  const dims = (d: [number, number] | null) => (d ? `${d[0]}×${d[1]}` : "?");
+  const toggle = (id: number) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <>
+      {uploads && uploads.uploaded > 0 && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs text-muted">
+          {uploads.uploaded.toLocaleString()} release
+          {uploads.uploaded === 1 ? " is" : "s are"} now stale — readers keep
+          the old cover until you publish them from the Nostr panel.
+        </div>
+      )}
+      {failed.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open>
+          <summary className="text-alert cursor-pointer text-xs">
+            {failed.length} cover{failed.length === 1 ? "" : "s"} not uploaded
+          </summary>
+          <ul className="mt-2 max-h-40 overflow-auto space-y-1 text-[10px]">
+            {failed.map((f) => (
+              <li key={f.id} className="px-2 py-1 rounded bg-bg/50 text-alert break-words">
+                release {f.id}: {f.status}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {rows.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open>
+          <summary className="cursor-pointer text-xs text-warn">
+            {rows.length} cover{rows.length === 1 ? "" : "s"} on disk differ from
+            the published image · {larger} shrunk since publishing
+          </summary>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
+            <button
+              onClick={() =>
+                setPicked(new Set(rows.filter((r) => r.shrunk).map((r) => r.id)))
+              }
+              className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            >
+              Tick shrunk only
+            </button>
+            <button
+              onClick={() => setPicked(new Set(rows.map((r) => r.id)))}
+              className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            >
+              Tick all
+            </button>
+            <button
+              onClick={() => setPicked(new Set())}
+              className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            >
+              Tick none
+            </button>
+            <button
+              onClick={() => onUpload(chosen)}
+              disabled={chosen.length === 0}
+              className="ml-auto px-2 py-0.5 rounded bg-nostr/15 text-nostr
+                         hover:bg-nostr hover:text-bg font-medium
+                         transition-colors disabled:opacity-40
+                         disabled:pointer-events-none"
+              title="Upload the ticked local covers and mark those releases stale"
+            >
+              Upload {chosen.length} ticked
+            </button>
+          </div>
+          <ul className="mt-2 max-h-[28rem] overflow-auto space-y-1 text-[10px]">
+            {rows.map((r) => (
+              <li key={r.id}>
+                <label className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={picked.has(r.id)}
+                    onChange={() => toggle(r.id)}
+                  />
+                  <img
+                    src={convertFileSrc(r.localPath)}
+                    loading="lazy"
+                    alt=""
+                    className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                    title="On disk"
+                  />
+                  <img
+                    src={r.publishedUrl}
+                    loading="lazy"
+                    alt=""
+                    className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                    title="Published"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-fg truncate">
+                      {r.artist} <span className="text-muted">·</span> {r.title}
+                    </span>
+                    <span className="block text-muted font-mono">
+                      disk {dims(r.localDims)} · published {dims(r.publishedDims)}
+                      {r.shrunk
+                        ? " · shrunk"
+                        : r.publishedLarger
+                          ? " · published copy is larger"
+                          : " · different picture?"}
+                      {done.has(r.id) ? " · failed" : ""}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {check.warnings.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary className="text-warn cursor-pointer text-xs">
+            {check.warnings.length} warning{check.warnings.length === 1 ? "" : "s"}
+          </summary>
+          <ul className="mt-2 max-h-40 overflow-auto space-y-1 text-[10px]">
+            {check.warnings.map((w, i) => (
+              <li key={i} className="px-2 py-1 rounded bg-bg/50 text-muted break-words">
+                {w}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+}
 
 function CoverMigrationDetails({ migration }: { migration: CoverMigration }) {
   const ran = migration.pending.some((p) => p.status !== null);

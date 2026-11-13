@@ -5515,9 +5515,24 @@ async fn upload_cover_to_blossom(
     servers: Vec<String>,
 ) -> Result<CoverUpload, String> {
     let servers = blossom::normalize_servers(&servers)?;
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+    upload_local_cover(&app, &http, &keys, &servers, release_id).await
+}
 
+/// The one way a local cover file reaches Blossom: read it, store it on the
+/// primary, re-point the release (stale), copy it to the mirrors. Shared by the
+/// per-release button and the batch, so both record the move the same way.
+async fn upload_local_cover(
+    app: &tauri::AppHandle,
+    http: &reqwest::Client,
+    keys: &Keys,
+    servers: &[String],
+    release_id: i64,
+) -> Result<CoverUpload, String> {
     let (cover_path, old_url): (Option<String>, Option<String>) = {
-        let conn = open(&app)?;
+        let conn = open(app)?;
         conn.query_row(
             "SELECT cover_art_path, cover_art_url FROM releases WHERE id = ?1",
             params![release_id],
@@ -5533,19 +5548,15 @@ async fn upload_cover_to_blossom(
         .ok_or_else(|| "this release has no local cover file".to_string())?;
     let body = std::fs::read(&cover_path).map_err(|e| format!("read {cover_path}: {e}"))?;
 
-    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
-    let keys = keys_from_nsec(&nsec)?;
-    let http = cover_http_client()?;
-
-    let stored = store_cover(&http, &keys, &servers[0], &body).await?;
-    record_cover_move(&app, release_id, old_url.as_deref(), &stored)?;
+    let stored = store_cover(http, keys, &servers[0], &body).await?;
+    record_cover_move(app, release_id, old_url.as_deref(), &stored)?;
 
     // One cover, so the mirrors are done here and now — a few seconds, against
     // having to remember a second step for every new release.
     let warnings = mirror_cover(
-        &app,
-        &http,
-        &keys,
+        app,
+        http,
+        keys,
         &servers[1..],
         &body,
         stored.mime,
@@ -5562,6 +5573,290 @@ async fn upload_cover_to_blossom(
         bytes: stored.bytes,
         warnings,
     })
+}
+
+/// A published release whose cover file on disk is not the image its event
+/// points at.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCoverItem {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    pub local_path: String,
+    pub published_url: String,
+    pub local_bytes: u64,
+    /// `[width, height]`, None when the header could not be read.
+    pub local_dims: Option<(u32, u32)>,
+    pub published_dims: Option<(u32, u32)>,
+    /// The file on disk was modified after the release was last published.
+    pub changed_since_publish: bool,
+    /// The published image is a larger copy of the same shape
+    /// (`blossom::is_larger_same_shape`).
+    pub published_larger: bool,
+    /// Both of the above: the file was shrunk after publishing, so uploading
+    /// it changes the download size and nothing a reader sees. A larger
+    /// published image with an UNCHANGED file is the opposite case — the copy
+    /// on disk is the poorer one — and must not be offered by default.
+    pub shrunk: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCoverCheck {
+    /// Published releases with a local cover and a hash-addressed cover URL.
+    pub considered: usize,
+    /// Of those, how many have the published image on disk already.
+    pub same: usize,
+    pub differing: Vec<LocalCoverItem>,
+    pub warnings: Vec<String>,
+}
+
+/// The first `n` bytes of `url`, by a ranged request. A server that ignores
+/// the range sends the whole file, which is only slower.
+async fn fetch_head(http: &reqwest::Client, url: &str, n: usize) -> Result<Vec<u8>, String> {
+    let response = http
+        .get(url)
+        .header(reqwest::header::RANGE, format!("bytes=0-{}", n - 1))
+        .send()
+        .await
+        .map_err(|e| format!("fetch {url}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("fetch {url}: {}", response.status()));
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| format!("read {url}: {e}"))?;
+    Ok(body[..body.len().min(n)].to_vec())
+}
+
+/// Compare each published release's local cover file with the image its event
+/// points at, by SHA-256 — the hash is in the Blossom URL, so nothing is
+/// downloaded for a match. For each mismatch, read both images' sizes (the
+/// published one from its first 128 KB) so the caller can tell a shrunk copy
+/// of the same cover from a different picture.
+///
+/// Read-only: nothing is uploaded, signed or written. Emits
+/// `cover-local:started` / `cover-local:progress` (ImportProgress).
+#[tauri::command]
+async fn check_local_covers(app: tauri::AppHandle) -> Result<LocalCoverCheck, String> {
+    let rows: Vec<(i64, String, String, String, String, i64)> = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, artist, title, cover_art_path, cover_art_url, last_published_at
+                   FROM releases
+                  WHERE last_published_at IS NOT NULL
+                    AND cover_art_path IS NOT NULL AND TRIM(cover_art_path) <> ''
+                    AND cover_art_url IS NOT NULL AND TRIM(cover_art_url) <> ''
+                  ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let total = rows.len();
+    let _ = app.emit("cover-local:started", total);
+
+    // Hashing ~2,000 files is disk work; keep it off the async runtime.
+    let hash_app = app.clone();
+    type Hashed = (String, u64, Option<(u32, u32)>, bool);
+    let hashed: Vec<(i64, String, String, String, String, Option<Hashed>)> =
+        tauri::async_runtime::spawn_blocking(move || {
+            rows.into_iter()
+                .enumerate()
+                .map(|(i, (id, artist, title, path, url, published_at))| {
+                    let _ = hash_app.emit(
+                        "cover-local:progress",
+                        ImportProgress {
+                            current: i + 1,
+                            total,
+                            current_dir: format!("{artist} — {title}"),
+                        },
+                    );
+                    let changed = std::fs::metadata(path.trim())
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64 > published_at)
+                        .unwrap_or(false);
+                    let local = std::fs::read(path.trim()).ok().map(|b| {
+                        (
+                            blossom::sha256_hex(&b),
+                            b.len() as u64,
+                            blossom::image_dims(&b[..b.len().min(256 * 1024)]),
+                            changed,
+                        )
+                    });
+                    (id, artist, title, path, url, local)
+                })
+                .collect()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut result = LocalCoverCheck {
+        considered: 0,
+        same: 0,
+        differing: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let mut to_size: Vec<LocalCoverItem> = Vec::new();
+    for (id, artist, title, path, url, local) in hashed {
+        let Some(published_sha) = blossom::sha256_in_url(&url) else { continue };
+        let Some((local_sha, local_bytes, local_dims, changed_since_publish)) = local else {
+            result.warnings.push(format!("{artist} — {title}: cannot read {path}"));
+            continue;
+        };
+        result.considered += 1;
+        if local_sha == published_sha {
+            result.same += 1;
+            continue;
+        }
+        to_size.push(LocalCoverItem {
+            id,
+            artist,
+            title,
+            local_path: path.trim().to_string(),
+            published_url: url.trim().to_string(),
+            local_bytes,
+            local_dims,
+            published_dims: None,
+            changed_since_publish,
+            published_larger: false,
+            shrunk: false,
+        });
+    }
+
+    // Size the published images eight at a time: each is one ranged read, so
+    // the wait is the network's, not ours.
+    let http = cover_http_client()?;
+    let n = to_size.len();
+    let mut done = 0usize;
+    let mut rest = to_size.into_iter().peekable();
+    while rest.peek().is_some() {
+        let batch: Vec<LocalCoverItem> = rest.by_ref().take(8).collect();
+        let handles: Vec<_> = batch
+            .iter()
+            .map(|item| {
+                let http = http.clone();
+                let url = item.published_url.clone();
+                tauri::async_runtime::spawn(async move { fetch_head(&http, &url, 128 * 1024).await })
+            })
+            .collect();
+        for (mut item, handle) in batch.into_iter().zip(handles) {
+            done += 1;
+            let _ = app.emit(
+                "cover-local:progress",
+                ImportProgress {
+                    current: done,
+                    total: n,
+                    current_dir: format!("sizing {} — {}", item.artist, item.title),
+                },
+            );
+            match handle.await.map_err(|e| e.to_string()).and_then(|r| r) {
+                Ok(head) => item.published_dims = blossom::image_dims(&head),
+                Err(e) => result
+                    .warnings
+                    .push(format!("{} — {}: {e}", item.artist, item.title)),
+            }
+            item.published_larger = match (item.local_dims, item.published_dims) {
+                (Some(l), Some(p)) => blossom::is_larger_same_shape(l, p),
+                _ => false,
+            };
+            item.shrunk = item.published_larger && item.changed_since_publish;
+            result.differing.push(item);
+        }
+    }
+    Ok(result)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCoverUploadItem {
+    pub id: i64,
+    /// "ok", or the error.
+    pub status: String,
+    pub new_url: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCoverUploads {
+    pub uploaded: usize,
+    pub results: Vec<LocalCoverUploadItem>,
+    pub warnings: Vec<String>,
+}
+
+/// Upload the local cover of each release in `release_ids`, exactly as the
+/// per-release button does (`upload_local_cover`), one after another. A failure
+/// is recorded and the run goes on. It does not publish: every uploaded
+/// release is left stale for the ordinary publish step.
+/// Emits `cover-local:started` / `cover-local:progress`.
+#[tauri::command]
+async fn upload_local_covers(
+    app: tauri::AppHandle,
+    release_ids: Vec<i64>,
+    servers: Vec<String>,
+) -> Result<LocalCoverUploads, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+
+    let total = release_ids.len();
+    let _ = app.emit("cover-local:started", total);
+    let mut out = LocalCoverUploads {
+        uploaded: 0,
+        results: Vec::new(),
+        warnings: Vec::new(),
+    };
+    for (i, id) in release_ids.into_iter().enumerate() {
+        let name = open(&app)
+            .ok()
+            .and_then(|c| {
+                c.query_row(
+                    "SELECT artist || ' — ' || title FROM releases WHERE id = ?1",
+                    params![id],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .unwrap_or_else(|| format!("release {id}"));
+        let _ = app.emit(
+            "cover-local:progress",
+            ImportProgress {
+                current: i + 1,
+                total,
+                current_dir: name,
+            },
+        );
+        match upload_local_cover(&app, &http, &keys, &servers, id).await {
+            Ok(up) => {
+                out.uploaded += 1;
+                out.warnings
+                    .extend(up.warnings.into_iter().map(|w| format!("release {id}: {w}")));
+                out.results.push(LocalCoverUploadItem {
+                    id,
+                    status: "ok".into(),
+                    new_url: Some(up.url),
+                });
+            }
+            Err(e) => out.results.push(LocalCoverUploadItem {
+                id,
+                status: e,
+                new_url: None,
+            }),
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Ok(out)
 }
 
 /// One label's image, as the Blossom move sees it.
@@ -11398,6 +11693,8 @@ pub fn run() {
             reconcile_published_covers,
             migrate_covers_to_blossom,
             upload_cover_to_blossom,
+            check_local_covers,
+            upload_local_covers,
             mirror_covers_to_blossom,
             migrate_label_art_to_blossom,
             list_release_notes,
