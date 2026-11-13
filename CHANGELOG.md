@@ -21,6 +21,16 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.24 — 2026-11-13
+
+### Changed
+- **New icon**: the circled n.
+- **Stats, Music**: four equal quarters (Genre, Country, Label, Source library), each a stacked bar of the largest few plus one "Other" segment, over a paged two-column legend of every row (16 a page), so no label or genre is out of reach. Genre counts genre tags (a release can carry up to five) and no longer lists genres nobody uses.
+- **Stats, Library**: Media kind and Format side by side, above a taller year chart in which each decade is a full box and each year its own slot, with no gaps between years.
+- **Stats header**: eight equal tiles: the Music and Library buttons (no outline) and the six totals.
+- **Home**: the relay summary, Publish library and Unpublish library are three equal widths.
+- **Labels**: names are no longer cut at 36 characters, only when the row is too narrow (the tooltip has the full name). The list runs in two columns and takes three fifths of the page, with an A–Z strip to show one letter (`#` for digits and symbols), a "by count" reset, and a toggle between release-count and A–Z order, A–Z with a heading per letter.
+
 ## 0.6.23 — 2026-11-13
 
 ### Added
