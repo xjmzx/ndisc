@@ -83,10 +83,12 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
     // stretches both cells to equal height (the default), so card edges line
     // up across the left/right divide.
     <div className="flex flex-col gap-2">
-      {/* The page switch takes a quarter of the width, the totals the rest. */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-        <StatsSwitch page={page} onChange={choosePage} />
-        <TotalsCard data={state.data} className="md:col-span-3" />
+      {/* Eight equal cells in one row: the two page buttons, then the six
+          totals, each its own faint rounded tile with the same gap between
+          all of them. Narrower windows fold it to two rows of four. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+        <StatsSwitch page={page} onChange={choosePage} className="col-span-2" />
+        <TotalsCard data={state.data} />
       </div>
       {page === "music" ? (
         // Four equal quarters, each the same card: a stacked bar of the
@@ -209,14 +211,12 @@ function StatsSwitch({
   className?: string;
 }) {
   return (
-    // Stretches to the totals card's height; each button fills its half.
+    // No frame of its own: the two buttons are two of the header's eight
+    // tiles, with the header's gap between them.
     <div
       role="tablist"
       aria-label="Stats pages"
-      className={
-        "grid grid-cols-2 gap-1 p-1 rounded-xl bg-panel border border-surface/60 shadow-md " +
-        (className ?? "")
-      }
+      className={"grid grid-cols-2 gap-2 " + (className ?? "")}
     >
       {STATS_PAGES.map((p) => {
         const active = p.key === page;
@@ -231,7 +231,7 @@ function StatsSwitch({
               // No outline: the open page is the brighter fill and the accent
               // text. A closed page rests at a dimmer fill and lifts to the
               // open page's fill on hover.
-              "flex items-center justify-center rounded-lg px-3 py-2 min-w-0 " +
+              "flex items-center justify-center rounded-lg px-3 py-3 min-w-0 " +
               "transition-colors " +
               (active
                 ? "bg-surface text-accent"
@@ -253,13 +253,7 @@ function StatsSwitch({
 // itself needs no section title. Releases is the headline; the rest are the
 // breadth of the catalogue (distinct labels/countries/genres/formats + the
 // year span).
-function TotalsCard({
-  data,
-  className,
-}: {
-  data: LibraryBreakdown;
-  className?: string;
-}) {
+function TotalsCard({ data }: { data: LibraryBreakdown }) {
   const releases = total(data.medium);
   const years = data.year
     .map((r) => Number(r.value))
@@ -275,24 +269,25 @@ function TotalsCard({
     ["years", yearSpan],
   ];
   return (
-    // One line of six in the header's right half, beside the page buttons.
-    // Each figure takes its natural width and the row spreads them evenly, so
-    // the widest (the year span) never gets squeezed; on a narrow window they
-    // wrap.
-    <Section dense className={className} bodyClassName="justify-center">
-      <dl className="flex flex-wrap justify-between gap-x-4 gap-y-2 font-mono">
-        {items.map(([k, v]) => (
-          <div key={k} className="flex flex-col gap-1 min-w-0">
-            <dt className="text-[10px] uppercase tracking-wide text-muted truncate">
-              {k}
-            </dt>
-            <dd className="text-accent tabular-nums text-xl font-semibold leading-none whitespace-nowrap">
-              {v}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </Section>
+    // Six of the header's eight tiles, laid straight into its grid
+    // (display: contents), each on the same faint fill as a resting page
+    // button.
+    <dl className="contents">
+      {items.map(([k, v]) => (
+        <div
+          key={k}
+          className="flex flex-col justify-center gap-1 min-w-0 rounded-lg
+                     bg-surface/60 px-4 py-3 font-mono"
+        >
+          <dt className="text-[10px] uppercase tracking-wide text-muted truncate">
+            {k}
+          </dt>
+          <dd className="text-accent tabular-nums text-xl font-semibold leading-none whitespace-nowrap truncate">
+            {v}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
