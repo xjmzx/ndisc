@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Section } from "./Section";
-import { genreDisplay, GENRE_ORDER } from "../lib/genre";
+import { genreDisplay } from "../lib/genre";
 import { sourceColor } from "../lib/source";
 import { useSourceMetaVersion } from "../hooks/useSourceMeta";
 import {
@@ -77,59 +77,68 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
   const { genre, country, year, medium, format, label } = state.data;
 
   return (
-    // A header row in halves — the two page buttons over the Genre card, the
-    // totals over the Country + Label stack — and
-    // one 2-column grid per half below. The totals sit in the header so the
+    // A header row — the two page buttons in the left quarter, the totals in
+    // the other three — and one 2-column grid per page below. The totals sit in the header so the
     // headline figures stay put whichever half is open. Each grid row
     // stretches both cells to equal height (the default), so card edges line
     // up across the left/right divide.
     <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+      {/* The page switch takes a quarter of the width, the totals the rest. */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
         <StatsSwitch page={page} onChange={choosePage} />
-        <TotalsCard data={state.data} />
+        <TotalsCard data={state.data} className="md:col-span-3" />
       </div>
       {page === "music" ? (
+        // Four equal quarters, each the same card: a stacked bar of the
+        // largest few with the rest as one "Other" segment, then a legend of
+        // every row, 16 to a page. The bar gives the shape at a glance; the
+        // pages keep every label and genre reachable. Each grid row stretches
+        // its two cards to one height, so the pagers line up.
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {/* Genre | Country + Label stacked. Genre's two-column list
-              sets the height; Country and Label share it. Both rank cards run
-              two columns (16/page). Country shares the aggressive
-              DOMINANT_SKEW so a home-country monopoly (here UK) doesn't crush
-              the rest. */}
-          <StackedBarCard
+          <PagedBarCard
             title="Genre"
+            heading="Genre (share of genre tags)"
             rows={genreRows(genre)}
             colorFor={genreColor}
-            displayFor={genreLabel}
+            displayFor={genreDisplay}
+            barTop={12}
             scalingExponent={DOMINANT_SKEW}
-            barHeight="sm"
-            showBar={false}
+            reloadKey={reloadKey}
           />
-          <div className="flex flex-col gap-2">
-            <RankedRowsCard
-              title="Country"
-              rows={country}
-              reloadKey={reloadKey}
-              scalingExponent={DOMINANT_SKEW}
-              columns={2}
-              tintFor={(_row, rank, total) => gradientTint(rank - 1, total)}
-              className="flex-1"
-            />
-            <RankedRowsCard
-              title="Label"
-              rows={label}
-              reloadKey={reloadKey}
-              columns={2}
-              tintFor={(_row, rank, total) => labelTierTint(rank, total)}
-              className="flex-1"
-            />
-          </div>
+          <PagedBarCard
+            title="Country"
+            heading="Country"
+            rows={country}
+            colorFor={rankTint(country, 8)}
+            barTop={8}
+            scalingExponent={DOMINANT_SKEW}
+            reloadKey={reloadKey}
+          />
+          <PagedBarCard
+            title="Label"
+            heading="Label"
+            rows={label}
+            colorFor={rankTint(label, 12)}
+            barTop={12}
+            scalingExponent={1.0}
+            reloadKey={reloadKey}
+          />
+          <PagedBarCard
+            title="Source"
+            heading="Source library"
+            rows={state.source}
+            colorFor={sourceBarColor}
+            displayFor={sourceLabel}
+            barTop={9}
+            pinned={(v) => v === SOURCE_UNSET}
+            scalingExponent={1.0}
+            reloadKey={reloadKey}
+          />
         </div>
       ) : (
-        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-x-2 gap-y-6">
-          {/* Digital/Physical and Year each run full width — a slim two-part
-              bar, then the years wide enough to read one by one, grouped by
-              decade. Source | Format sit side by side below. Each card is
-              titled, with a wider gap between rows than on Music. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {/* Media kind | Format side by side, then the years full width and
+              tall enough to read one by one, grouped by decade. */}
           <StackedBarCard
             title="Medium"
             heading="Media Kind"
@@ -138,21 +147,6 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
             displayFor={mediumLabel}
             scalingExponent={1.0}
             barHeight="half"
-            className="md:col-span-2"
-          />
-          <YearCard
-            rows={year}
-            title="Collection (By Year and Decade)"
-            className="md:col-span-2"
-          />
-          <StackedBarCard
-            title="Source"
-            heading="Discography by Source Library"
-            rows={state.source}
-            colorFor={sourceBarColor}
-            displayFor={sourceLabel}
-            scalingExponent={1.0}
-            barHeight="lg"
           />
           <StackedBarCard
             title="Format"
@@ -161,7 +155,13 @@ export function StatsView({ reloadKey }: { reloadKey: number }) {
             colorFor={formatColor}
             displayFor={formatLabel}
             scalingExponent={1.0}
-            barHeight="lg"
+            barHeight="half"
+          />
+          <YearCard
+            rows={year}
+            title="Collection (By Year and Decade)"
+            className="md:col-span-2"
+            tall
           />
         </div>
       )}
@@ -228,11 +228,14 @@ function StatsSwitch({
             aria-selected={active}
             onClick={() => onChange(p.key)}
             className={
+              // No outline: the open page is the brighter fill and the accent
+              // text. A closed page rests at a dimmer fill and lifts to the
+              // open page's fill on hover.
               "flex items-center justify-center rounded-lg px-3 py-2 min-w-0 " +
-              "transition-colors border " +
+              "transition-colors " +
               (active
-                ? "bg-surface border-accent/50 text-accent"
-                : "border-transparent text-fg/70 hover:bg-surface/60 hover:text-fg")
+                ? "bg-surface text-accent"
+                : "bg-surface/60 text-fg hover:bg-surface")
             }
           >
             <span className="text-sm font-semibold truncate">{p.title}</span>
@@ -370,71 +373,30 @@ function formatLabel(value: string): string {
 // trailing "not set" row (total minus the named ones), so the gap stays visible
 // rather than the named sources reading as the whole library.
 //
-// Sources are free text, so the list can grow without limit. Past the largest
-// SOURCE_TOP the rest fold into one "Other (N)" row, which keeps the card's
-// height (and the stats layout) fixed. Other is a real segment with its real
-// count, so the bar stays exact. A lone leftover source shows by name instead:
-// it takes the same one row that "Other (1)" would.
+// Sources are free text, so the list can grow without limit; the legend pages
+// hold them all. "Not set" stays last and always has its own bar segment.
 const SOURCE_UNSET = "__unset";
-const SOURCE_OTHER = "__other:"; // + the number of sources folded in
-const SOURCE_TOP = 9;
-
-// The Genre card lists every contract genre: the ones in use by count, then
-// the unused ones at 0, in contract order. It holds at most GENRE_ROWS rows
-// (two columns of 27) so it never grows taller than the Country + Label stack
-// beside it. Past that, the first GENRE_ROWS - 1 show and the rest fold into
-// one "Other (N)" row, with its real count. A lone leftover shows by name
-// instead (same one row).
-const GENRE_ROWS = 54;
-const GENRE_OTHER = "__other:"; // + the number of genres folded in
-
-function genreRows(rows: BreakdownRow[]): BreakdownRow[] {
-  const used = new Set(rows.map((r) => r.value));
-  const all = [
-    ...[...rows].sort((a, b) => b.count - a.count),
-    ...GENRE_ORDER.filter((g) => !used.has(g)).map((g) => ({ value: g, count: 0 })),
-  ];
-  if (all.length <= GENRE_ROWS) return all;
-  const head = all.slice(0, GENRE_ROWS - 1);
-  const rest = all.slice(GENRE_ROWS - 1);
-  return [
-    ...head,
-    {
-      value: `${GENRE_OTHER}${rest.length}`,
-      count: rest.reduce((a, r) => a + r.count, 0),
-    },
-  ];
-}
-
-function genreColor(value: string): string {
-  return value.startsWith(GENRE_OTHER) ? "rgb(var(--c-muted))" : `rgb(var(--c-g-${value}))`;
-}
-
-function genreLabel(value: string): string {
-  return value.startsWith(GENRE_OTHER)
-    ? `Other (${value.slice(GENRE_OTHER.length)})`
-    : genreDisplay(value);
-}
 
 function sourceRows(
   sources: { name: string; count: number }[],
   releases: number,
 ): BreakdownRow[] {
-  const named = [...sources].sort((a, b) => b.count - a.count);
-  const shown = named.length === SOURCE_TOP + 1 ? named.length : SOURCE_TOP;
-  const rows: BreakdownRow[] = named
-    .slice(0, shown)
+  const rows: BreakdownRow[] = [...sources]
+    .sort((a, b) => b.count - a.count)
     .map((s) => ({ value: s.name, count: s.count }));
-  const rest = named.slice(shown);
-  if (rest.length > 0) {
-    rows.push({
-      value: `${SOURCE_OTHER}${rest.length}`,
-      count: rest.reduce((a, s) => a + s.count, 0),
-    });
-  }
   const unset = releases - total(rows);
   if (unset > 0) rows.push({ value: SOURCE_UNSET, count: unset });
   return rows;
+}
+
+// Genre rows: the genres in use, by count. Contract genres nobody uses are
+// left out; they only lengthened the list with zeros.
+function genreRows(rows: BreakdownRow[]): BreakdownRow[] {
+  return [...rows].filter((r) => r.count > 0).sort((a, b) => b.count - a.count);
+}
+
+function genreColor(value: string): string {
+  return `rgb(var(--c-g-${value}))`;
 }
 
 // The source's own colour (user-set or seeded). A "<name> (partial)" source
@@ -442,7 +404,6 @@ function sourceRows(
 // neutral tone, and "not set" a fainter one, so the two never read as the same.
 function sourceBarColor(value: string): string {
   if (value === SOURCE_UNSET) return "rgb(var(--c-muted) / 0.4)";
-  if (value.startsWith(SOURCE_OTHER)) return "rgb(var(--c-muted))";
   const own = sourceColor(value);
   if (own) return own;
   const base = /^(.*)\s+\(partial\)$/i.exec(value)?.[1];
@@ -453,8 +414,6 @@ function sourceBarColor(value: string): string {
 
 function sourceLabel(value: string): string {
   if (value === SOURCE_UNSET) return "Not set";
-  if (value.startsWith(SOURCE_OTHER))
-    return `Other (${value.slice(SOURCE_OTHER.length)})`;
   return value;
 }
 
@@ -477,23 +436,20 @@ function gradientTint(index: number, total: number): string {
   return `color-mix(in srgb, rgb(var(--c-mauve)), rgb(var(--c-digital)) ${pct}%)`;
 }
 
-// Positional gradient for labels, chunked every 5 ranks. Each group of 5
-// adjacent ranks shares a tint, with successive groups stepping one
-// position further along the mauve → digital theme axis. For ~354 labels
-// that's ~71 distinct steps — fine enough to cycle visibly as you
-// paginate, coarse enough to read as deliberate bands rather than
-// imperceptible per-row noise.
-//
-// The chunk size is the tuning knob — smaller chunk = more shifts.
-const LABEL_CHUNK_SIZE = 5;
-
-function labelTierTint(rank: number, total: number): string {
-  const groupIndex = Math.floor((rank - 1) / LABEL_CHUNK_SIZE);
-  const totalGroups = Math.max(1, Math.ceil(total / LABEL_CHUNK_SIZE));
-  return gradientTint(groupIndex, totalGroups);
+// Colour by rank along the mauve → digital theme axis, for lists with no
+// colours of their own (Country, Label). The largest `top` rows step along the
+// gradient, the same colours in the bar and beside their legend rows; every
+// row past them is muted, as part of the bar's "Other".
+function rankTint(rows: BreakdownRow[], top: number): (value: string) => string {
+  const rank = new Map(rows.map((r, i) => [r.value, i]));
+  const n = Math.min(top, rows.length);
+  return (value) => {
+    const i = rank.get(value) ?? n;
+    return i < n ? gradientTint(i, n) : "rgb(var(--c-muted) / 0.5)";
+  };
 }
 
-// --- StackedBarCard (Genre + Medium + Format) -------------------------------
+// --- StackedBarCard (Medium + Format) ---------------------------------------
 
 interface StackedBarCardProps {
   title: string;
@@ -610,127 +566,120 @@ function StackedBarCard({
   );
 }
 
-// --- RankedRowsCard (Country + Label) ---------------------------------------
+// --- PagedBarCard (the Music page's four quarters) ---------------------------
 
-// Rows shown per column. With `columns` > 1 the page holds
-// ROWS_PER_COLUMN × columns rows (e.g. 2 columns → 16/page).
-const ROWS_PER_COLUMN = 8;
+// A legend page is two columns of LEGEND_ROWS_PER_COLUMN; rows run down the
+// left column, then the right.
+const LEGEND_ROWS_PER_COLUMN = 8;
+const LEGEND_PAGE = LEGEND_ROWS_PER_COLUMN * 2;
+const BAR_OTHER = "__bar_other";
 
-interface RankedRowsCardProps {
+interface PagedBarCardProps {
   title: string;
-  rows: BreakdownRow[];
-  // Re-fetch trigger from the parent. When it changes (after a refresh /
-  // import / publish), the card resets to page 0 so the user doesn't land
-  // on a now-invalid trailing page.
+  heading: string;
+  rows: BreakdownRow[]; // largest first
+  colorFor: (value: string) => string;
+  displayFor?: (value: string) => string;
+  // The bar shows the largest `barTop` rows as their own segments; the rest
+  // join one muted "Other" segment, with its real count.
+  barTop: number;
+  // Rows that always get their own segment wherever they rank (Source's
+  // "not set", so the gap stays visible).
+  pinned?: (value: string) => boolean;
+  // Sub-linear (< 1) softens a dominant segment's width so the rest stay
+  // readable; the counts and percentages stay honest. 1 = honest widths.
+  scalingExponent: number;
+  // Back to page one when the data is reloaded.
   reloadKey: number;
-  // Number of side-by-side rank columns. 1 (default) is the single-column
-  // list; 2 packs the page into two half-width columns (16 rows/page) with
-  // ranks flowing down the left column then the right.
-  columns?: number;
-  // Sub-linear (< 1) softens bar widths so a dominant top row doesn't crush
-  // the tail's visual readability. Counts and percentages in the row text
-  // stay honest; only the bar fill is cosmetically scaled. Default 1.0.
-  scalingExponent?: number;
-  // Per-row bar fill colour. When set, called for each visible row with
-  // the row's data plus its 1-based global rank and the total row count.
-  // Returns a CSS colour string (or undefined to fall back to bg-accent).
-  // Used for Country's positional gradient + Label's count-tier palette.
-  tintFor?: (
-    row: BreakdownRow,
-    rank: number,
-    total: number,
-  ) => string | undefined;
-  className?: string;
 }
 
-function RankedRowsCard({
+function PagedBarCard({
   title,
+  heading,
   rows,
+  colorFor,
+  displayFor = (v) => v,
+  barTop,
+  pinned = () => false,
+  scalingExponent,
   reloadKey,
-  columns = 1,
-  scalingExponent = 1.0,
-  tintFor,
-  className,
-}: RankedRowsCardProps) {
-  const totalCount = total(rows);
-  const pageSize = ROWS_PER_COLUMN * columns;
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+}: PagedBarCardProps) {
   const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [reloadKey]);
 
-  // Reset to page 0 on reload — the list shape may have changed underneath.
-  useEffect(() => {
-    setPage(0);
-  }, [reloadKey]);
+  const totalCount = total(rows);
+  const ranked = rows.filter((r) => !pinned(r.value));
+  const head = ranked.slice(0, barTop);
+  const restCount = total(ranked.slice(barTop));
+  const restN = ranked.length - head.length;
+  const barRows: BreakdownRow[] = [
+    ...head,
+    ...(restN > 0 ? [{ value: BAR_OTHER, count: restCount }] : []),
+    ...rows.filter((r) => pinned(r.value)),
+  ];
+  const barColor = (v: string) => (v === BAR_OTHER ? "rgb(var(--c-muted) / 0.5)" : colorFor(v));
+  const barLabel = (v: string) => (v === BAR_OTHER ? `Other (${restN.toLocaleString()})` : displayFor(v));
+  const scaled = barRows.map((r) => Math.pow(r.count, scalingExponent));
+  const scaledSum = scaled.reduce((a, b) => a + b, 0);
 
-  // Clamp page if rows shrink without a reloadKey bump.
+  const totalPages = Math.max(1, Math.ceil(rows.length / LEGEND_PAGE));
   const safePage = Math.min(page, totalPages - 1);
-  const start = safePage * pageSize;
-  const end = Math.min(start + pageSize, rows.length);
+  const start = safePage * LEGEND_PAGE;
+  const end = Math.min(start + LEGEND_PAGE, rows.length);
   const visible = rows.slice(start, end);
-
-  // Split the visible page into up to `columns` chunks of ROWS_PER_COLUMN.
-  // Ranks flow down the first chunk, then the next (1–8 left, 9–16 right).
-  const chunks: BreakdownRow[][] = [];
-  for (let ci = 0; ci < columns; ci++) {
-    chunks.push(visible.slice(ci * ROWS_PER_COLUMN, (ci + 1) * ROWS_PER_COLUMN));
-  }
-
-  // Bar widths are absolute (relative to the catalogue's #1 row) so that
-  // paginating reads honestly — page 2's bars genuinely look smaller than
-  // page 1's because they ARE smaller. Sub-linear scaling helps when the
-  // head dominates by an order of magnitude.
-  const headCount = rows.length > 0 ? rows[0].count : 1;
-  const widthPctFor = (count: number) =>
-    headCount === 0
-      ? 0
-      : (Math.pow(count, scalingExponent) /
-          Math.pow(headCount, scalingExponent)) *
-        100;
-
-  const showPager = totalPages > 1;
+  const columns = [visible.slice(0, LEGEND_ROWS_PER_COLUMN), visible.slice(LEGEND_ROWS_PER_COLUMN)];
 
   return (
-    <Section dense className={className}>
+    <Section dense title={heading}>
       {rows.length === 0 ? (
         <p className="text-xs text-muted italic">no data yet</p>
       ) : (
-        <div className="flex flex-col gap-2 flex-1" aria-label={`${title} ranking`}>
+        <div className="flex flex-col gap-3 flex-1">
           <div
-            className={
-              columns > 1
-                ? "grid grid-cols-2 gap-x-6 gap-y-1 items-start"
-                : ""
-            }
+            // Same height as StackedBarCard's "half" bar, so the bars on both
+            // Stats pages match; thin enough that Music fits without scrolling.
+            className="flex h-[18px] gap-0.5 overflow-hidden rounded-sm bg-surface"
+            aria-label={`${title} composition`}
           >
-            {chunks.map((chunk, ci) => (
-              <ul
-                key={ci}
-                className="text-xs font-mono space-y-2 min-w-0"
-              >
-                {chunk.map((r, i) => {
-                  const rank = start + ci * ROWS_PER_COLUMN + i + 1;
-                  return (
-                    <RankedRow
-                      key={r.value}
-                      rank={rank}
-                      label={r.value}
-                      count={r.count}
-                      totalCount={totalCount}
-                      widthPct={widthPctFor(r.count)}
-                      tint={
-                        tintFor ? tintFor(r, rank, rows.length) : undefined
-                      }
+            {barRows.map((r, i) => (
+              <div
+                key={r.value}
+                style={{
+                  width: `${scaledSum === 0 ? 0 : (scaled[i] / scaledSum) * 100}%`,
+                  minWidth: "2px",
+                  backgroundColor: barColor(r.value),
+                }}
+                title={`${barLabel(r.value)}: ${r.count.toLocaleString()} (${pct(r.count, totalCount)})`}
+              />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 items-start">
+            {columns.map((col, ci) => (
+              <ul key={ci} className="text-xs font-mono space-y-1 min-w-0">
+                {col.map((r) => (
+                  // Same column template as StackedBarCard's legend, so chips,
+                  // labels, counts and percentages line up across every card.
+                  <li
+                    key={r.value}
+                    className="grid grid-cols-[1.5rem_minmax(0,1fr)_3.5rem_2.5rem] items-center gap-2 tabular-nums"
+                  >
+                    <span
+                      className="inline-block w-2 h-2 rounded-sm justify-self-end"
+                      style={{ backgroundColor: colorFor(r.value) }}
+                      aria-hidden="true"
                     />
-                  );
-                })}
+                    <span className="text-fg/80 truncate" title={displayFor(r.value)}>
+                      {displayFor(r.value)}
+                    </span>
+                    <span className="text-accent text-right">{r.count.toLocaleString()}</span>
+                    <span className="text-muted text-right">{pct(r.count, totalCount)}</span>
+                  </li>
+                ))}
               </ul>
             ))}
           </div>
-          {showPager && (
-            <div
-              className="mt-auto flex items-center justify-end gap-2
-                         pt-1 text-[10px] font-mono text-muted tabular-nums"
-            >
+          {totalPages > 1 && (
+            <div className="mt-auto flex items-center justify-end gap-2 pt-1 text-[10px] font-mono text-muted tabular-nums">
               <span>
                 {start + 1}–{end} of {rows.length.toLocaleString()}
               </span>
@@ -739,23 +688,19 @@ function RankedRowsCard({
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={safePage === 0}
                 title="Previous page"
-                aria-label="Previous page"
-                className="p-1 rounded hover:bg-surface
-                           disabled:opacity-30 disabled:cursor-not-allowed
+                aria-label={`${title}: previous page`}
+                className="p-1 rounded hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed
                            text-muted hover:text-accent transition-colors"
               >
                 <ChevronLeft size={12} />
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  setPage((p) => Math.min(totalPages - 1, p + 1))
-                }
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 disabled={safePage >= totalPages - 1}
                 title="Next page"
-                aria-label="Next page"
-                className="p-1 rounded hover:bg-surface
-                           disabled:opacity-30 disabled:cursor-not-allowed
+                aria-label={`${title}: next page`}
+                className="p-1 rounded hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed
                            text-muted hover:text-accent transition-colors"
               >
                 <ChevronRight size={12} />
@@ -765,48 +710,6 @@ function RankedRowsCard({
         </div>
       )}
     </Section>
-  );
-}
-
-function RankedRow({
-  rank,
-  label,
-  count,
-  totalCount,
-  widthPct,
-  tint,
-}: {
-  rank: number;
-  label: string;
-  count: number;
-  totalCount: number;
-  widthPct: number;
-  // When set, used as the bar fill color (overrides bg-accent). Comes from
-  // the parent's positional gradientTint() in gradient mode.
-  tint?: string;
-}) {
-  return (
-    <li className="grid grid-cols-[1.5rem_minmax(0,1fr)_3.5rem_2.5rem] items-center gap-2 tabular-nums">
-      <span className="text-muted text-right text-[10px]">{rank}.</span>
-      <div className="min-w-0">
-        <div className="truncate text-fg/85">{label}</div>
-        <div className="h-0.5 mt-0.5 rounded-full bg-surface overflow-hidden">
-          <div
-            className={`h-full transition-[width] duration-150 ${tint ? "" : "bg-accent"}`}
-            style={{
-              width: `${widthPct}%`,
-              ...(tint ? { backgroundColor: tint } : {}),
-            }}
-          />
-        </div>
-      </div>
-      <span className="text-accent text-right shrink-0">
-        {count.toLocaleString()}
-      </span>
-      <span className="text-muted text-right shrink-0">
-        {pct(count, totalCount)}
-      </span>
-    </li>
   );
 }
 
@@ -832,6 +735,8 @@ interface YearCardProps {
   rows: BreakdownRow[];
   title?: string;
   className?: string;
+  // Taller bars, when the card has a page row to itself.
+  tall?: boolean;
 }
 
 // The YEAR card always shows YEAR_DECADES whole decades: the current one
@@ -845,7 +750,7 @@ const YEAR_DECADES = 8;
 const YEAR_FLOOR = 1900;
 const EARLIER_SLOTS = 3; // width of the "earlier" bar, in year slots
 
-function YearCard({ rows, title, className }: YearCardProps) {
+function YearCard({ rows, title, className, tall = false }: YearCardProps) {
   // Parse "1968" → 1968; ignore unparseable rows defensively.
   const parsed: { year: number; count: number }[] = rows
     .map((r) => ({ year: Number(r.value), count: r.count }))
@@ -905,75 +810,62 @@ function YearCard({ rows, title, className }: YearCardProps) {
 
   return (
     <Section dense title={title} className={className}>
-      {/* Inset from the card's edges so the first and last bars don't run up
-          against the border. The label row shares the inset to stay aligned. */}
-      <div className="flex flex-1 flex-col gap-1 px-6">
-        {/* One bar per year, grouped by decade: a slightly wider gap between
-            decades than between years, so each decade reads as a block while
-            the colour still runs along the theme gradient. */}
-        <div
-          className="flex h-32 items-end gap-2"
-          aria-label="releases per year"
-        >
-          {earlier > 0 && (
-            // One bar for everything older than the window, two year-slots
-            // wide. Scaled like the rest but capped at full height.
-            <div
-              className="flex h-full items-end"
-              style={{ flexGrow: EARLIER_SLOTS, flexBasis: 0 }}
-            >
+      {/* Inset from the card's edges so the first and last boxes don't run up
+          against the border. Each decade is one faint box holding its years
+          and, under a rule, its label. Inside, the years sit side by side with
+          no gap, each in its own faint full-height cell, so a decade reads as a
+          block of ten slots and an empty year is a visibly empty slot. The
+          colour runs along the theme gradient across all of them. */}
+      <div className="flex flex-1 gap-2 px-6" aria-label="releases per year">
+        {earlier > 0 && (
+          // One bar for everything older than the window, EARLIER_SLOTS
+          // year-slots wide. Scaled like the rest but capped at full height.
+          <div
+            className="flex min-w-0 flex-col rounded-sm border border-muted/30"
+            style={{ flexGrow: EARLIER_SLOTS, flexBasis: 0 }}
+            title={`before ${minYear}: ${earlier.toLocaleString()}`}
+          >
+            <div className={`flex ${tall ? "h-64" : "h-32"} items-end`}>
               <div
                 className="flex-1 bg-muted/60"
                 style={{ height: `${Math.min(100, (earlier / maxCount) * 100)}%` }}
-                title={`before ${minYear}: ${earlier.toLocaleString()}`}
               />
             </div>
-          )}
-          {decadeGroups.map((g) => (
-            <div
-              key={g.decade}
-              className="flex h-full items-end gap-0.5"
-              style={{ flexGrow: g.years.length, flexBasis: 0 }}
-            >
-              {g.years.map((d) => (
-                <div
-                  key={d.year}
-                  className="flex-1 min-w-[2px]"
-                  style={{
-                    height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
-                    backgroundColor: yearGradientColor((d.year - minYear) / span),
-                  }}
-                  title={`${d.year}: ${d.count.toLocaleString()}`}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-        {/* Decade brackets, one per block above — same flex weights and the
-            same gap, so each spans its decade exactly. A faint open-topped
-            box (|__ 1990s __|) marks where one decade ends and the next
-            begins; the label sits centred in it. */}
-        <div className="flex gap-2 text-[10px] font-mono text-fg/70">
-          {earlier > 0 && (
-            <div
-              className="text-center pt-1 pb-1 min-w-0 truncate text-muted"
-              style={{ flexGrow: EARLIER_SLOTS, flexBasis: 0 }}
-              title={`before ${minYear}: ${earlier.toLocaleString()}`}
-            >
+            <div className="border-t border-muted/30 py-1 text-center text-[10px] font-mono text-muted truncate">
               &lt;{minYear}
             </div>
-          )}
-          {decadeGroups.map((g) => (
-            <div
-              key={g.decade}
-              className="text-center pt-1 pb-1 min-w-0 truncate
-                         border border-t-0 border-muted/30 rounded-b-sm"
-              style={{ flexGrow: g.years.length, flexBasis: 0 }}
-            >
+          </div>
+        )}
+        {decadeGroups.map((g) => (
+          <div
+            key={g.decade}
+            className="flex min-w-0 flex-col rounded-sm border border-muted/30"
+            style={{ flexGrow: g.years.length, flexBasis: 0 }}
+          >
+            <div className={`flex ${tall ? "h-64" : "h-32"}`}>
+              {g.years.map((d, i) => (
+                <div
+                  key={d.year}
+                  className={`flex flex-1 min-w-[2px] items-end ${
+                    i < g.years.length - 1 ? "border-r border-muted/15" : ""
+                  }`}
+                  title={`${d.year}: ${d.count.toLocaleString()}`}
+                >
+                  <div
+                    className="w-full"
+                    style={{
+                      height: `${d.count === 0 ? 0 : (d.count / maxCount) * 100}%`,
+                      backgroundColor: yearGradientColor((d.year - minYear) / span),
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-muted/30 py-1 text-center text-[10px] font-mono text-fg/70 truncate">
               {g.decade}s
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </Section>
   );
