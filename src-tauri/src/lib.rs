@@ -3271,8 +3271,11 @@ pub fn refresh_has_nothing(has_audio: bool, has_video: bool) -> bool {
 /// Resolve `track_total` on a refresh.
 ///
 /// Two things protect the stored value:
-/// - **Discogs owns it** once a release is linked (Discogs = canonical, disk =
-///   present), so an enriched total is never overwritten by a local tag.
+/// - **Discogs owns it** once it has actually supplied it, i.e. the release was
+///   enriched from the Discogs release it is linked to now (Discogs = canonical,
+///   disk = present), so an enriched total is never overwritten by a local tag.
+///   Being linked is not enough: a release linked but never enriched still holds
+///   whatever the import read from the files (see `discogs_owns_total`).
 /// - **No audio, no answer.** With no audio files there is no TRACKTOTAL tag to
 ///   read, and falling back to the present count would write 0 over a real
 ///   catalogue total — which is exactly what a video-only release would hit.
@@ -3280,13 +3283,34 @@ pub fn resolve_track_total(
     db: Option<i64>,
     tag_total: Option<i64>,
     present: i64,
-    discogs_linked: bool,
+    discogs_owned: bool,
     has_audio: bool,
 ) -> Option<i64> {
-    if discogs_linked || !has_audio {
+    if discogs_owned || !has_audio {
         return db;
     }
     Some(tag_total.unwrap_or(present).min(99))
+}
+
+/// Has Discogs supplied this release's track total? Only when the release was
+/// enriched from the Discogs release it is linked to now: a row in
+/// `discogs_enrichments` with the same `discogs_id`. A release linked after
+/// that table was created, and never enriched, has no row, and its total is
+/// still the import's (2026-11-16: *Luke Vibert Presents Amen Andrews* kept a
+/// stale 23 against 14 files and a 14-track Discogs release, because a refresh
+/// treated "linked" as "Discogs owns it"). A re-link counts as not enriched,
+/// the same rule "Enrich missing" uses.
+fn discogs_owns_total(conn: &Connection, release_id: i64, discogs_id: Option<i64>) -> bool {
+    let Some(did) = discogs_id else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM discogs_enrichments
+                       WHERE release_id = ?1 AND discogs_id = ?2)",
+        params![release_id, did],
+        |r| r.get(0),
+    )
+    .unwrap_or(false)
 }
 
 /// Fields this refresh wrote that are ALSO carried in the kind:31237 event.
@@ -3497,15 +3521,17 @@ fn refresh_release_inner(
     // present vs total = how many tracks are missing locally.
     let present = (audio_files.len() as i64).min(99);
     let new_track_count = Some(present);
-    // Discogs owns the canonical total once a release is linked: a disk refresh
-    // must not overwrite the enriched track_total with the local tag value
-    // (that's the dual-source guard — Discogs = canonical, disk = present).
-    // Present count still updates from disk; disc_total isn't touched here.
+    // Discogs owns the canonical total once it has supplied it (the release
+    // was enriched from its current link): a disk refresh must not overwrite
+    // the enriched track_total with the local tag value (that's the dual-source
+    // guard — Discogs = canonical, disk = present). Linked but never enriched,
+    // the files decide. Present count still updates from disk; disc_total
+    // isn't touched here.
     let new_track_total = resolve_track_total(
         release.track_total,
         info.track_total,
         present,
-        release.discogs_id.is_some(),
+        discogs_owns_total(&conn, release.id.unwrap_or(release_id), release.discogs_id),
         !audio_files.is_empty(),
     );
 
@@ -14228,7 +14254,10 @@ mod discogs_null_lists {
 
 #[cfg(test)]
 mod enrich_missing_selection {
-    use super::{ensure_discogs_enrichments, record_enrichment, ENRICH_MISSING_SQL, SCHEMA};
+    use super::{
+        discogs_owns_total, ensure_discogs_enrichments, record_enrichment, resolve_track_total,
+        ENRICH_MISSING_SQL, SCHEMA,
+    };
     use rusqlite::Connection;
 
     fn picked(c: &Connection) -> Vec<i64> {
@@ -14260,6 +14289,37 @@ mod enrich_missing_selection {
         // A second open leaves the table as it is.
         ensure_discogs_enrichments(&c).unwrap();
         assert_eq!(picked(&c), vec![1]);
+    }
+
+    #[test]
+    fn discogs_owns_the_total_only_once_it_supplied_it() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        ensure_discogs_enrichments(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO releases (id, artist, title, medium, discogs_id)
+             VALUES (1, 'a', 'linked, never enriched', 'digital', 100),
+                    (2, 'b', 'unlinked', 'digital', NULL);",
+        )
+        .unwrap();
+        // Linked after the table existed and never enriched: not Discogs's.
+        assert!(!discogs_owns_total(&c, 1, Some(100)));
+        assert!(!discogs_owns_total(&c, 2, None));
+        // So a refresh lets the files correct the stale import total
+        // (no TRACKTOTAL tag, 14 files present).
+        assert_eq!(
+            resolve_track_total(Some(23), None, 14, discogs_owns_total(&c, 1, Some(100)), true),
+            Some(14)
+        );
+        // Once enriched from that link, Discogs owns it.
+        record_enrichment(&c, 1, 100).unwrap();
+        assert!(discogs_owns_total(&c, 1, Some(100)));
+        assert_eq!(
+            resolve_track_total(Some(14), Some(3), 3, discogs_owns_total(&c, 1, Some(100)), true),
+            Some(14)
+        );
+        // A re-link to another Discogs release hands it back to the files.
+        assert!(!discogs_owns_total(&c, 1, Some(101)));
     }
 }
 

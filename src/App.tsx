@@ -659,7 +659,6 @@ export default function App() {
               relays={relays}
               blossomServers={blossomServers}
               labelImageUrls={labelImageUrls}
-              onOpenRelays={() => setRelaysOpen(true)}
             />
           </div>
           <div

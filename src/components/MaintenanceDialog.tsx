@@ -278,11 +278,15 @@ export function MaintenanceDialog({
   activeOp,
   onRun,
   onClose,
+  footer,
 }: {
   group: MaintGroupId;
   activeOp: string | null;
   onRun: (id: MaintJobId) => void;
   onClose: () => void;
+  // Settings that belong with this group (the Library folder dialog carries
+  // the library root and the ignored-folders list), shown under the jobs.
+  footer?: ReactNode;
 }) {
   const g = MAINT_GROUPS.find((x) => x.id === group)!;
   const busy = activeOp !== null;
@@ -370,6 +374,10 @@ export function MaintenanceDialog({
             );
           })}
         </div>
+
+        {footer && (
+          <div className="mt-3 pt-3 border-t border-muted/30">{footer}</div>
+        )}
       </div>
     </div>
   );

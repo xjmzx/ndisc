@@ -21,6 +21,14 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.26 — 2026-11-16
+
+### Changed
+- **Library maintenance menu** (release list ⋮): now only the five groups. **Set library folder…** and **Ignored folders…** moved into the **Library folder** dialog, under its jobs, which also shows the current library folder. **Relays & servers…** is gone from the menu: the relay and server summary beside **Publish library** opens the same window.
+
+### Fixed
+- **Expected track total on a release linked to Discogs but never enriched.** A refresh treated any Discogs link as "Discogs owns the total" and left the stored total alone, even when Discogs had never supplied it, so a stale total from the import could never be corrected (*Luke Vibert Presents Amen Andrews* showed 14 of 23 against 14 files and a 14-track Discogs release). The total is now protected only once the release has been enriched from the Discogs release it is linked to; until then a refresh reads it from the files as for any unlinked release. A change in the total marks a published release for republishing, as before.
+
 ## 0.6.25 — 2026-11-15
 
 ### Changed

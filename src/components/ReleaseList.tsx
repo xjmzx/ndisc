@@ -154,8 +154,6 @@ interface Props {
   blossomServers: string[];
   // Label-art URLs, so "Mirror covers" copies those along with the covers.
   labelImageUrls: string[];
-  // Opens the Relays & servers window (lives with the publishing strip).
-  onOpenRelays?: () => void;
 }
 
 type MediumFilter = "" | "physical" | "digital";
@@ -185,7 +183,6 @@ export function ReleaseList({
   relays,
   blossomServers,
   labelImageUrls,
-  onOpenRelays,
 }: Props) {
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
@@ -219,6 +216,15 @@ export function ReleaseList({
   const [ignoredOpen, setIgnoredOpen] = useState(false);
   // Which maintenance group's dialog is open (the ⋮ menu lists groups).
   const [maintGroup, setMaintGroup] = useState<MaintGroupId | null>(null);
+  // The library root, shown in the Library folder dialog. Read when that
+  // dialog opens and after it is changed there.
+  const [libraryRoot, setLibraryRootShown] = useState<string | null>(null);
+  useEffect(() => {
+    if (maintGroup !== "disk") return;
+    getLibraryRoot()
+      .then((r) => setLibraryRootShown(r ?? null))
+      .catch(() => setLibraryRootShown(null));
+  }, [maintGroup]);
 
   // Scroll container, for the index-rail jump-to-letter chevrons.
   const listRef = useRef<HTMLUListElement>(null);
@@ -1200,6 +1206,7 @@ export function ReleaseList({
     if (!picked) return;
     try {
       await setLibraryRoot(picked);
+      setLibraryRootShown(picked);
       await reload();
     } catch (e) {
       setError(String(e));
@@ -1675,39 +1682,6 @@ export function ReleaseList({
                   }}
                 />
               ))}
-              <div className="border-t border-muted/40" role="separator" />
-              <MaintMenuItem
-                icon={<FolderCog size={14} />}
-                label="Set library folder…"
-                detail="Choose the root the rescan walks"
-                active={false}
-                disabled={activeOp !== null}
-                onClick={setLibraryFolder}
-              />
-              <MaintMenuItem
-                icon={<FolderX size={14} />}
-                label="Ignored folders…"
-                detail="Folders the rescan skips — review and un-ignore"
-                active={false}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  setIgnoredOpen(true);
-                }}
-              />
-              {onOpenRelays && (
-                <MaintMenuItem
-                  icon={<Radio size={14} />}
-                  label="Relays & servers…"
-                  detail="Where releases publish and covers are stored"
-                  active={false}
-                  disabled={false}
-                  onClick={() => {
-                    setMaintMenuOpen(false);
-                    onOpenRelays();
-                  }}
-                />
-              )}
             </div>
           )}
         </div>
@@ -1729,6 +1703,58 @@ export function ReleaseList({
           group={maintGroup}
           activeOp={activeOp}
           onClose={() => setMaintGroup(null)}
+          footer={
+            maintGroup === "disk" ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-3 rounded-md px-3 py-2">
+                  <span className="shrink-0 text-muted">
+                    <FolderCog size={14} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-fg">Library folder</div>
+                    <div
+                      className="text-[11px] text-muted font-mono truncate"
+                      title={libraryRoot ?? undefined}
+                    >
+                      {libraryRoot ?? "not set"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={setLibraryFolder}
+                    disabled={activeOp !== null}
+                    className="shrink-0 px-2 py-1 rounded-md text-[11px] bg-surface
+                               hover:bg-surfaceHover text-fg
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Change…
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 rounded-md px-3 py-2">
+                  <span className="shrink-0 text-muted">
+                    <FolderX size={14} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-fg">Ignored folders</div>
+                    <div className="text-[11px] text-muted">
+                      Folders the rescan skips. Review them and un-ignore.
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setMaintGroup(null);
+                      setIgnoredOpen(true);
+                    }}
+                    disabled={activeOp !== null}
+                    className="shrink-0 px-2 py-1 rounded-md text-[11px] bg-surface
+                               hover:bg-surfaceHover text-fg
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Open…
+                  </button>
+                </div>
+              </div>
+            ) : undefined
+          }
           onRun={async (id) => {
             setMaintGroup(null);
             if (id === "notes") {
