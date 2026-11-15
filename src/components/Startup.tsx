@@ -187,6 +187,15 @@ const ROW_LABELS: Record<RowId, string> = {
 
 const ORDER: RowId[] = ["db", "library", "key", "relay", "blossom", "catalogue"];
 
+// Pacing. The checks themselves finish in a few milliseconds, which reads as a
+// flicker rather than a checklist. Each row gets a short beat, and a clean pass
+// stays on screen briefly before the app opens: about 3 seconds in all, well
+// inside the agreed budget (the slow part of a launch is the app loading a
+// large catalogue afterwards, not this).
+const ROW_MS = 300;
+const HOLD_MS = 1200;
+const pace = () => new Promise((r) => setTimeout(r, ROW_MS));
+
 function StartupCheck({
   status: initialStatus,
   version,
@@ -242,10 +251,14 @@ function StartupCheck({
       }
     }
 
+    await pace();
+
     // 2. Library folder
     if (s.libraryRoot && s.libraryRootExists) put("library", "ok", s.libraryRoot);
     else if (s.libraryRoot) put("library", "warn", `Not found: ${s.libraryRoot} (a drive not mounted?)`);
     else put("library", "warn", "Not set");
+
+    await pace();
 
     // 3. Signing key
     try {
@@ -255,6 +268,8 @@ function StartupCheck({
     } catch (e) {
       put("key", "warn", `Keyring: ${String(e)}`);
     }
+
+    await pace();
 
     // 4. Relay
     const relays = savedRelays();
@@ -272,6 +287,8 @@ function StartupCheck({
       put("relay", "ok", relays.join(", "));
     }
 
+    await pace();
+
     // 5. Blossom
     const servers = savedBlossom();
     if (servers.length === 0) {
@@ -284,6 +301,8 @@ function StartupCheck({
       put("blossom", "ok", servers.join(", "));
     }
 
+    await pace();
+
     // 6. Catalogue
     if (dbOk) {
       const n = (await startupStatus().catch(() => s)).releases ?? 0;
@@ -292,9 +311,10 @@ function StartupCheck({
       put("catalogue", "fail", "The database didn't open");
     }
 
+    await pace();
     setRunning(false);
     if (ORDER.every((id) => results[id] === "ok")) {
-      setTimeout(finish, 600);
+      setTimeout(finish, HOLD_MS);
     }
   }
 
