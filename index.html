@@ -4,7 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>ndisc</title>
+    <meta name="color-scheme" content="dark" />
+    <!-- Dark from the very first paint, before the stylesheet arrives: the
+         window and webview background is set to the same colour in
+         tauri.conf.json (backgroundColor), so a launch never flashes white.
+         #0a0a0b is the monochrome --c-bg; the app's CSS takes over once it
+         loads. -->
+    <style>html, body { background: #0a0a0b; }</style>
     <script>
       // Theme applied BEFORE React renders. Doing it in a useEffect lands it
       // AFTER the first paint, so every launch flashed the default theme first
