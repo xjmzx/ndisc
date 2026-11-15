@@ -5,11 +5,11 @@ import {
   CheckCircle2,
   Circle,
   Loader2,
+  X,
   XCircle,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import iconUrl from "../../icon.svg";
 import {
   getLibraryRoot,
   getNpub,
@@ -90,18 +90,35 @@ export function Startup({ onDone }: { onDone: () => void }) {
       .then(([s, v]) => {
         setStatus(s);
         setVersion(v);
-        const isNew = !s.dbExists || (s.releases === 0 && !s.dbError);
+        // An empty database is "new" only until Setup has been finished or
+        // closed once (both record lastSeenVersion); after that an empty
+        // catalogue is a choice, and gets the Startup check.
+        const isNew =
+          !s.dbExists || (s.releases === 0 && !s.dbError && !s.lastSeenVersion);
         setMode(force || isNew ? "setup" : "check");
       })
       .catch((e) => setError(String(e)));
   }, []);
 
+  // Same frame as the app: the header's wordmark + version chip top left, the
+  // stack line and database path in the footer, the card in between.
   return (
-    <div className="min-h-screen bg-bg text-fg flex flex-col">
-      <div className="px-6 pt-6">
-        <img src={iconUrl} alt="ndisc" className="h-10 w-10" />
-      </div>
-      <div className="flex-1 flex items-start justify-center px-4 pt-8 pb-12">
+    <div className="min-h-screen flex flex-col pt-6 px-6 pb-2 max-w-[1500px] mx-auto bg-bg text-fg">
+      <header className="mb-4 shrink-0 rounded-lg bg-panel shadow-md px-4 py-3 flex items-center gap-3">
+        <span className="text-2xl font-bold tracking-tight leading-none">
+          <span className="text-accent">n</span>
+          <span className="text-mauve">disc</span>
+        </span>
+        {version && (
+          <span
+            className="inline-flex items-center px-2.5 py-2 rounded-md bg-surface text-mauve font-mono text-xs"
+            title={`v${version}`}
+          >
+            v{version.split(/[-+]/)[0]}
+          </span>
+        )}
+      </header>
+      <main className="flex-1 flex items-start justify-center px-4 pt-8 pb-12">
         <div className="w-full max-w-lg rounded-lg bg-panel border border-surface/70 shadow-xl p-5">
           {error && <p className="text-xs text-alert">{error}</p>}
           {!error && mode === "loading" && (
@@ -130,7 +147,18 @@ export function Startup({ onDone }: { onDone: () => void }) {
             />
           )}
         </div>
-      </div>
+      </main>
+      <footer className="mt-4 shrink-0 flex flex-wrap items-center justify-between gap-x-8 gap-y-1 text-xs text-muted">
+        <span className="truncate">stack: Tauri 2 · React · TypeScript · Tailwind · SQLite</span>
+        {status && (
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <span className="shrink-0">db</span>
+            <span className="font-mono text-mauve truncate max-w-[40rem]" title={status.dbPath}>
+              {status.dbPath}
+            </span>
+          </span>
+        )}
+      </footer>
     </div>
   );
 }
@@ -432,12 +460,42 @@ function Setup({
   const next = () => setStep((i) => Math.min(i + 1, STEPS.length - 1));
   const id = STEPS[step].id;
 
+  // Setup can be closed once there is a database to open: from step 2 on (the
+  // Database step creates or opens one), or from the start when one already
+  // exists. Each step saves as it goes, so closing keeps the folder, key,
+  // relay and server chosen so far; only the imports (run at Ready) are lost.
+  // Closing records lastSeenVersion, so an empty catalogue doesn't bring
+  // Setup back on every launch.
+  const canClose = id !== "ready" && (step > 0 || status.dbExists);
+  async function close() {
+    // Closed before the relay step: no relay was chosen. Record that, or the
+    // app's default top-up would read as configured at the next check.
+    if (relayChoice() === null && savedRelays().length === 0) setRelayChoice("later");
+    try {
+      await initDb();
+    } catch {
+      /* the app shows its own database error */
+    }
+    if (version) await setLastSeenVersion(version).catch(() => {});
+    onDone();
+  }
+
   return (
     <div>
       <div className="flex items-baseline justify-between mb-1">
         <h1 className="text-sm font-medium">{forced ? "Setup" : "Welcome to ndisc"}</h1>
-        <span className="text-[11px] text-muted">
+        <span className="inline-flex items-center gap-3 text-[11px] text-muted">
           {step + 1} / {STEPS.length}
+          {canClose && (
+            <button
+              onClick={close}
+              className="text-muted hover:text-fg"
+              title="Close Setup and open ndisc. What you've chosen so far is kept; the imports don't run."
+              aria-label="Close Setup"
+            >
+              <X size={16} />
+            </button>
+          )}
         </span>
       </div>
       <ol className="flex gap-1 mb-4" aria-hidden>
