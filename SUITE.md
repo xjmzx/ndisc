@@ -891,7 +891,7 @@ catalogue work and of each other.
   an empty log, so this is a data-availability question before it is a feature.
   Detail in `radio-scan/docs/`.
 
-- **Desktop onboarding flow.** ndisc's design (planned for 0.7.0):
+- **Desktop onboarding flow.** ndisc's, shipped in 0.7.0:
   [`docs/onboarding-design-2026-11-16.md`](docs/onboarding-design-2026-11-16.md).
   `nview` has one for mobile; the desktop apps
   drop a new user straight into an empty window. Three things need setting up

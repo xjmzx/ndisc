@@ -6,12 +6,6 @@ CHANGELOG takes over from there). Suite-level direction stays in
 [`SUITE.md` § Direction / roadmap](../SUITE.md); known blind spots of the
 existing checks are in [`open-issues-2026-09-22.md`](open-issues-2026-09-22.md).
 
-## Startup check and first-run setup (planned 2026-11-16, for 0.7.0)
-
-A startup checklist for an existing install, and a setup flow when there is no
-database. The design, the code facts it depends on and the decisions taken are
-in [`onboarding-design-2026-11-16.md`](onboarding-design-2026-11-16.md).
-
 ## Local covers vs Blossom: report what it cannot compare (planned 2026-11-13)
 
 **Why.** The check (0.6.20) compares a published release's cover file with the

@@ -1,7 +1,8 @@
 # Startup check and first-run setup (design, 2026-11-16)
 
-Planned for **0.7.0**. Nothing here is built yet. This document records the
-agreed shape of the work and the facts in the current code that it depends on.
+Planned for and **built in 0.7.0** (`src/components/Startup.tsx`,
+`src/lib/startupChecks.ts`, `startup_status` in `lib.rs`). This document records
+the agreed shape of the work and the facts in the code it depends on.
 It is ndisc's part of the suite-wide "Desktop onboarding flow" item in
 [`SUITE.md` § Direction / roadmap](../SUITE.md); the other apps need different
 subsets and aren't covered here. Once it ships, the CHANGELOG takes over.

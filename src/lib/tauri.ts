@@ -158,6 +158,26 @@ export interface ImportProgress {
   currentDir: string;
 }
 
+// Read before anything opens (and so creates) the database: the startup
+// screen decides between the Startup check and Setup from this.
+export interface StartupStatus {
+  dbPath: string;
+  dbExists: boolean;
+  releases: number | null;
+  dbError: string | null;
+  libraryRoot: string | null;
+  libraryRootExists: boolean;
+  lastSeenVersion: string | null;
+}
+
+export async function startupStatus(): Promise<StartupStatus> {
+  return invoke<StartupStatus>("startup_status");
+}
+
+export async function setLastSeenVersion(version: string): Promise<void> {
+  return invoke<void>("set_last_seen_version", { version });
+}
+
 export async function initDb(): Promise<string> {
   return invoke<string>("init_db");
 }

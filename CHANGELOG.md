@@ -21,12 +21,19 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## 0.6.26 — 2026-11-16
+## 0.7.0 — 2026-11-16
+
+Includes 0.6.26, which was not released on its own.
+
+### Added
+- **Startup check.** ndisc now opens on a short checklist: database, library folder, signing key, publishing relay, Blossom server, catalogue. When everything passes, the app opens by itself. A warning or failure waits, with **Fix** on the row (the same controls as Setup) and **Continue anyway**; only a database that won't open blocks the app. The check is local and adds well under a second. Relays and Blossom servers are only tested for reachability on the first launch after an upgrade and after a Fix.
+- **Setup**, for a new install (no database, or an empty one): database (create new or open existing), library folder, filling the catalogue (scan the library folder and/or import a Discogs collection CSV; the Apple Music XML import comes in 0.7.1), then the optional publishing steps: signing key (paste an nsec; it goes to the OS keyring), relay (your own, tested, including whether its NIP-11 document says it restricts writes; nos.lol, with a note that it doesn't keep old events; or later) and Blossom server. Opening an existing database with releases in it goes to the Startup check instead. **Setup…** in the ⋮ menu runs it again.
+- Design: [`docs/onboarding-design-2026-11-16.md`](docs/onboarding-design-2026-11-16.md).
 
 ### Changed
 - **Library maintenance menu** (release list ⋮): now only the five groups. **Set library folder…** and **Ignored folders…** moved into the **Library folder** dialog, under its jobs, which also shows the current library folder. **Relays & servers…** is gone from the menu: the relay and server summary beside **Publish library** opens the same window.
 
-### Fixed
+### Fixed (0.6.26)
 - **Expected track total on a release linked to Discogs but never enriched.** A refresh treated any Discogs link as "Discogs owns the total" and left the stored total alone, even when Discogs had never supplied it, so a stale total from the import could never be corrected (*Luke Vibert Presents Amen Andrews* showed 14 of 23 against 14 files and a 14-track Discogs release). The total is now protected only once the release has been enriched from the Discogs release it is linked to; until then a refresh reads it from the files as for any unlinked release. A change in the total marks a published release for republishing, as before.
 
 ## 0.6.25 — 2026-11-15

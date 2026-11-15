@@ -20,6 +20,7 @@ import {
   Radar,
   Radio,
   RefreshCw,
+  Settings,
   SatelliteDish,
   Search,
   Tag,
@@ -117,6 +118,7 @@ import {
   publishStateOf,
 } from "../lib/publishState";
 import { cn } from "../lib/cn";
+import { requestSetup } from "../lib/startupChecks";
 import {
   MAINT_GROUPS,
   MaintenanceDialog,
@@ -1682,6 +1684,18 @@ export function ReleaseList({
                   }}
                 />
               ))}
+              <div className="border-t border-muted/40" role="separator" />
+              <MaintMenuItem
+                icon={<Settings size={14} />}
+                label="Setup…"
+                detail="Run Setup again: library folder, import, key, relay, Blossom"
+                active={false}
+                disabled={activeOp !== null}
+                onClick={() => {
+                  setMaintMenuOpen(false);
+                  requestSetup();
+                }}
+              />
             </div>
           )}
         </div>

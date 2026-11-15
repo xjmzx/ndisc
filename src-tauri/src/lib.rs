@@ -1162,6 +1162,96 @@ fn backfill_type_category(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+// --- Startup check / first-run setup (0.7.0) --------------------------------
+//
+// Everything the startup screen needs to decide between the Startup check and
+// Setup, read WITHOUT creating anything. `init_db` (and every command that
+// calls `open`) creates the database file when it is missing, so this has to
+// answer first: the frontend calls it before any of those run.
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupStatus {
+    pub db_path: String,
+    pub db_exists: bool,
+    /// Release count, read-only. None when the file is missing or unreadable
+    /// (no `releases` table yet counts as 0).
+    pub releases: Option<i64>,
+    pub db_error: Option<String>,
+    /// The configured or derived library root; derived only when the database
+    /// exists, since deriving opens it.
+    pub library_root: Option<String>,
+    pub library_root_exists: bool,
+    /// The app version the startup check last passed on (config.json). A
+    /// different value means this is the first launch after an upgrade.
+    pub last_seen_version: Option<String>,
+}
+
+fn count_releases_read_only(path: &std::path::Path) -> Result<i64, String> {
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|e| e.to_string())?;
+    let has_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'releases')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !has_table {
+        return Ok(0);
+    }
+    conn.query_row("SELECT COUNT(*) FROM releases", [], |r| r.get(0))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn startup_status(app: tauri::AppHandle) -> Result<StartupStatus, String> {
+    let path = db_path(&app)?;
+    let db_exists = path.is_file();
+    let (releases, db_error) = if db_exists {
+        match count_releases_read_only(&path) {
+            Ok(n) => (Some(n), None),
+            Err(e) => (None, Some(e)),
+        }
+    } else {
+        (None, None)
+    };
+    let config = read_config(&app);
+    let configured_root = config
+        .get("libraryRoot")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_owned);
+    let library_root = match configured_root {
+        Some(r) => Some(r),
+        None if db_exists && db_error.is_none() => library_root(&app).ok(),
+        None => None,
+    };
+    let library_root_exists = library_root
+        .as_deref()
+        .map(|r| std::path::Path::new(r).is_dir())
+        .unwrap_or(false);
+    let last_seen_version = config
+        .get("lastSeenVersion")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    Ok(StartupStatus {
+        db_path: path.to_string_lossy().into_owned(),
+        db_exists,
+        releases,
+        db_error,
+        library_root,
+        library_root_exists,
+        last_seen_version,
+    })
+}
+
+#[tauri::command]
+fn set_last_seen_version(app: tauri::AppHandle, version: String) -> Result<(), String> {
+    write_config_patch(&app, &[("lastSeenVersion", serde_json::Value::String(version))])
+}
+
 #[tauri::command]
 fn init_db(app: tauri::AppHandle) -> Result<String, String> {
     let path = db_path(&app)?;
@@ -12128,6 +12218,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             lyrics_counts,
+            startup_status,
+            set_last_seen_version,
             init_db,
             set_db_path,
             add_release,
