@@ -21,6 +21,12 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.6.25 — 2026-11-15
+
+### Changed
+- **Library maintenance menu** (release list ⋮): the 19 items are now five groups — **Library folder**, **Covers on disk**, **Blossom**, **Relays & published**, **Catalogue data** — with **Set library folder…**, **Ignored folders…** and **Relays & servers…** under a divider. Each group opens a dialog that describes its jobs, marks the ones that list their changes before making them (*checks first*) or never write (*read-only*), and runs each with its own button. Results still appear in the summary panel under the toolbar. While a job runs, its group's icon pulses in the menu.
+- Three jobs renamed so they are easier to tell apart: **Rescan library folder** is now **Find new folders**, **Scan library for changes** is **Re-read tags & art**, and **Rescan local covers** is **Match local covers**.
+
 ## 0.6.24 — 2026-11-13
 
 ### Changed

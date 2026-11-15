@@ -4,38 +4,26 @@ import {
   ChevronUp,
   Circle,
   Combine,
-  Copy,
   Disc3,
   Film,
   MicVocal,
   FolderCog,
-  FolderSearch,
-  FolderSync,
   FolderX,
   ImageDown,
   Image as ImageIcon,
   ImageOff,
-  ImageUp,
-  FileImage,
-  FolderPlus,
-  Images,
   Link2,
   Link2Off,
   Music,
   ShoppingBag,
   MoreVertical,
   Radar,
-  Share2,
   Radio,
   RefreshCw,
   SatelliteDish,
-  StickyNote,
-  ScanLine,
   Search,
   Tag,
-  Wand2,
   type LucideIcon,
-  FileWarning,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -129,6 +117,12 @@ import {
   publishStateOf,
 } from "../lib/publishState";
 import { cn } from "../lib/cn";
+import {
+  MAINT_GROUPS,
+  MaintenanceDialog,
+  groupOfJob,
+  type MaintGroupId,
+} from "./MaintenanceDialog";
 
 // Single source of truth for the release filter set — consumed by the list
 // query, the filter description, AND the bulk publish/unpublish ops. Every
@@ -223,6 +217,8 @@ export function ReleaseList({
   const [dupCount, setDupCount] = useState(0);
   const [dupOpen, setDupOpen] = useState(false);
   const [ignoredOpen, setIgnoredOpen] = useState(false);
+  // Which maintenance group's dialog is open (the ⋮ menu lists groups).
+  const [maintGroup, setMaintGroup] = useState<MaintGroupId | null>(null);
 
   // Scroll container, for the index-rail jump-to-letter chevrons.
   const listRef = useRef<HTMLUListElement>(null);
@@ -1664,115 +1660,29 @@ export function ReleaseList({
                          rounded-md bg-panel border border-surface/60
                          shadow-lg overflow-hidden text-xs"
             >
+              {MAINT_GROUPS.map((g) => (
+                <MaintMenuItem
+                  key={g.id}
+                  icon={g.icon}
+                  label={`${g.title}…`}
+                  detail={g.blurb}
+                  count={g.jobs.length}
+                  active={groupOfJob(activeOp) === g.id}
+                  disabled={false}
+                  onClick={() => {
+                    setMaintMenuOpen(false);
+                    setMaintGroup(g.id);
+                  }}
+                />
+              ))}
+              <div className="border-t border-muted/40" role="separator" />
               <MaintMenuItem
-                icon={<Wand2 size={14} />}
-                label="Extract embedded artwork"
-                detail="Pull cover art from digital releases"
-                active={activeOp === "extract"}
+                icon={<FolderCog size={14} />}
+                label="Set library folder…"
+                detail="Choose the root the rescan walks"
+                active={false}
                 disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("extract");
-                }}
-              />
-              <MaintMenuItem
-                icon={<FolderSearch size={14} />}
-                label="Rescan local covers"
-                detail="Scan and match local files and dirs"
-                active={activeOp === "rescan"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("rescan");
-                }}
-              />
-              <MaintMenuItem
-                icon={<ScanLine size={14} />}
-                label="Scan library for changes"
-                detail="Re-read tags and cover art"
-                active={activeOp === "scan"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("scan");
-                }}
-              />
-              <MaintMenuItem
-                icon={<ImageDown size={14} />}
-                label="Reconcile published covers"
-                detail="Find published art missing on disk, then write it"
-                active={activeOp === "coverGap"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("coverGap");
-                }}
-              />
-              <MaintMenuItem
-                icon={<ImageUp size={14} />}
-                label="Move covers to Blossom"
-                detail="Check which covers are elsewhere, then move them"
-                active={activeOp === "coverMigrate"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("coverMigrate");
-                }}
-              />
-              <MaintMenuItem
-                icon={<FolderPlus size={14} />}
-                label="Give every release a folder"
-                detail="Create <Artist>/<Title> for releases without one"
-                active={activeOp === "folders"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("folders");
-                }}
-              />
-              <MaintMenuItem
-                icon={<FileImage size={14} />}
-                label="Tidy artwork names"
-                detail="Name each folder's only image cover.*"
-                active={activeOp === "artworkNames"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("artworkNames");
-                }}
-              />
-              <MaintMenuItem
-                icon={<Images size={14} />}
-                label="Local covers vs Blossom"
-                detail="Find covers changed on disk since publishing, then upload the chosen"
-                active={activeOp === "localCovers"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("localCovers");
-                }}
-              />
-              <MaintMenuItem
-                icon={<Copy size={14} />}
-                label="Mirror covers"
-                detail="Copy covers and label art on Blossom to the mirrors"
-                active={activeOp === "coverMirror"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("coverMirror");
-                }}
-              />
-              <MaintMenuItem
-                icon={<FolderSync size={14} />}
-                label="Rescan library folder"
-                detail="Find new folders + refresh existing"
-                active={activeOp === "reconcileDisk"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("reconcileDisk");
-                }}
+                onClick={setLibraryFolder}
               />
               <MaintMenuItem
                 icon={<FolderX size={14} />}
@@ -1798,85 +1708,6 @@ export function ReleaseList({
                   }}
                 />
               )}
-              <MaintMenuItem
-                icon={<FolderCog size={14} />}
-                label="Set library folder…"
-                detail="Choose the root the rescan walks"
-                active={false}
-                disabled={activeOp !== null}
-                onClick={setLibraryFolder}
-              />
-              <MaintMenuItem
-                icon={<Disc3 size={14} />}
-                label="Repair pressing strings"
-                detail="Re-fetch format from Discogs where a codec overwrote it"
-                active={activeOp === "repressing"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("repressing");
-                }}
-              />
-              <MaintMenuItem
-                icon={<StickyNote size={14} />}
-                label="Review notes"
-                detail="See every distinct note, clear the unwanted in bulk"
-                active={false}
-                disabled={activeOp !== null}
-                onClick={async () => {
-                  setMaintMenuOpen(false);
-                  setError(null);
-                  try {
-                    setNotesOpen(await listReleaseNotes());
-                  } catch (e) {
-                    setError(String(e));
-                  }
-                }}
-              />
-              <MaintMenuItem
-                icon={<FileWarning size={14} />}
-                label="Audit published content"
-                detail="Compare live events with the catalogue, tag by tag"
-                active={activeOp === "contentAudit"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("contentAudit");
-                }}
-              />
-              <MaintMenuItem
-                icon={<SatelliteDish size={14} />}
-                label="Reconcile published state"
-                detail="Backfill publish markers from relays"
-                active={activeOp === "reconcile"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("reconcile");
-                }}
-              />
-              <MaintMenuItem
-                icon={<Radar size={14} />}
-                label="Reconcile relays"
-                detail="What each relay serves vs the library"
-                active={activeOp === "audit"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("audit");
-                }}
-              />
-              <MaintMenuItem
-                icon={<Share2 size={14} />}
-                label="Export published manifest"
-                detail="Share the released set with the other suite apps"
-                active={activeOp === "manifest"}
-                disabled={activeOp !== null}
-                onClick={() => {
-                  setMaintMenuOpen(false);
-                  runBackgroundOp("manifest");
-                }}
-              />
             </div>
           )}
         </div>
@@ -1889,6 +1720,27 @@ export function ReleaseList({
           onResolved={() => {
             refreshDupCount();
             reload();
+          }}
+        />
+      )}
+
+      {maintGroup && (
+        <MaintenanceDialog
+          group={maintGroup}
+          activeOp={activeOp}
+          onClose={() => setMaintGroup(null)}
+          onRun={async (id) => {
+            setMaintGroup(null);
+            if (id === "notes") {
+              setError(null);
+              try {
+                setNotesOpen(await listReleaseNotes());
+              } catch (e) {
+                setError(String(e));
+              }
+              return;
+            }
+            runBackgroundOp(id);
           }}
         />
       )}
@@ -3528,6 +3380,7 @@ interface MaintMenuItemProps {
   icon: React.ReactNode;
   label: string;
   detail: string;
+  count?: number;
   active: boolean;
   disabled: boolean;
   onClick: () => void;
@@ -3967,6 +3820,7 @@ function MaintMenuItem({
   icon,
   label,
   detail,
+  count,
   active,
   disabled,
   onClick,
@@ -3996,6 +3850,11 @@ function MaintMenuItem({
         {icon}
       </span>
       <span className="min-w-0 truncate text-fg">{label}</span>
+      {count !== undefined && (
+        <span className="ml-auto pl-2 font-mono text-[10px] text-muted">
+          {count}
+        </span>
+      )}
     </button>
   );
 }
