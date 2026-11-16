@@ -512,6 +512,31 @@ export async function importDiscogsCsv(
   return invoke<ImportSummary>("import_discogs_csv", { path, mediumFilter });
 }
 
+export interface ScanAppleReport {
+  tracks: number;
+  /** Music videos and tracks without an album name. */
+  skippedTracks: number;
+  albums: number;
+  full: number;
+  partial: number;
+  /** Already in the catalogue — skipped on import. */
+  existing: number;
+  newFull: number;
+  newPartial: number;
+}
+
+export async function scanAppleXml(path: string): Promise<ScanAppleReport> {
+  return invoke<ScanAppleReport>("scan_apple_xml", { path });
+}
+
+/** One release per album not already in the catalogue. */
+export async function importAppleXml(
+  path: string,
+  fullOnly = false,
+): Promise<ImportSummary> {
+  return invoke<ImportSummary>("import_apple_xml", { path, fullOnly });
+}
+
 export async function scanBandcampCsv(path: string): Promise<ScanBandcampReport> {
   return invoke<ScanBandcampReport>("scan_bandcamp_csv", { path });
 }

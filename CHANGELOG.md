@@ -23,6 +23,20 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+### Added
+- **Apple Music library XML import** (a header import button beside the Discogs one, and Setup's
+  Catalogue step). In the Music app: File → Library → Export Library. Tracks
+  are grouped into albums; each album not already in the catalogue becomes a
+  digital release: title without Apple's " - EP" / " - Single" (which set the
+  category), year, "AAC 256" or "ALAC", tracks bought vs the album's total,
+  discs, and Apple's genre where it maps cleanly to a slug. Source is
+  "Apple Music", or "Apple Music (partial)" when only some tracks were bought.
+  Albums already in the catalogue (artist + title, ignoring bracketed
+  qualifiers and a trailing EP) are skipped and left untouched, so a second
+  run changes nothing. A preview shows albums, already in the catalogue, new
+  full and new partial, with a **Full albums only** option. The export has no
+  label, catalogue number or store link, so those stay empty.
+
 ### Changed
 - **Filter line colour.** In the Home feedback area the filter line (and the
   dot) match the list's publish-state dots: amber when filtering on stale, red

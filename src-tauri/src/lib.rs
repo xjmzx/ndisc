@@ -585,6 +585,7 @@ fn rename_legacy_musicbrainz_column(conn: &Connection) -> Result<(), String> {
 }
 
 mod blossom;
+mod apple_import;
 
 #[cfg(test)]
 mod master_key;
@@ -11138,6 +11139,186 @@ fn import_discogs_csv(
 }
 
 // ---------------------------------------------------------------------------
+// Apple Music library XML import. The export is a plist of purchased tracks;
+// apple_import groups them into albums. Each album not already in the
+// catalogue (by normalised artist + title) becomes a digital release with
+// source "Apple Music" or "Apple Music (partial)". Matches are skipped and
+// left untouched, so a second run changes nothing.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanAppleReport {
+    pub tracks: usize,
+    /// Music videos and tracks without an album name.
+    pub skipped_tracks: usize,
+    pub albums: usize,
+    pub full: usize,
+    pub partial: usize,
+    /// Albums already in the catalogue — skipped on import.
+    pub existing: usize,
+    pub new_full: usize,
+    pub new_partial: usize,
+}
+
+fn catalogue_keys(conn: &Connection) -> Result<HashSet<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT artist, title FROM releases")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    let mut keys = HashSet::new();
+    for row in rows {
+        let (a, t) = row.map_err(|e| e.to_string())?;
+        keys.insert(apple_import::match_key(&a, &t));
+    }
+    Ok(keys)
+}
+
+#[tauri::command]
+fn scan_apple_xml(app: tauri::AppHandle, path: String) -> Result<ScanAppleReport, String> {
+    let lib = apple_import::read_library(std::path::Path::new(&path))?;
+    let conn = open(&app)?;
+    let mut keys = catalogue_keys(&conn)?;
+    let mut report = ScanAppleReport {
+        tracks: lib.tracks,
+        skipped_tracks: lib.skipped_tracks,
+        albums: lib.albums.len(),
+        full: 0,
+        partial: 0,
+        existing: 0,
+        new_full: 0,
+        new_partial: 0,
+    };
+    for a in &lib.albums {
+        if a.full {
+            report.full += 1;
+        } else {
+            report.partial += 1;
+        }
+        // insert() also catches two albums in the export with the same key.
+        if !keys.insert(apple_import::match_key(&a.artist, &a.title)) {
+            report.existing += 1;
+        } else if a.full {
+            report.new_full += 1;
+        } else {
+            report.new_partial += 1;
+        }
+    }
+    Ok(report)
+}
+
+#[tauri::command]
+fn import_apple_xml(
+    app: tauri::AppHandle,
+    path: String,
+    // Only albums with every track bought.
+    full_only: bool,
+) -> Result<ImportSummary, String> {
+    let lib = apple_import::read_library(std::path::Path::new(&path))?;
+    let _ = app.emit("import:started", lib.albums.len());
+    let mut conn = open(&app)?;
+    import_apple_albums(&mut conn, &lib.albums, full_only, |current, total, label| {
+        let _ = app.emit(
+            "import:progress",
+            ImportProgress {
+                current,
+                total,
+                current_dir: label.to_string(),
+            },
+        );
+    })
+}
+
+/// The insert half of the Apple import, apart from Tauri so it can be tested
+/// against a real catalogue copy.
+fn import_apple_albums(
+    conn: &mut Connection,
+    albums: &[apple_import::AppleAlbum],
+    full_only: bool,
+    mut progress: impl FnMut(usize, usize, &str),
+) -> Result<ImportSummary, String> {
+    let total = albums.len();
+    let mut summary = ImportSummary {
+        scanned: total,
+        imported: 0,
+        skipped: 0,
+        ignored: 0,
+        errors: Vec::new(),
+    };
+    let mut keys = catalogue_keys(conn)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for (i, a) in albums.iter().enumerate() {
+        progress(i + 1, total, &format!("{} — {}", a.artist, a.title));
+        if full_only && !a.full {
+            summary.skipped += 1;
+            continue;
+        }
+        if !keys.insert(apple_import::match_key(&a.artist, &a.title)) {
+            summary.skipped += 1;
+            continue;
+        }
+        let genre = a
+            .genre
+            .as_deref()
+            .and_then(apple_import::genre_slug)
+            .filter(|g| is_valid_genre_slug(g));
+        let source_label = if a.full { "Apple Music" } else { "Apple Music (partial)" };
+        match tx.execute(
+            "INSERT INTO releases
+             (artist, title, year, medium, format, release_type, category,
+              genre_primary, track_count, track_total, disc_total, source_label)
+             VALUES (?1, ?2, ?3, 'digital', ?4, 'music', ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                a.artist,
+                a.title,
+                a.year,
+                a.format,
+                a.category,
+                genre,
+                a.held.min(99),
+                a.track_total,
+                a.disc_total.map(|d| d.min(99)),
+                source_label,
+            ],
+        ) {
+            Ok(_) => summary.imported += 1,
+            Err(e) => summary
+                .errors
+                .push(format!("{} — {}: {}", a.artist, a.title, e)),
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(summary)
+}
+
+#[cfg(test)]
+mod apple_import_db {
+    // Runs the real import against a copy of a catalogue. Ignored by default:
+    // APPLE_XML=<export> NDISC_DB=<copy> cargo test apple_import_db -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn import_into_catalogue_copy() {
+        let xml = std::env::var("APPLE_XML").expect("APPLE_XML");
+        let db = std::env::var("NDISC_DB").expect("NDISC_DB");
+        let lib = super::apple_import::read_library(std::path::Path::new(&xml)).unwrap();
+        let mut conn = rusqlite::Connection::open(&db).unwrap();
+        let before: i64 = conn.query_row("SELECT COUNT(*) FROM releases", [], |r| r.get(0)).unwrap();
+        let first = super::import_apple_albums(&mut conn, &lib.albums, false, |_, _, _| {}).unwrap();
+        let again = super::import_apple_albums(&mut conn, &lib.albums, false, |_, _, _| {}).unwrap();
+        let after: i64 = conn.query_row("SELECT COUNT(*) FROM releases", [], |r| r.get(0)).unwrap();
+        println!(
+            "before {before} imported {} skipped {} errors {:?} | second run imported {} | after {after}",
+            first.imported, first.skipped, first.errors, again.imported
+        );
+        assert!(first.errors.is_empty());
+        assert_eq!(again.imported, 0);
+        assert_eq!(after - before, first.imported as i64);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Bandcamp collection import (mirrors the Discogs CSV import). Folds a Bandcamp
 // collection CSV (columns: artist,title,link,receipt[,art_id,type]) into the
 // catalog: ENRICHES an existing release when artist+title fuzzy-match (sets the
@@ -12268,6 +12449,8 @@ pub fn run() {
             import_directory,
             scan_discogs_csv,
             import_discogs_csv,
+            scan_apple_xml,
+            import_apple_xml,
             scan_bandcamp_csv,
             import_bandcamp_csv,
             set_discogs_token,

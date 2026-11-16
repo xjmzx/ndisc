@@ -157,9 +157,12 @@ not count as configured in the startup check.
 exist (library scan, Discogs CSV), the "is there a database" command, the relay
 NIP-11 test, and **Setup…** in the ⋮ menu.
 
-**0.7.1:** the Apple Music XML importer. It's a new parser (the library XML is a
-plist). Its Setup option shows "coming soon" in 0.7.0. The Music app exports the
-file only on macOS and Windows; on Linux the user copies it over.
+**0.7.2:** the Apple Music XML importer (moved from 0.7.1, which shipped
+layout changes). Built: `src-tauri/src/apple_import.rs` groups the plist's
+tracks into albums; each album not already in the catalogue becomes a digital
+release with source "Apple Music" or "Apple Music (partial)". The export has
+no label, catalogue number or store link. The Music app exports the file only
+on macOS and Windows; on Linux the user copies it over.
 
 **Later:** create a keypair in-app; guides for hosting a relay or a Blossom
 server; MusicBrainz as a way to fill in release details (open API, no token).

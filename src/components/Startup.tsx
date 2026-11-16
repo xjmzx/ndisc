@@ -14,6 +14,7 @@ import {
   getLibraryRoot,
   getNpub,
   importDiscogsCsv,
+  importAppleXml,
   importKeypair,
   initDb,
   reconcileLibrary,
@@ -460,6 +461,7 @@ const STEPS: { id: StepId; title: string }[] = [
 interface ImportPlan {
   scan: boolean;
   discogsCsv: string | null;
+  appleXml: string | null;
 }
 
 function Setup({
@@ -476,7 +478,11 @@ function Setup({
   onExisting: (s: StartupStatus) => void;
 }) {
   const [step, setStep] = useState(0);
-  const [plan, setPlan] = useState<ImportPlan>({ scan: false, discogsCsv: null });
+  const [plan, setPlan] = useState<ImportPlan>({
+    scan: false,
+    discogsCsv: null,
+    appleXml: null,
+  });
   const next = () => setStep((i) => Math.min(i + 1, STEPS.length - 1));
   const id = STEPS[step].id;
 
@@ -717,7 +723,8 @@ function CatalogueStep({
     getLibraryRoot()
       .then((r) => {
         setHasRoot(!!r);
-        if (r && !plan.scan && !plan.discogsCsv) setPlan({ ...plan, scan: true });
+        if (r && !plan.scan && !plan.discogsCsv && !plan.appleXml)
+          setPlan({ ...plan, scan: true });
       })
       .catch(() => setHasRoot(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -732,7 +739,16 @@ function CatalogueStep({
     if (typeof p === "string") setPlan({ ...plan, discogsCsv: p });
   }
 
-  const nothing = !plan.scan && !plan.discogsCsv;
+  async function pickXml() {
+    const p = await openDialog({
+      multiple: false,
+      filters: [{ name: "Apple Music library XML", extensions: ["xml"] }],
+      title: "Apple Music library export",
+    });
+    if (typeof p === "string") setPlan({ ...plan, appleXml: p });
+  }
+
+  const nothing = !plan.scan && !plan.discogsCsv && !plan.appleXml;
 
   return (
     <div className="space-y-2">
@@ -758,11 +774,13 @@ function CatalogueStep({
         }
       />
       <Option
-        on={false}
-        disabled
-        onToggle={() => {}}
+        on={!!plan.appleXml}
+        onToggle={() => (plan.appleXml ? setPlan({ ...plan, appleXml: null }) : pickXml())}
         title="Apple Music library XML"
-        detail="Coming in 0.7.1."
+        detail={
+          plan.appleXml ??
+          "In the Music app (macOS or Windows): File → Library → Export Library. Imports each album you bought, skipping any already in the catalogue."
+        }
       />
       <div className="pt-1">
         <Btn primary onClick={onNext}>
@@ -1102,6 +1120,17 @@ function ReadyStep({
           add(`Library: ${r.imported} imported.`);
         } catch (e) {
           add(`Library: ${String(e)}`);
+        }
+      }
+      // After the folder scan, so albums the scan found are skipped here
+      // rather than imported twice.
+      if (plan.appleXml) {
+        add("Importing the Apple Music library…");
+        try {
+          const r = await importAppleXml(plan.appleXml);
+          add(`Apple Music: ${r.imported} imported, ${r.skipped} already in the catalogue.`);
+        } catch (e) {
+          add(`Apple Music: ${String(e)}`);
         }
       }
       if (version) await setLastSeenVersion(version).catch(() => {});

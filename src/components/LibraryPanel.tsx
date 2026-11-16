@@ -4,6 +4,7 @@ import {
   CircleDashed,
   Disc,
   FileDown,
+  FileMusic,
   Film,
   FolderInput,
   HardDrive,
@@ -23,15 +24,19 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Section } from "./Section";
 import { ToolbarIconButton } from "./ToolbarIconButton";
+import { TickBox } from "./TickBox";
 import {
   exportMarkdown,
   getLibrarySummary,
   getStats,
   importDirectory,
+  importAppleXml,
   importDiscogsCsv,
+  scanAppleXml,
   scanDirectory,
   scanDiscogsCsv,
   type ImportProgress,
+  type ScanAppleReport,
   type ImportSummary,
   type LibrarySummary,
   type ScanDiscogsReport,
@@ -44,7 +49,8 @@ type MediumFilter = "both" | "physical" | "digital";
 
 type ScanResult =
   | { kind: "folder"; report: ScanReport }
-  | { kind: "discogs"; report: ScanDiscogsReport };
+  | { kind: "discogs"; report: ScanDiscogsReport }
+  | { kind: "apple"; report: ScanAppleReport };
 
 // The library import/export state, lifted out of the old LIBRARY panel so its
 // stats and action buttons can live in the header toolbar. The multi-step
@@ -64,8 +70,12 @@ export interface LibraryController {
   exporting: boolean;
   mediumFilter: MediumFilter;
   setMediumFilter: (m: MediumFilter) => void;
+  // Apple import: only albums with every track bought.
+  fullOnly: boolean;
+  setFullOnly: (v: boolean) => void;
   pickFolder: () => Promise<void>;
   pickDiscogsCsv: () => Promise<void>;
+  pickAppleXml: () => Promise<void>;
   runImport: () => Promise<void>;
   exportMarkdownFile: () => Promise<void>;
   reset: () => void;
@@ -99,6 +109,7 @@ export function useLibrary(
   const [error, setError] = useState<string | null>(null);
   // Discogs-only: which media to import from the CSV.
   const [mediumFilter, setMediumFilter] = useState<MediumFilter>("both");
+  const [fullOnly, setFullOnly] = useState(false);
 
   // --- Export ---------------------------------------------------------------
   const [exporting, setExporting] = useState(false);
@@ -121,6 +132,7 @@ export function useLibrary(
     setError(null);
     setExportMsg(null);
     setMediumFilter("both");
+    setFullOnly(false);
   }
 
   async function exportMarkdownFile() {
@@ -208,6 +220,35 @@ export function useLibrary(
     }
   }
 
+  async function pickAppleXml() {
+    setError(null);
+    let picked: string | null;
+    try {
+      const result = await openDialog({
+        multiple: false,
+        title: "Select your Apple Music library XML (File → Library → Export Library)",
+        filters: [{ name: "Apple Music library XML", extensions: ["xml"] }],
+      });
+      picked = typeof result === "string" ? result : null;
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
+    if (!picked) return;
+    setPickedPath(picked);
+    setLast(null);
+    setProgress(null);
+    setPhase("scanning");
+    try {
+      const report = await scanAppleXml(picked);
+      setScan({ kind: "apple", report });
+      setPhase("ready");
+    } catch (e) {
+      setError(String(e));
+      setPhase("idle");
+    }
+  }
+
   async function runImport() {
     if (!pickedPath || !scan) return;
     setError(null);
@@ -215,7 +256,11 @@ export function useLibrary(
     setPhase("importing");
 
     const totalGuess =
-      scan.kind === "folder" ? scan.report.totalDirs : scan.report.totalRows;
+      scan.kind === "folder"
+        ? scan.report.totalDirs
+        : scan.kind === "apple"
+          ? scan.report.albums
+          : scan.report.totalRows;
     setProgress({ current: 0, total: totalGuess, currentDir: "" });
 
     const unlisteners: UnlistenFn[] = [];
@@ -238,7 +283,9 @@ export function useLibrary(
       const summary =
         scan.kind === "folder"
           ? await importDirectory(pickedPath)
-          : await importDiscogsCsv(
+          : scan.kind === "apple"
+            ? await importAppleXml(pickedPath, fullOnly)
+            : await importDiscogsCsv(
               pickedPath,
               mediumFilter === "both" ? undefined : mediumFilter,
             );
@@ -269,8 +316,11 @@ export function useLibrary(
     exporting,
     mediumFilter,
     setMediumFilter,
+    fullOnly,
+    setFullOnly,
     pickFolder,
     pickDiscogsCsv,
+    pickAppleXml,
     runImport,
     exportMarkdownFile,
     reset,
@@ -412,6 +462,12 @@ export function LibraryToolbar({ lib }: { lib: LibraryController }) {
         <Disc size={14} />
       </ToolbarIconButton>
       <ToolbarIconButton
+        title="Import an Apple Music library XML"
+        onClick={lib.pickAppleXml}
+      >
+        <FileMusic size={14} />
+      </ToolbarIconButton>
+      <ToolbarIconButton
         title={lib.exporting ? "exporting…" : "Export library as markdown"}
         onClick={lib.exportMarkdownFile}
         disabled={lib.exporting}
@@ -439,6 +495,18 @@ export function LibraryFlowPanel({ lib }: { lib: LibraryController }) {
           ? scan.report.digital
           : scan.report.totalRows
       : 0;
+
+  // Apple: new albums only, narrowed to complete ones when asked.
+  const appleImportCount =
+    scan?.kind === "apple"
+      ? scan.report.newFull + (lib.fullOnly ? 0 : scan.report.newPartial)
+      : 0;
+  const importCount =
+    scan?.kind === "folder"
+      ? scan.report.totalDirs
+      : scan?.kind === "apple"
+        ? appleImportCount
+        : discogsImportCount;
 
   return (
     <Section
@@ -491,6 +559,29 @@ export function LibraryFlowPanel({ lib }: { lib: LibraryController }) {
               <ScanStat label="files" value={scan.report.totalFiles.toLocaleString()} />
               <ScanStat label="size" value={formatBytes(scan.report.totalBytes)} />
             </div>
+          ) : scan.kind === "apple" ? (
+            <>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
+                <ScanStat label="albums" value={scan.report.albums.toLocaleString()} />
+                <ScanStat label="in catalogue" value={scan.report.existing.toLocaleString()} tone="muted" />
+                <ScanStat label="new full" value={scan.report.newFull.toLocaleString()} tone="ok" />
+                <ScanStat label="new partial" value={scan.report.newPartial.toLocaleString()} tone="ok" />
+              </div>
+              <div className="mt-1 text-[10px] text-muted">
+                {scan.report.tracks.toLocaleString()} tracks
+                {scan.report.skippedTracks > 0 &&
+                  ` · ${scan.report.skippedTracks.toLocaleString()} videos or tracks without an album left out`}
+                {" · "}albums already in the catalogue are skipped
+              </div>
+              <label className="mt-2 inline-flex items-center gap-2 text-xs text-fg/80 cursor-pointer select-none">
+                <TickBox
+                  checked={lib.fullOnly}
+                  onChange={lib.setFullOnly}
+                  ariaLabel="Full albums only"
+                />
+                Full albums only
+              </label>
+            </>
           ) : (
             <>
               <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
@@ -525,18 +616,15 @@ export function LibraryFlowPanel({ lib }: { lib: LibraryController }) {
           <div className="mt-3 flex gap-2">
             <button
               onClick={lib.runImport}
-              disabled={scan.kind === "discogs" && discogsImportCount === 0}
+              disabled={scan.kind !== "folder" && importCount === 0}
               className="px-4 py-2 rounded-md bg-accent text-bg font-semibold
                          hover:opacity-90 disabled:opacity-50
                          disabled:cursor-not-allowed flex items-center gap-2
                          text-xs"
             >
               <Play size={14} /> Import{" "}
-              {(scan.kind === "folder"
-                ? scan.report.totalDirs
-                : discogsImportCount
-              ).toLocaleString()}{" "}
-              {scan.kind === "folder" ? "releases" : "rows"}
+              {importCount.toLocaleString()}{" "}
+              {scan.kind === "discogs" ? "rows" : "releases"}
             </button>
             <button
               onClick={lib.reset}
