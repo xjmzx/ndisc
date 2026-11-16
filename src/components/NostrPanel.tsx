@@ -594,71 +594,57 @@ function PublishLibraryBlock({
   }
 
   if (phase === "confirm") {
+    // One line, the strip's own height: the warning, what goes out, and the
+    // two buttons. The full explanation stays on the line's tooltip.
     const count = filterActive ? filterContext.count : null;
-    const scope = filterActive ? (
-      <>
-        <span className="font-mono text-accent">{count?.toLocaleString()}</span>{" "}
-        release{count === 1 ? "" : "s"} matching the current filter (
-        <span className="font-mono">{filterDescription}</span>)
-      </>
-    ) : (
-      "Each release in your library"
-    );
+    const scope = filterActive
+      ? `${count?.toLocaleString()} release${count === 1 ? "" : "s"} matching the current filter (${filterDescription})`
+      : "Each release in your library";
+    const relays = `${relayCount} ${relayCount === 1 ? "relay" : "relays"}`;
+    const detail =
+      action === "publish"
+        ? `${scope} will be signed and broadcast to ${relays} as a kind:31237 event. Relays cache and indexers archive — once out there, the data is effectively forever.`
+        : `A kind:5 deletion referencing ${scope.charAt(0).toLowerCase()}${scope.slice(1)} will be signed and sent to ${relays}, and the local publish markers cleared. Deletions are advisory — relays that don't honour kind:5 (and any cache or indexer) may keep the original events.`;
     return (
-      <div className="rounded-md border border-warn/40 bg-warn/10 p-3">
-        <div className="flex items-center gap-2 text-warn font-semibold text-xs">
-          <AlertTriangle size={14} />{" "}
+      <div
+        className="flex items-center gap-2 rounded-md bg-warn/10 pl-3 pr-1 py-1
+                   text-xs"
+        title={detail}
+      >
+        <AlertTriangle size={14} className="shrink-0 text-warn" />
+        <span className="min-w-0 flex-1 truncate text-warn font-semibold">
           {action === "publish"
-            ? "Publishing is public and permanent"
-            : "Unpublishing broadcasts deletions"}
-        </div>
-        <p className="mt-1 text-xs text-fg/90">
-          {action === "publish" ? (
-            <>
-              {scope} will be signed and broadcast to{" "}
-              <span className="font-mono text-accent">{relayCount}</span>{" "}
-              {relayCount === 1 ? "relay" : "relays"} as a kind:31237 event.
-              Relays cache and indexers archive — once out there, the data is
-              effectively forever.
-            </>
-          ) : (
-            <>
-              A kind:5 deletion referencing {scope} will be signed and sent to{" "}
-              <span className="font-mono text-accent">{relayCount}</span>{" "}
-              {relayCount === 1 ? "relay" : "relays"}, and the local publish
-              markers cleared. Deletions are advisory — relays that don't honour
-              kind:5 (and any cache or indexer) may keep the original events.
-            </>
-          )}
-        </p>
-        <div className="mt-2 flex justify-end gap-2 text-xs">
+            ? "Publishing is public and permanent:"
+            : "Unpublishing broadcasts deletions:"}{" "}
+          <span className="text-fg">
+            {(count ?? filterContext.count).toLocaleString()}{" "}
+            {action === "publish" ? "kind:31237" : "kind:5"}
+          </span>
+        </span>
+        <button
+          onClick={onCancel}
+          className="shrink-0 px-3 py-1 rounded-md bg-surface hover:bg-surfaceHover
+                     text-fg"
+        >
+          cancel
+        </button>
+        {action === "publish" ? (
           <button
-            onClick={onCancel}
-            className="px-3 py-1.5 rounded-md bg-surface hover:bg-surfaceHover
-                       text-fg"
+            onClick={onConfirm}
+            className="shrink-0 px-3 py-1 rounded-md bg-accent text-bg font-semibold
+                       hover:opacity-90 flex items-center gap-1.5"
           >
-            cancel
+            <Upload size={12} /> Publish
           </button>
-          {action === "publish" ? (
-            <button
-              onClick={onConfirm}
-              className="px-3 py-1.5 rounded-md bg-accent text-bg font-semibold
-                         hover:opacity-90 flex items-center gap-1.5"
-            >
-              <Upload size={12} />{" "}
-              {filterActive ? "Yes, publish filtered" : "Yes, publish all"}
-            </button>
-          ) : (
-            <button
-              onClick={onConfirm}
-              className="px-3 py-1.5 rounded-md bg-alert text-bg font-semibold
-                         hover:opacity-90 flex items-center gap-1.5"
-            >
-              <Trash2 size={12} />{" "}
-              {filterActive ? "Yes, unpublish filtered" : "Yes, unpublish all"}
-            </button>
-          )}
-        </div>
+        ) : (
+          <button
+            onClick={onConfirm}
+            className="shrink-0 px-3 py-1 rounded-md bg-alert text-bg font-semibold
+                       hover:opacity-90 flex items-center gap-1.5"
+          >
+            <Trash2 size={12} /> Unpublish
+          </button>
+        )}
       </div>
     );
   }

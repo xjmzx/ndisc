@@ -27,6 +27,10 @@ wave; an app-only change bumps ndisc alone. See
 - **Filter line colour.** In the Home feedback area the filter line (and the
   dot) match the list's publish-state dots: amber when filtering on stale, red
   on retracted, purple otherwise.
+- **Bulk publish confirm is one line:** "Publishing is public and permanent:
+  N kind:31237" (or "Unpublishing broadcasts deletions: N kind:5") with
+  cancel and Publish / Unpublish, on a plain amber fill. The full explanation
+  is the line's tooltip.
 
 ## 0.7.1 — 2026-11-16
 
