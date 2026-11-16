@@ -21,6 +21,13 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Changed
+- **Filter line colour.** In the Home feedback area the filter line (and the
+  dot) match the list's publish-state dots: amber when filtering on stale, red
+  on retracted, purple otherwise.
+
 ## 0.7.1 — 2026-11-16
 
 ### Changed

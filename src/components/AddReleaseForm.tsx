@@ -30,6 +30,7 @@ interface Props {
   // The publishing strip's filter and latest error, shown in this card's
   // feedback area (the same area Release detail has).
   filterNote?: string | null;
+  filterTone?: FeedbackTone;
   stripError?: string | null;
 }
 
@@ -64,6 +65,7 @@ export function AddReleaseForm({
   onAdded,
   className,
   filterNote = null,
+  filterTone = "nostr",
   stripError = null,
 }: Props) {
   const [release, setRelease] = useState<Release>(EMPTY);
@@ -355,6 +357,7 @@ export function AddReleaseForm({
         <FeedbackArea
           tone={note?.tone ?? "idle"}
           filterNote={filterNote}
+          filterTone={filterTone}
           stripError={stripError}
         >
           {note && (

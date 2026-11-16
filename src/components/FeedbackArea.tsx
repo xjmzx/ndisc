@@ -17,6 +17,13 @@ const DOT_CLS: Record<FeedbackTone, string> = {
 
 const TONE_RANK: FeedbackTone[] = ["idle", "nostr", "warn", "alert"];
 
+const TEXT_CLS: Record<FeedbackTone, string> = {
+  idle: "text-muted",
+  nostr: "text-nostr",
+  warn: "text-warn",
+  alert: "text-alert",
+};
+
 export function worstTone(tones: FeedbackTone[]): FeedbackTone {
   return tones.reduce(
     (a, b) => (TONE_RANK.indexOf(b) > TONE_RANK.indexOf(a) ? b : a),
@@ -24,23 +31,27 @@ export function worstTone(tones: FeedbackTone[]): FeedbackTone {
   );
 }
 
-// `filterNote` and `stripError` come from the publishing strip (via App);
-// `tone` and `children` are the card's own output.
+// `filterNote`, `filterTone` and `stripError` come from the publishing strip
+// (via App); `tone` and `children` are the card's own output. The filter line
+// takes the colour of the publish state it filters on (stale amber, retracted
+// red, as the list's dots), else the purple of the strip.
 export function FeedbackArea({
   tone,
   filterNote,
+  filterTone = "nostr",
   stripError,
   children,
 }: {
   tone: FeedbackTone;
   filterNote?: string | null;
+  filterTone?: FeedbackTone;
   stripError?: string | null;
   children?: ReactNode;
 }) {
   const dot = worstTone([
     tone,
     stripError ? "alert" : "idle",
-    filterNote ? "nostr" : "idle",
+    filterNote ? filterTone : "idle",
   ]);
   return (
     <div className="mt-3 text-xs flex items-start gap-2 min-h-[1rem]">
@@ -51,7 +62,9 @@ export function FeedbackArea({
       <div className="min-w-0 flex-1 space-y-1">
         {children}
         {stripError && <div className="text-alert">{stripError}</div>}
-        {filterNote && <div className="text-nostr">filter: {filterNote}</div>}
+        {filterNote && (
+          <div className={TEXT_CLS[filterTone]}>filter: {filterNote}</div>
+        )}
       </div>
     </div>
   );

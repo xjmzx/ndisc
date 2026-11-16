@@ -137,6 +137,7 @@ interface Props {
   // The publishing strip's filter ("no genre", …) and its latest error. Both
   // show in this card's feedback area, so all output reads in one place.
   filterNote?: string | null;
+  filterTone?: FeedbackTone;
   stripError?: string | null;
 }
 
@@ -161,6 +162,7 @@ export function ReleaseDetail({
   className,
   onNew,
   filterNote = null,
+  filterTone = "nostr",
   stripError = null,
 }: Props) {
   const [publishing, setPublishing] = useState(false);
@@ -1166,6 +1168,7 @@ export function ReleaseDetail({
         <FeedbackArea
           tone={latestOp ? opTone(latestOp) : "idle"}
           filterNote={filterNote}
+          filterTone={filterTone}
           stripError={stripError}
         >
           {latestOp && <OpFeedback op={latestOp} />}

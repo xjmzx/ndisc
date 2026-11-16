@@ -49,6 +49,7 @@ import {
   type ProfileMeta,
 } from "./components/NostrPanel";
 import { ReactionsProvider } from "./hooks/useReactions";
+import type { FeedbackTone } from "./components/FeedbackArea";
 import {
   clearKeypair,
   getNpub,
@@ -305,6 +306,14 @@ export default function App() {
     count: 0,
     visibleIds: [],
   });
+  // The filter line in the feedback area matches the list's publish-state
+  // dots: stale amber, retracted red; anything else the strip's purple.
+  const filterTone: FeedbackTone =
+    filterContext.publishStateFilter === "stale"
+      ? "warn"
+      : filterContext.publishStateFilter === "retracted"
+        ? "alert"
+        : "nostr";
 
   // Top-level view switch. Stats replaces the 3-panel library grid; the top
   // nav (title, library stats chip, toolbar) persists across views. Phase 3
@@ -692,6 +701,7 @@ export default function App() {
                     ? describeFilter(filterContext)
                     : null
                 }
+                filterTone={filterTone}
                 stripError={stripError}
               />
             ) : (
@@ -703,6 +713,7 @@ export default function App() {
                     ? describeFilter(filterContext)
                     : null
                 }
+                filterTone={filterTone}
                 stripError={stripError}
               />
             )}
