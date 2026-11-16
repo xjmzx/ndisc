@@ -21,7 +21,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
+## 0.7.1 — 2026-11-16
 
 ### Changed
 - **Home feedback area.** Release detail and Add release both end in one
