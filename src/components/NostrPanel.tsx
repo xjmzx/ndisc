@@ -46,6 +46,10 @@ interface NostrPanelProps {
   // can open it too.
   relaysOpen: boolean;
   setRelaysOpen: (open: boolean) => void;
+  // When set, the strip's filter line and errors show in the Home card's
+  // feedback area instead of here (App passes the filter there itself), and
+  // this callback receives the current error, or null.
+  onFeedback?: (error: string | null) => void;
 }
 
 type Phase = "loggedOut" | "reveal" | "loggedIn";
@@ -62,7 +66,7 @@ export interface ProfileMeta {
 // Every filter the release list applies must be reflected here — the bulk ops
 // act on the exact visible id set, and this description is what the confirm
 // dialog shows, so an omission would misrepresent the affected set.
-function isFilterActive(f: FilterContext): boolean {
+export function isFilterActive(f: FilterContext): boolean {
   return (
     f.query.trim() !== "" ||
     f.medium !== null ||
@@ -76,7 +80,7 @@ function isFilterActive(f: FilterContext): boolean {
   );
 }
 
-function describeFilter(f: FilterContext): string {
+export function describeFilter(f: FilterContext): string {
   const parts: string[] = [];
   if (f.medium) parts.push(f.medium);
   if (f.publishStateFilter)
@@ -109,6 +113,7 @@ export function NostrPanel({
   keyringStore,
   relaysOpen,
   setRelaysOpen,
+  onFeedback,
 }: NostrPanelProps) {
   const [newRelay, setNewRelay] = useState("");
 
@@ -160,6 +165,12 @@ export function NostrPanel({
   const [publishSummary, setPublishSummary] =
     useState<PublishLibrarySummary | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+
+  const feedbackInCard = !!onFeedback;
+  const stripError = publishError ?? error;
+  useEffect(() => {
+    onFeedback?.(stripError);
+  }, [onFeedback, stripError]);
 
   const phase: Phase = revealedNsec
     ? "reveal"
@@ -456,8 +467,9 @@ export function NostrPanel({
                   progress={publishProgress}
                   summary={publishSummary}
                   relayCount={relays.length}
-                  error={publishError}
+                  error={feedbackInCard ? null : publishError}
                   filterContext={filterContext}
+                  showFilter={!feedbackInCard}
                   onAskConfirm={(action) => {
                     setLibraryAction(action);
                     setPublishError(null);
@@ -473,7 +485,9 @@ export function NostrPanel({
                 />
             </div>
           </div>
-          {error && <div className="mt-2 text-alert text-xs">{error}</div>}
+          {error && !feedbackInCard && (
+            <div className="mt-2 text-alert text-xs">{error}</div>
+          )}
           {relaysOpen && (
             <RelaysDialog
               relays={relays}
@@ -508,6 +522,8 @@ interface PublishLibraryBlockProps {
   relayCount: number;
   error: string | null;
   filterContext: FilterContext;
+  // False when the release card's feedback area shows the filter instead.
+  showFilter: boolean;
   onAskConfirm: (action: LibraryAction) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -522,6 +538,7 @@ function PublishLibraryBlock({
   relayCount,
   error,
   filterContext,
+  showFilter,
   onAskConfirm,
   onCancel,
   onConfirm,
@@ -566,7 +583,7 @@ function PublishLibraryBlock({
           {filterActive ? `Unpublish ${countLabel}` : "Unpublish library"}
         </button>
         </div>
-        {filterActive && (
+        {filterActive && showFilter && (
           <div className="mt-1 text-[10px] text-muted text-center">
             filter: {filterDescription}
           </div>
@@ -691,7 +708,7 @@ function PublishLibraryBlock({
           <Tile
             label={action === "publish" ? "published" : "unpublished"}
             value={summary.published}
-            tone="ok"
+            tone="nostr"
           />
           {summary.skipped > 0 && (
             <Tile label="skipped" value={summary.skipped} />
@@ -721,10 +738,10 @@ function Tile({
 }: {
   label: string;
   value: number;
-  tone?: "ok" | "alert";
+  tone?: "nostr" | "alert";
 }) {
   const valueCls =
-    tone === "ok" ? "text-ok" : tone === "alert" ? "text-alert" : "text-fg";
+    tone === "nostr" ? "text-nostr" : tone === "alert" ? "text-alert" : "text-fg";
   return (
     <div className="rounded-md bg-surface/50 px-2 py-1.5">
       <div className="text-[10px] uppercase tracking-wide text-muted">

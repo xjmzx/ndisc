@@ -117,7 +117,10 @@ export function GenrePicker({
 
   const chips = value.filter((g) => !QUICK.has(g));
 
+  // Two rows: the quick genre checkboxes, then the style chips and the
+  // add-a-style field underneath.
   return (
+    <div className="flex flex-col gap-2">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       {QUICK_GENRES.map((g) => {
         const on = value.includes(g);
@@ -147,7 +150,9 @@ export function GenrePicker({
           </label>
         );
       })}
+    </div>
 
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       {chips.map((g) => (
         <span
           key={g}
@@ -238,6 +243,7 @@ export function GenrePicker({
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }

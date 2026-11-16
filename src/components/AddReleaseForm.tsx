@@ -11,6 +11,7 @@ import {
 import { Section } from "./Section";
 import { CoverArt } from "./CoverArt";
 import { GenrePicker } from "./GenrePicker";
+import { FeedbackArea, type FeedbackTone } from "./FeedbackArea";
 import {
   addRelease,
   setReleaseLink,
@@ -26,6 +27,10 @@ interface Props {
   onAdded: () => void;
   // Extra classes for the card (Home makes it fill the column).
   className?: string;
+  // The publishing strip's filter and latest error, shown in this card's
+  // feedback area (the same area Release detail has).
+  filterNote?: string | null;
+  stripError?: string | null;
 }
 
 type Medium = "physical" | "digital";
@@ -58,6 +63,8 @@ const EMPTY: Release = {
 export function AddReleaseForm({
   onAdded,
   className,
+  filterNote = null,
+  stripError = null,
 }: Props) {
   const [release, setRelease] = useState<Release>(EMPTY);
   // Fields that aren't columns add_release writes: the acquisition source and
@@ -66,11 +73,16 @@ export function AddReleaseForm({
   const [link, setLink] = useState("");
   const [genres, setGenres] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // The last save's outcome, for the feedback area. Cleared on the next edit.
+  const [note, setNote] = useState<{ tone: FeedbackTone; text: string } | null>(
+    null,
+  );
+  const setError = (text: string | null) =>
+    setNote(text ? { tone: "alert", text } : null);
 
   function set<K extends keyof Release>(key: K, value: Release[K]) {
     setRelease((r) => ({ ...r, [key]: value }));
-    setError(null);
+    setNote(null);
   }
 
   function reset() {
@@ -128,9 +140,14 @@ export function AddReleaseForm({
         problems.push(`source not saved: ${String(e)}`),
       );
     }
+    const added = `${release.artist.trim()} — ${release.title.trim()}`;
     reset();
     setSaving(false);
-    if (problems.length) setError(`Release added, but ${problems.join("; ")}`);
+    setNote(
+      problems.length
+        ? { tone: "warn", text: `Release added, but ${problems.join("; ")}` }
+        : { tone: "nostr", text: `added ${added}` },
+    );
     onAdded();
   }
 
@@ -331,11 +348,29 @@ export function AddReleaseForm({
             )}
             Save release
           </button>
-          {missing.length > 0 && !error && (
+          {missing.length > 0 && (
             <span className="text-muted">needs {missing.join(", ")}</span>
           )}
-          {error && <span className="text-alert">{error}</span>}
         </div>
+        <FeedbackArea
+          tone={note?.tone ?? "idle"}
+          filterNote={filterNote}
+          stripError={stripError}
+        >
+          {note && (
+            <div
+              className={
+                note.tone === "alert"
+                  ? "text-alert"
+                  : note.tone === "warn"
+                    ? "text-warn"
+                    : "text-nostr"
+              }
+            >
+              {note.text}
+            </div>
+          )}
+        </FeedbackArea>
       </form>
     </Section>
   );

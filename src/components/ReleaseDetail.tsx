@@ -3,7 +3,6 @@ import {
   Check,
   Combine,
   Copy,
-  Disc,
   ExternalLink,
   FolderOpen,
   FolderPlus,
@@ -36,6 +35,7 @@ import { Section } from "./Section";
 import { CoverArt } from "./CoverArt";
 import { TickBox } from "./TickBox";
 import { GenrePicker } from "./GenrePicker";
+import { FeedbackArea, type FeedbackTone } from "./FeedbackArea";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 import { coverImageSrc } from "../lib/cover";
@@ -105,12 +105,12 @@ const CATEGORY_OPTIONS = [
 
 // Placeholder suffixes for the empty genre slots ("+ 2nd", …).
 
-// Compact display form for a NIP-19 naddr: first 12 + last 8 around an ellipsis.
+// Compact display form for a NIP-19 naddr: first 26 + last 16 around an ellipsis.
 // The full string is still available for selection (DOM has the abbreviated
 // text only — Copy/njump.me buttons reference the underlying `lastPublish.naddr`).
 function shortenNaddr(s: string): string {
-  if (s.length <= 24) return s;
-  return `${s.slice(0, 12)}…${s.slice(-8)}`;
+  if (s.length <= 44) return s;
+  return `${s.slice(0, 26)}…${s.slice(-16)}`;
 }
 
 // All six action buttons in the release detail share the icon-only shape so
@@ -134,6 +134,10 @@ interface Props {
   className?: string;
   // Back to the Add release card (clears the selection).
   onNew?: () => void;
+  // The publishing strip's filter ("no genre", …) and its latest error. Both
+  // show in this card's feedback area, so all output reads in one place.
+  filterNote?: string | null;
+  stripError?: string | null;
 }
 
 // Status block at the bottom of the detail panel shows exactly one of:
@@ -156,6 +160,8 @@ export function ReleaseDetail({
   showUndoToast,
   className,
   onNew,
+  filterNote = null,
+  stripError = null,
 }: Props) {
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
@@ -791,13 +797,18 @@ export function ReleaseDetail({
               </>
             )}
             {/* Discs — always shown so the count is manually editable, not
-                only Discogs-enriched. A muted disc icon stands in when unset
-                (click to type); the green badge shows a set count (click to
-                edit). Backend caps at 99; enrich stays canonical. */}
+                only Discogs-enriched. A physical release (or a digital one
+                ticked +physical) shows a set count as the solid badge; a
+                digital-only release, or no count, is a flat muted square of
+                the same shape. Backend caps at 99; enrich stays canonical. */}
             <dt className="text-muted">discs</dt>
             <dd className="text-fg/90 min-w-0 flex items-center">
               <DiscCountField
                 value={release.discTotal ?? null}
+                physical={
+                  release.medium === "physical" ||
+                  (release.medium === "digital" && isPaired(release))
+                }
                 onChange={onChangeDiscTotal}
               />
             </dd>
@@ -1033,7 +1044,7 @@ export function ReleaseDetail({
       </div>
       {/* Genres sit apart from the release's fields: the same faint rule
           and spacing that separate the action bar below. */}
-      <div className="!mt-4 pt-3 border-t border-surface/60 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="!mt-4 pt-3 border-t border-surface/60">
         <GenrePicker
           value={genreSlots(release).filter((g): g is string => !!g)}
           onChange={saveGenreList}
@@ -1152,15 +1163,28 @@ export function ReleaseDetail({
           </button>
         </div>
 
-        {/* Reserve one line for feedback so the panel matches the left column
-            height whether or not a message is currently shown. Multi-line
-            messages (e.g. rejected relays expanded) still grow the panel. */}
-        <div className="mt-2 min-h-[1.25rem]">
+        <FeedbackArea
+          tone={latestOp ? opTone(latestOp) : "idle"}
+          filterNote={filterNote}
+          stripError={stripError}
+        >
           {latestOp && <OpFeedback op={latestOp} />}
-        </div>
+        </FeedbackArea>
       </div>
     </Section>
   );
+}
+
+// A publish that some relays refused is a warning; one that none accepted is
+// a failure. Everything that went through is the nostr purple.
+function opTone(op: LatestOp): FeedbackTone {
+  if (op.kind === "publish" || op.kind === "unpublish") {
+    if (op.rejected.length === 0) return "nostr";
+    return op.acceptedBy.length === 0 ? "alert" : "warn";
+  }
+  if (op.kind === "error") return "alert";
+  if (op.kind === "warn") return "warn";
+  return "nostr";
 }
 
 function OpFeedback({ op }: { op: LatestOp }) {
@@ -1181,7 +1205,7 @@ function OpFeedback({ op }: { op: LatestOp }) {
           </div>
         )}
         {op.acceptedBy.length > 0 && (
-          <div className="text-ok">
+          <div className="text-nostr">
             {isPublish ? "" : "delete request "}
             accepted by {op.acceptedBy.length} of {total}:{" "}
             <span className="font-mono">{op.acceptedBy.join(", ")}</span>
@@ -1189,7 +1213,9 @@ function OpFeedback({ op }: { op: LatestOp }) {
         )}
         {op.rejected.length > 0 && (
           <details>
-            <summary className="text-warn cursor-pointer">
+            <summary
+              className={`${op.acceptedBy.length === 0 ? "text-alert" : "text-warn"} cursor-pointer`}
+            >
               {op.rejected.length} relay
               {op.rejected.length === 1 ? "" : "s"} rejected
             </summary>
@@ -1210,7 +1236,7 @@ function OpFeedback({ op }: { op: LatestOp }) {
       ? "text-alert"
       : op.kind === "warn"
         ? "text-warn"
-        : "text-ok";
+        : "text-nostr";
   return <div className={`text-xs ${toneCls}`}>{op.text}</div>;
 }
 
@@ -1248,15 +1274,19 @@ function NaRow({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-// Inline editable disc count. Unset → a muted disc icon (the "ready to input"
-// affordance); set → the green count badge. Either is a click target that
+// Inline editable disc count. A physical release with a count → the solid
+// count badge. Otherwise (digital-only, or no count yet) → a flat muted square
+// of the same shape, holding the count in muted text when there is one: a
+// digital album can still come in disc folders, but it isn't a disc you own. Either is a click target that
 // opens a tiny number input (Enter / blur commits, Escape reverts, empty
 // clears). Kept inline to match the dl's compact tracks/discs rhythm.
 function DiscCountField({
   value,
+  physical,
   onChange,
 }: {
   value: number | null;
+  physical: boolean;
   onChange: (v: number | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -1313,7 +1343,7 @@ function DiscCountField({
       className="inline-flex items-center rounded hover:bg-surface
                  transition-colors p-0.5"
     >
-      {value != null ? (
+      {value != null && physical ? (
         <CountBadge
           value={value}
           title={`${value} disc${value === 1 ? "" : "s"}`}
@@ -1323,7 +1353,14 @@ function DiscCountField({
           size={17}
         />
       ) : (
-        <Disc size={15} className="text-muted/50 hover:text-muted" />
+        <span
+          className="inline-grid place-items-center rounded-[3px] bg-surface
+                     text-muted/70 text-[10px] font-bold leading-none
+                     tabular-nums"
+          style={{ width: 17, height: 17 }}
+        >
+          {value ?? ""}
+        </span>
       )}
     </button>
   );
@@ -2005,7 +2042,7 @@ function NotesField({
 
   const preview = value.trim().split("\n")[0];
   return (
-    <span className="relative block w-28">
+    <span className="relative block w-56">
       <button
         type="button"
         onClick={() => {
@@ -2087,7 +2124,7 @@ function ReactionButtons({ releaseId }: { releaseId: number }) {
           "inline-flex items-center gap-1 px-2 py-0.5 rounded " +
           "disabled:opacity-40 disabled:cursor-not-allowed " +
           (myUp
-            ? "bg-ok/15 text-ok"
+            ? "bg-nostr/15 text-nostr"
             : "text-muted hover:text-fg hover:bg-surface/40")
         }
       >

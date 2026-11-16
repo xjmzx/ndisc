@@ -2370,7 +2370,7 @@ export function ReleaseList({
             )}
             {opSummary.kind === "reconcile" && (
               <>
-                <span className="text-ok">
+                <span className="text-nostr">
                   restored{" "}
                   <span className="font-mono">{opSummary.data.updated}</span>
                 </span>
@@ -2421,7 +2421,7 @@ export function ReleaseList({
             )}
             {opSummary.kind === "purge" && (
               <>
-                <span className="text-ok">
+                <span className="text-nostr">
                   retracted{" "}
                   <span className="font-mono">{opSummary.data.purged}</span>
                 </span>
@@ -3531,7 +3531,7 @@ function RelayAuditPanel({
       </div>
 
       {clean ? (
-        <p className="mt-2 text-ok">
+        <p className="mt-2 text-nostr">
           Relays agree with the library — nothing to fix.
         </p>
       ) : (

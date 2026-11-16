@@ -21,6 +21,23 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Changed
+- **Home feedback area.** Release detail and Add release both end in one
+  output area with a single dot that is always shown: muted with nothing to
+  report, otherwise the colour of the most serious line (red, then amber, then
+  purple). The publishing strip's filter line and errors moved into it, and
+  Add release now confirms a save ("added artist — title").
+- **Published signals are purple** (`--c-nostr`) everywhere: the publish
+  result line, your upvote, the batch publish tile, reconcile / purge counts,
+  "Relays agree", and the Feed and Contributors status lines.
+- **Release detail layout.** Genres on one row, styles on the next; notes chip
+  twice as wide; naddr shows the first 26 and last 16 characters.
+- **Discs** use the rounded square throughout: solid with the count for a
+  physical release (or digital ticked +physical), flat and muted for a
+  digital-only release or an unset count.
+
 ## 0.7.0 — 2026-11-16
 
 Includes 0.6.26, which was not released on its own.

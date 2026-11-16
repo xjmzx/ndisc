@@ -42,7 +42,12 @@ import {
   EnrichToolbarButton,
   DiscogsEnrichPanel,
 } from "./components/DiscogsEnrichPanel";
-import { NostrPanel, type ProfileMeta } from "./components/NostrPanel";
+import {
+  NostrPanel,
+  describeFilter,
+  isFilterActive,
+  type ProfileMeta,
+} from "./components/NostrPanel";
 import { ReactionsProvider } from "./hooks/useReactions";
 import {
   clearKeypair,
@@ -156,6 +161,9 @@ function shortVersion(v: string): string {
 
 export default function App() {
   const [selected, setSelected] = useState<Release | null>(null);
+  // The publishing strip's current error, shown with its filter line in the
+  // feedback area of whichever Home card is open.
+  const [stripError, setStripError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [dbPath, setDbPath] = useState<string | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
@@ -679,11 +687,23 @@ export default function App() {
                 showUndoToast={showUndoToast}
                 className="lg:flex-1 lg:shrink-0"
                 onNew={() => setSelected(null)}
+                filterNote={
+                  isFilterActive(filterContext)
+                    ? describeFilter(filterContext)
+                    : null
+                }
+                stripError={stripError}
               />
             ) : (
               <AddReleaseForm
                 onAdded={reload}
                 className="lg:flex-1 lg:shrink-0"
+                filterNote={
+                  isFilterActive(filterContext)
+                    ? describeFilter(filterContext)
+                    : null
+                }
+                stripError={stripError}
               />
             )}
             {/* Publishing strip, one row: it acts on the release list's
@@ -701,6 +721,7 @@ export default function App() {
                 keyringStore={keyringStore}
                 relaysOpen={relaysOpen}
                 setRelaysOpen={setRelaysOpen}
+                onFeedback={setStripError}
               />
             </div>
           </div>

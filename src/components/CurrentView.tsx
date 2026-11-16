@@ -188,7 +188,7 @@ export function CurrentView({ npub, relays, reloadKey }: Props) {
       bodyClassName="min-h-0 overflow-y-auto [scrollbar-gutter:stable] gap-4"
     >
       {status && (
-        <p className="text-xs font-mono text-mauve bg-mauve/10 rounded px-2 py-1">
+        <p className="text-xs font-mono text-nostr bg-nostr/10 rounded px-2 py-1">
           {status}
         </p>
       )}
@@ -732,7 +732,7 @@ function Curation({
       </h3>
 
       {status && (
-        <p className="text-xs font-mono text-mauve bg-mauve/10 rounded px-2 py-1">
+        <p className="text-xs font-mono text-nostr bg-nostr/10 rounded px-2 py-1">
           {status}
         </p>
       )}
