@@ -21,7 +21,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
+## 0.7.2 — 2026-11-16
 
 ### Added
 - **Apple Music library XML import** (a header import button beside the Discogs one, and Setup's
