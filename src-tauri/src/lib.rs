@@ -7701,6 +7701,16 @@ fn check_ignored_folder_trashable(
 #[tauri::command]
 async fn clear_missing_ignored_folders(app: tauri::AppHandle) -> Result<usize, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Guard: with the library folder missing (an unmounted drive), every
+        // ignored folder reads as gone, and this would empty the whole ignore
+        // list — after which a rescan re-imports everything merged away.
+        let root = library_root(&app)?;
+        if !Path::new(&root).is_dir() {
+            return Err(format!(
+                "The library folder {} isn't there (is the drive mounted?). Nothing was cleared.",
+                root
+            ));
+        }
         let conn = open(&app)?;
         let paths: Vec<String> = conn
             .prepare("SELECT path FROM merged_paths WHERE trashed = 0")

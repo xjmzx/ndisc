@@ -5,6 +5,7 @@ import {
   clearMissingIgnoredFolders,
   forgetMergedPath,
   listMergedPaths,
+  startupStatus,
   trashIgnoredFolder,
   type MergedPath,
 } from "../lib/tauri";
@@ -30,10 +31,18 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [freed, setFreed] = useState(0);
 
+  // Whether the library folder is there. When it isn't (an unmounted drive),
+  // every row reads "not on disk", so the bulk clear is withheld — it would
+  // empty the ignore list. `null` while unknown.
+  const [root, setRoot] = useState<{ path: string | null; exists: boolean } | null>(null);
+
   useEffect(() => {
     listMergedPaths()
       .then(setRows)
       .catch((e) => setError(String(e)));
+    startupStatus()
+      .then((s) => setRoot({ path: s.libraryRoot, exists: s.libraryRootExists }))
+      .catch(() => setRoot({ path: null, exists: false }));
   }, []);
 
   const hiddenCount = rows?.filter((r) => r.hasAudio).length ?? 0;
@@ -299,7 +308,7 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
               >
                 {hiddenOnly ? "show all" : `hiding audio only (${hiddenCount})`}
               </button>
-              {missingCount > 0 && (
+              {missingCount > 0 && root?.exists && (
                 <button
                   onClick={clearMissing}
                   disabled={busy !== null}
@@ -459,6 +468,19 @@ export function IgnoredFoldersDialog({ onClose }: { onClose: () => void }) {
               )}
             </ul>
 
+            {missingCount > 0 && root && !root.exists && (
+              <p className="mt-3 text-[11px] text-warn">
+                {root.path ? (
+                  <>
+                    The library folder <span className="font-mono">{root.path}</span> isn't
+                    there. Is the drive mounted?
+                  </>
+                ) : (
+                  "No library folder is set."
+                )}{" "}
+                Until it is, "not on disk" can't be trusted, so clearing those rows is off.
+              </p>
+            )}
             {cleared !== null && (
               <p className="mt-3 text-[11px] text-ok">
                 Cleared {cleared} folder{cleared === 1 ? "" : "s"} not on disk.
