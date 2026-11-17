@@ -21,6 +21,20 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.7.4 — 2026-11-17
+
+### Added
+- **Feed images on Blossom, by choice.** The Current note editor still takes
+  an image link from any image host; an **Upload to Blossom** button beside
+  it uploads a local image to the primary Blossom server and adds its
+  address. **Move N images to Blossom** in Current's header copies images
+  hosted elsewhere to Blossom (dead links that return a host's placeholder
+  are refused), records each move with its old address, and leaves the
+  changed notes as drafts until you republish them. The originals are not
+  deleted.
+- **Drafts show their images** as an icon with a count; the tooltip lists the
+  URLs.
+
 ## 0.7.3 — 2026-11-17
 
 ### Added
