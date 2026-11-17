@@ -126,13 +126,32 @@ button; tile size; what a release with no cover shows.
 ### Current feed: revisit
 
 The Current view (kind 31239 feed notes) works, but hasn't been looked at
-since it was built in June. Its notes all show as not live. Probable cause,
-not yet confirmed: the four notes in the catalogue were published between
-2026-06-23 and 2026-07-01, when the publishing relay was relay.fizx.uk. That
-box was shut down on 2026-11-05, so the notes went with it, while the local
-database still records them as published. A republish to relay.nfunc.xyz
-would test that. Beyond that, what Current is for now is an open question
-(see `schema/current-feed-2026-06-23.md`).
+since it was built in June. Checked 2026-11-17: all four notes in the
+catalogue are live on relay.nfunc.xyz with the event ids ndisc stored, and no
+deletion touches them; they were not lost with relay.fizx.uk. (They looked
+unpublished in the **dev** build, which reads its own `-dev` database.) Their
+images are on `i.nostr.build` and still real (checked by size and content,
+since nostr.build answers 200 for any id).
+
+**What Current is for (the user, 2026-11-17).** It was a first build of
+letting an ndisc user publish a Nostr note with a release from the
+discography attached; the four live notes are tests of that. The direction is
+to build it out into a proper note-publishing format, as either **regular
+notes** or **long-form notes**. (Today's notes are kind 31239 under the frozen
+`feed.v1` contract; moving to standard note kinds — kind 1 and NIP-23 kind
+30023 — would be a contract decision, and glmps and nview read 31239.)
+
+**Drafts.** Drafts stay drafts and don't need to show their image, but a draft
+that has an image link should say so, e.g. a small image icon or count on
+the card.
+
+**Images on Blossom.** Feed images should live on Blossom like everything
+else. Covers (2,016 on blossom.nfunc.xyz) and label images (290, moved from
+nostr.build 2026-10-06, recorded in `label_image_migrations`) are already
+there; the four feed images are the only artwork left on nostr.build. Move
+them the way label images were moved (fetch, check, upload, keep the old
+address), then republish the four notes, and have the note editor upload to
+Blossom instead of taking a nostr.build link.
 
 ### Bandcamp import: no solution yet
 
@@ -153,9 +172,12 @@ structural change until last, so nothing built earlier has to be redone.
 
 1. **Release what's on `main`** (footer identity, Discogs token step, Ignored
    folders guard) as 0.7.3.
-2. **Current feed: confirm the cause.** Small. A republish to relay.nfunc.xyz
-   either brings the notes back or shows a real fault. Do it early so the
-   later feed work starts from a known state.
+2. ~~Current feed: confirm the cause.~~ Done 2026-11-17: the notes are live
+   on relay.nfunc.xyz; the "unpublished" view was the dev build's own
+   database. The user's answers on Current's direction are under
+   *Current feed: revisit*. Moving its four images to Blossom is small and
+   can go with the covers work (step 4); the note-format work is larger and
+   comes after the grid.
 3. **Cover grid view.** Medium, front end only, no schema or contract change;
    ports nview's paged grid. Do it before the covers checks, because it makes
    cover problems visible at a glance.
