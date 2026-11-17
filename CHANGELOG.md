@@ -21,6 +21,29 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.7.3 — 2026-11-17
+
+### Added
+- **Discogs token step in Setup**, after Fill the catalogue. Optional. Paste a
+  Discogs personal access token and ndisc checks it with Discogs, shows the
+  account's username, and saves it to the keyring only if Discogs accepts it.
+  A token already stored can be checked the same way. Enrich needs the token;
+  until now only the Enrich panel asked for it.
+
+### Changed
+- **Nostr identity is in the footer only.** The header's NIP-05 chip and
+  forget-identity button are gone (they crowded the controls at narrow
+  widths). The footer reads NIP-05 (or the display name when there is none),
+  the short npub, a lock with the keyring store (the full sentence is its
+  tooltip), and a small forget-identity button. SUITE.md's top-bar grammar
+  now says the same.
+
+### Fixed
+- **Ignored folders: no bulk clear while the library folder is missing.** With
+  the drive unmounted, every ignored folder read as "not on disk" and
+  "clear N not on disk" would have emptied the whole ignore list. The button
+  is now hidden, with a line saying why, and the command refuses as well.
+
 ## 0.7.2 — 2026-11-16
 
 ### Added
