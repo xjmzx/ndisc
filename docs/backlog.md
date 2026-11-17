@@ -64,3 +64,70 @@ The key is the release **folder**, as in `published.json`, never a database id,
 so ncover stays a reader of what ndisc exports and the file is usable by hand.
 Releases with no folder (physical) still get a line, keyed by artist — title,
 for the operator. ncover will skip them.
+
+## Discogs token in Setup (proposed 2026-11-17)
+
+**Why.** ndisc already stores a Discogs personal access token in the OS
+keyring (`discogs-token`) and uses it for the enrichment pass, but only the
+Enrich panel asks for it. Setup (0.7.0) offers the Discogs collection CSV
+without mentioning the token, so a new user who imports from Discogs can't
+enrich anything until they find that panel.
+
+**What.** One optional step in Setup, after *Fill the catalogue*: "Do you have
+a Discogs token?" with **Paste token** / **Not now**, and one sentence on where
+to get one (discogs.com → Settings → Developers). On paste, **check** the
+token instead of only storing it: `GET /oauth/identity` answers with the
+username when the token is good, and with 401 when it isn't. Show the username
+so the user can confirm it's their account. Under **Not now**, say that
+enrichment needs a token and can be set up later from Enrich. The Startup check
+gains no row for it: the token is optional, and checking it means a network
+call.
+
+**Open.**
+- Whether the username from `/oauth/identity` should also let Setup import the
+  collection through the API (`/users/{username}/collection/folders/0/releases`),
+  so a user with a token needs no CSV export. That covers the same releases
+  without a trip to discogs.com, but is slow under the 60-requests-a-minute
+  limit for a large collection and needs a progress line.
+- Where the username is kept, if anywhere (config, not the keyring).
+
+## Ideas, not agreed (recorded 2026-11-17)
+
+Loose thoughts for later, kept here so they aren't lost. None is planned and
+none should shape current work.
+
+### Genre interests
+
+Ask the user which genres they care about, at Setup or later, and let that
+shape how genres are presented: which come first in the genre picker and
+filters, which are grouped or folded away. Not essential to the catalogue, so
+it stays optional at most.
+
+### More than one discography
+
+Keep several discographies side by side instead of one per database. Two kinds
+of user in mind:
+
+- a **listener** who wants separate discographies per source (e.g. what they
+  own physically vs a streaming library);
+- a **music-industry professional or enthusiast** managing an artist, a label
+  and its sub-labels.
+
+Sketch: on each import, ask whether the releases go into the current
+discography or a new or different one; switch between discographies with a
+selector, dropdown or tabs. Undeveloped. Things to settle before it becomes a
+plan: whether a discography is a separate database file (works today through
+Open / Create database) or a column within one; how it maps to publishing,
+given the rule of **one keypair per discography or pseudonym** (otherwise the
+`disco-vault:<id>` addresses collide); and whether a release can belong to two.
+
+### Bandcamp import: no solution yet
+
+Bandcamp is the one store with no standard structured export of a fan's
+collection, so there is nothing to import it from the way Discogs (CSV) and
+Apple Music (library XML) are imported. ndisc's existing Bandcamp handling only
+records provenance (a receipt id and a store URL; see
+[`file-data-handling-2026-09-22.md`](file-data-handling-2026-09-22.md)), not
+metadata. Today Bandcamp releases come in through the library scan of the
+downloaded files. Open: whether any route is worth it (e.g. purchase emails or
+the per-account ledgers kept by hand) or this stays scan-only.
