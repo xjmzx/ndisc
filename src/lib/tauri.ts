@@ -586,6 +586,13 @@ export async function clearDiscogsToken(): Promise<void> {
   await invoke("clear_discogs_token");
 }
 
+// Ask Discogs whose token this is. Checks `token` when given, else the stored
+// one; resolves to the account's username, rejects with a readable reason.
+// Stores nothing.
+export async function checkDiscogsToken(token?: string): Promise<string> {
+  return invoke<string>("check_discogs_token", { token: token ?? null });
+}
+
 export async function enrichDiscogsRelease(
   releaseId: number,
 ): Promise<EnrichResult> {

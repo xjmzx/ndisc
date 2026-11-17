@@ -65,31 +65,16 @@ so ncover stays a reader of what ndisc exports and the file is usable by hand.
 Releases with no folder (physical) still get a line, keyed by artist — title,
 for the operator. ncover will skip them.
 
-## Discogs token in Setup (proposed 2026-11-17)
+## Discogs collection through the API (idea, 2026-11-17)
 
-**Why.** ndisc already stores a Discogs personal access token in the OS
-keyring (`discogs-token`) and uses it for the enrichment pass, but only the
-Enrich panel asks for it. Setup (0.7.0) offers the Discogs collection CSV
-without mentioning the token, so a new user who imports from Discogs can't
-enrich anything until they find that panel.
-
-**What.** One optional step in Setup, after *Fill the catalogue*: "Do you have
-a Discogs token?" with **Paste token** / **Not now**, and one sentence on where
-to get one (discogs.com → Settings → Developers). On paste, **check** the
-token instead of only storing it: `GET /oauth/identity` answers with the
-username when the token is good, and with 401 when it isn't. Show the username
-so the user can confirm it's their account. Under **Not now**, say that
-enrichment needs a token and can be set up later from Enrich. The Startup check
-gains no row for it: the token is optional, and checking it means a network
-call.
-
-**Open.**
-- Whether the username from `/oauth/identity` should also let Setup import the
-  collection through the API (`/users/{username}/collection/folders/0/releases`),
-  so a user with a token needs no CSV export. That covers the same releases
-  without a trip to discogs.com, but is slow under the 60-requests-a-minute
-  limit for a large collection and needs a progress line.
-- Where the username is kept, if anywhere (config, not the keyring).
+Setup's Discogs token step (built 2026-11-17, see the onboarding design) checks
+the token with `GET /oauth/identity`, which also returns the username. With it,
+Setup could import the collection through the API
+(`/users/{username}/collection/folders/0/releases`) so a user with a token
+needs no CSV export. It covers the same releases without a trip to discogs.com,
+but is slow under the 60-requests-a-minute limit for a large collection and
+needs a progress line. Open: where the username is kept, if anywhere (config,
+not the keyring).
 
 ## Ideas, not agreed (recorded 2026-11-17)
 

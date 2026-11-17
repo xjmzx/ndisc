@@ -6694,6 +6694,49 @@ fn clear_discogs_token() -> Result<(), String> {
     clear_discogs_token_inner()
 }
 
+#[derive(Deserialize)]
+struct DiscogsIdentity {
+    username: String,
+}
+
+// Ask Discogs who a token belongs to (`GET /oauth/identity`). Checks `token`
+// when given, else the one in the keyring, and returns the account's username
+// so Setup can show it for the user to confirm. Stores nothing: the caller
+// saves the token only once this has passed.
+#[tauri::command]
+async fn check_discogs_token(token: Option<String>) -> Result<String, String> {
+    let token = match token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        Some(t) => t,
+        None => load_discogs_token()?.ok_or("No Discogs token is stored.")?,
+    };
+    let client = reqwest::Client::builder()
+        // Discogs rejects requests without a descriptive User-Agent.
+        .user_agent("ndisc/0.1 (+https://github.com/xjmzx/ndisc)")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.discogs.com/oauth/identity")
+        .header("Authorization", format!("Discogs token={}", token))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach Discogs: {}", e))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err("Discogs didn't accept this token.".into());
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err("Discogs is limiting requests. Try again in a minute.".into());
+    }
+    if !status.is_success() {
+        return Err(format!("Discogs answered HTTP {}.", status));
+    }
+    let body = resp.bytes().await.map_err(|e| e.to_string())?;
+    serde_json::from_slice::<DiscogsIdentity>(&body)
+        .map(|i| i.username)
+        .map_err(|e| format!("Unexpected answer from Discogs: {}", e))
+}
+
 // ---------------------------------------------------------------------------
 // Nostr publish (kind:31237 release events)
 // ---------------------------------------------------------------------------
@@ -12456,6 +12499,7 @@ pub fn run() {
             set_discogs_token,
             get_discogs_token_status,
             clear_discogs_token,
+            check_discogs_token,
             enrich_discogs_release,
             enrich_discogs_library,
             physical_releases_missing_pressing,

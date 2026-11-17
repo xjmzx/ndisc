@@ -11,6 +11,8 @@ import {
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
+  checkDiscogsToken,
+  getDiscogsTokenStatus,
   getLibraryRoot,
   getNpub,
   importDiscogsCsv,
@@ -19,6 +21,7 @@ import {
   initDb,
   reconcileLibrary,
   setDbPath,
+  setDiscogsToken,
   setLastSeenVersion,
   setLibraryRoot,
   startupStatus,
@@ -447,11 +450,20 @@ function DatabaseFix({ onDone }: { onDone: () => void }) {
 // ---------------------------------------------------------------------------
 // Setup
 
-type StepId = "database" | "library" | "catalogue" | "key" | "relay" | "blossom" | "ready";
+type StepId =
+  | "database"
+  | "library"
+  | "catalogue"
+  | "discogs"
+  | "key"
+  | "relay"
+  | "blossom"
+  | "ready";
 const STEPS: { id: StepId; title: string }[] = [
   { id: "database", title: "Database" },
   { id: "library", title: "Library folder" },
   { id: "catalogue", title: "Fill the catalogue" },
+  { id: "discogs", title: "Discogs token" },
   { id: "key", title: "Signing key" },
   { id: "relay", title: "Relay" },
   { id: "blossom", title: "Blossom server" },
@@ -532,7 +544,7 @@ function Setup({
           />
         ))}
       </ol>
-      {step === 3 && (
+      {id === "key" && (
         <p className="text-[11px] text-muted mb-3 border-l-2 border-surface pl-2">
           <span className="text-fg">Publishing (optional).</span> The next three steps are only
           needed to publish your releases to Nostr. Skip them for a catalogue on this computer.
@@ -545,6 +557,7 @@ function Setup({
       )}
       {id === "library" && <LibraryStep onNext={next} />}
       {id === "catalogue" && <CatalogueStep plan={plan} setPlan={setPlan} onNext={next} />}
+      {id === "discogs" && <DiscogsStep usingCsv={!!plan.discogsCsv} onNext={next} />}
       {id === "key" && <KeyStep onNext={next} />}
       {id === "relay" && <RelayStep onNext={next} />}
       {id === "blossom" && <BlossomStep onNext={next} />}
@@ -822,6 +835,108 @@ function Option({
         <span className="block text-[11px] text-muted truncate">{detail}</span>
       </span>
     </button>
+  );
+}
+
+// Optional. The token is what Enrich uses to fill in label, catalogue number,
+// format and track counts from Discogs; until now only the Enrich panel asked
+// for it. A pasted token is checked against Discogs (it answers with the
+// account's username) and saved only if that passes.
+function DiscogsStep({
+  usingCsv,
+  onNext,
+  nextLabel = "Next",
+}: {
+  usingCsv: boolean;
+  onNext: () => void;
+  nextLabel?: string;
+}) {
+  const [stored, setStored] = useState(false);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getDiscogsTokenStatus()
+      .then(setStored)
+      .catch(() => setStored(false));
+  }, []);
+
+  // With `t`, check the pasted token and save it if Discogs accepts it;
+  // without, check the one already in the keyring.
+  async function check(t?: string) {
+    setBusy(true);
+    setErr(null);
+    setAccount(null);
+    try {
+      const user = await checkDiscogsToken(t);
+      if (t) {
+        await setDiscogsToken(t);
+        setStored(true);
+        setSaved(true);
+        setToken("");
+      }
+      setAccount(user);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <Note>
+        {usingCsv
+          ? "Your Discogs CSV links each release to Discogs. A personal access token lets ndisc fill in their label, catalogue number, format and track counts (Enrich)."
+          : "A Discogs personal access token lets ndisc fill in label, catalogue number, format and track counts from Discogs for releases linked to it (Enrich)."}{" "}
+        Get one on discogs.com under Settings → Developers. It is kept in this computer's keyring,
+        never in a file.
+      </Note>
+      {stored && (
+        <div className="flex items-center gap-2 rounded-md bg-surface/40 px-3 py-2 text-[11px]">
+          <span className="flex-1 text-muted">
+            {account ? (
+              <>
+                {saved ? "Saved. " : ""}Discogs account{" "}
+                <span className="font-mono text-fg">{account}</span>
+              </>
+            ) : (
+              "A token is in the keyring."
+            )}
+          </span>
+          {!account && (
+            <Btn onClick={() => check()} disabled={busy}>
+              {busy && !token ? "Checking…" : "Check"}
+            </Btn>
+          )}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder={stored ? "Paste a token to replace it" : "Paste your token"}
+          className="min-w-0 flex-1 rounded-md bg-surface px-3 py-1.5 text-xs font-mono outline-none
+                     focus:ring-1 focus:ring-accent"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <Btn onClick={() => check(token.trim())} disabled={!token.trim() || busy}>
+          {busy && token ? "Checking…" : "Check and save"}
+        </Btn>
+      </div>
+      {err && <p className="text-[11px] text-alert">{err}</p>}
+      {!stored && (
+        <Note>Without a token, the catalogue works as usual; you can add one later from Enrich.</Note>
+      )}
+      <Btn primary onClick={onNext}>
+        {stored ? nextLabel : nextLabel === "Next" ? "Not now" : nextLabel}
+      </Btn>
+    </div>
   );
 }
 

@@ -78,6 +78,12 @@ step after step 1 can be skipped, and Setup can be reopened later from
    - **Discogs collection CSV**: the existing `importDiscogsCsv`.
    - **Apple Music library XML**: *new importer, see Scope*.
    - **Start empty**.
+   **Discogs token** (added 2026-11-17, after *Fill the catalogue*):
+   optional. Paste a personal access token; ndisc checks it with Discogs
+   (`GET /oauth/identity`), shows the account's username and saves the token
+   to the keyring only if Discogs accepts it. A token already stored can be
+   checked the same way. **Not now** leaves it for Enrich. No Startup-check
+   row: the token is optional and checking it needs the network.
 4. *Publishing (optional)*. A heading with one sentence explaining that the
    next three steps are only needed to publish releases to Nostr.
    1. **Signing key**: paste an nsec. It's stored in the OS keyring and the
