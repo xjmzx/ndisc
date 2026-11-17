@@ -153,6 +153,44 @@ them the way label images were moved (fetch, check, upload, keep the old
 address), then republish the four notes, and have the note editor upload to
 Blossom instead of taking a nostr.build link.
 
+### Current: image gallery and formatted text (recorded 2026-11-17)
+
+**Gallery.** A note can already carry several images: each line of the
+editor's *Image URLs* becomes an `image` tag, and `feed.v1` already reads them
+as lead + gallery. But no reader shows anything past the first: ndisc's Live
+on relays card shows a thumbnail of `images[0]`, glmps's Current page shows
+`images[0]` full width. Wanted: show the rest as a gallery, for promotional
+images and the different views of a physical release (cover, back, inlays,
+disc). Displaying them needs no contract change; it's a glmps change
+(`src/pages/Current.tsx`, in both site forks) and optionally ndisc's card.
+*Labelling* each view (back, inlay, disc…) would be a contract addition,
+e.g. an optional second value on the tag, `["image", url, "back"]`, which
+readers that don't know it ignore. Images should go to Blossom (see *Current
+feed: revisit*).
+
+**Formatted text.** Nostr has no formatting of its own: an event's content is
+just a string, and what it means is up to the event kind. Regular notes
+(kind 1) are plain text by convention; long-form notes (kind 30023, NIP-23)
+are Markdown. For kind 31239, `feed.v1` currently says the content is
+**plain text**, so headings, bold, lists and links would mean:
+
+1. a contract decision: the content becomes Markdown (wording change and SHA
+   bump in `schema/feed.v1.json`, so a coordinated wave with glmps and nview);
+2. client-side rendering in every reader (ndisc, glmps, nview) with a Markdown
+   renderer and HTML sanitising, and line breaks kept as they are today, so
+   the four existing plain-text notes still render the same;
+3. general clients would show the raw Markdown characters in their fallback,
+   which only shows the title today anyway.
+
+Feasible, and the existing notes survive it. Choose together with the gallery
+labels, so `feed.v1` moves once.
+
+**Decided 2026-11-17: `feed.v1` stays as it is.** Gallery and formatting are
+directions to explore, not planned work. A later nice-to-have: let the user
+choose between publishing as a standard note (kind 1) or a long-form note
+(kind 30023). Not now; Current is fine for today's purposes while the
+existing features are tested.
+
 ### Bandcamp import: no solution yet
 
 Bandcamp is the one store with no standard structured export of a fan's
