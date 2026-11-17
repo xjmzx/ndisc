@@ -546,8 +546,8 @@ export default function App() {
           <LibraryStats stats={lib.stats} summary={lib.summary} />
         </div>
 
-        {/* RIGHT — controls: app-work (library | db) | nostr identity |
-            view-switch (always last). Pinned to the right of the 1fr track. */}
+        {/* RIGHT — controls: app-work (library | db) | view-switch (always
+            last). Pinned to the right of the 1fr track. */}
         <div className="flex items-center gap-2 shrink-0 min-w-0 justify-self-end">
           {/* library group — import local / discogs, enrich, export markdown */}
           <LibraryToolbar lib={lib} />
@@ -583,33 +583,8 @@ export default function App() {
             <span className="text-xs text-muted">initialising…</span>
           )}
 
-          {/* nostr group — NIP-05 chip + forget identity, side by side */}
-          {npub && (
-            <>
-              <span
-                className="w-px h-6 bg-surface shrink-0"
-                aria-hidden="true"
-              />
-              <div className="inline-flex items-center gap-2">
-                {profile?.nip05 && (
-                  <span
-                    className="hidden sm:inline-flex items-center px-2.5 py-2
-                               rounded-md bg-mauve/15 text-mauve font-mono
-                               text-xs max-w-[16rem] truncate"
-                    title={`NIP-05: ${profile.nip05}`}
-                  >
-                    {profile.nip05}
-                  </span>
-                )}
-                <ToolbarIconButton
-                  title="Forget identity"
-                  onClick={onForgetIdentity}
-                >
-                  <LogOut size={14} />
-                </ToolbarIconButton>
-              </div>
-            </>
-          )}
+          {/* Nostr identity lives in the footer only (2026-11-17) — it was
+              crowding the controls zone at narrow widths. */}
 
           {/* view-switch group — digital (cyan) cluster, distinct from
               mauve/auburn. Home/discography first, then the alt views; the
@@ -799,23 +774,45 @@ export default function App() {
             stack: Tauri 2 · React · TypeScript · Tailwind · SQLite
           </span>
         </span>
+        {/* Nostr identity — the only place it shows (moved out of the header
+            2026-11-17). NIP-05 when the profile has one, else the display
+            name; then the short npub; then where the nsec lives; then forget.
+            The display name is dropped when a NIP-05 exists — it usually
+            repeats the NIP-05's local part. */}
         {npub && (
           <span className="inline-flex items-center gap-2 min-w-0">
-            {(profile?.display_name || profile?.name) && (
+            {profile?.nip05 ? (
+              <span
+                className="font-mono text-mauve truncate max-w-[16rem]"
+                title={`NIP-05: ${profile.nip05}`}
+              >
+                {profile.nip05}
+              </span>
+            ) : (profile?.display_name || profile?.name) ? (
               <span className="truncate">
                 {profile?.display_name || profile?.name}
               </span>
-            )}
-            <span className="font-mono text-mauve" title={npub}>
+            ) : null}
+            <span className="font-mono text-mauve shrink-0" title={npub}>
               {npub.slice(0, 12)}…{npub.slice(-6)}
             </span>
             <span
-              className="inline-flex items-center gap-1"
-              title={`secret key stored in ${keyringStore}`}
+              className="inline-flex items-center gap-1 shrink-0"
+              title={`nsec stored in ${keyringStore}`}
             >
               <Lock size={11} />
-              <span>nsec stored in {keyringStore}</span>
+              <span>{keyringStore}</span>
             </span>
+            <button
+              type="button"
+              onClick={onForgetIdentity}
+              title="Forget identity — deletes the nsec from the OS keychain"
+              aria-label="Forget identity"
+              className="shrink-0 p-1 -my-1 rounded text-muted transition-colors
+                         hover:text-mauve hover:bg-surface cursor-pointer"
+            >
+              <LogOut size={12} />
+            </button>
           </span>
         )}
         {(dbPath || lib.summary?.lastScannedAt != null) && (

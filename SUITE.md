@@ -715,15 +715,19 @@ verdict bar). It degrades gracefully (`hidden lg:flex`) at narrow widths.
 separated by `<span class="w-px h-6 bg-surface shrink-0" aria-hidden>`:
 1. **app-work** — the app's own actions (import/enrich/export, Scan, density /
    decks / edits `Segmented`s);
-2. **Nostr identity** — optional NIP-05 chip + the **forget-identity** button,
-   rendered only when signed in;
-3. **view-switch** — **always last.** `ToolbarIconButton tone="digital"`, icon
+2. **view-switch** — **always last.** `ToolbarIconButton tone="digital"`, icon
    size 14, **Home first**, active view always lit (it is the single way back).
    Single-view apps (`nsmpl`) omit this group entirely.
 
+**Nostr identity goes in the footer, not the header (2026-11-17, ndisc
+0.7.3).** It crowded the controls zone at narrow widths and repeated what the
+footer already said. The footer's identity group reads: NIP-05 (mono-mauve; the
+display name instead when there is no NIP-05) · short npub · lock + keyring
+store · a small forget-identity icon button. Rendered only when signed in. Other
+apps still carry the old header group; move them over as each is next touched.
+
 **Shared primitives.** `ToolbarIconButton` (vendored per repo) is the one
-icon-button vocabulary: `tone="digital"` for view-switch, `tone="mauve"` for
-the forget-identity button, `tone="auburn"` for the db group. Don't hand-roll a
+icon-button vocabulary: `tone="digital"` for view-switch, `tone="auburn"` for the db group. Don't hand-roll a
 one-off button where one of these fits.
 
 ### Library grammar (2026-07-25)
