@@ -145,18 +145,14 @@ notes** or **long-form notes**. (Today's notes are kind 31239 under the frozen
 that has an image link should say so, e.g. a small image icon or count on
 the card.
 
-**Images on Blossom: built 2026-11-17 (unreleased).** Hosting stays the
-user's choice: the editor takes a pasted link from any image host, and an
-**Upload to Blossom** button beside it uploads a local file and adds its
-address. Existing images move with **Move N images to Blossom** in Current's
-header (command `migrate_feed_images_to_blossom`, record in
-`feed_image_migrations`); moved notes show as drafts until republished. Drafts
-now show an image icon with a count. Background: Covers (2,016 on blossom.nfunc.xyz) and label images (290, moved from
-nostr.build 2026-10-06, recorded in `label_image_migrations`) are already
-there; the four feed images are the only artwork left on nostr.build. Move
-them the way label images were moved (fetch, check, upload, keep the old
-address), then republish the four notes, and have the note editor upload to
-Blossom instead of taking a nostr.build link.
+~~**Images on Blossom.**~~ **Done 2026-11-17 (0.7.4).** Hosting stays the
+user's choice: the editor takes a pasted link from any image host, and
+**Upload to Blossom** uploads a local file and adds its address. **Move N
+images to Blossom** moved the four nostr.build feed images (recorded in
+`feed_image_migrations`), and the four notes were republished; each live
+image verified by hash on blossom.nfunc.xyz. Drafts show an image icon with a
+count. Covers, label images and feed images are now all on Blossom; the only
+nostr.build files left are ntree/nsmpl's 11 audio clips (the clip.v1 work).
 
 ### Current: image gallery and formatted text (recorded 2026-11-17)
 
@@ -213,14 +209,12 @@ Reviewed together after 0.7.2. Each line says how big the work is and what it
 leans on. The order front-loads small, self-contained work and leaves the one
 structural change until last, so nothing built earlier has to be redone.
 
-1. **Release what's on `main`** (footer identity, Discogs token step, Ignored
-   folders guard) as 0.7.3.
+1. ~~Release what's on `main` as 0.7.3.~~ Done 2026-11-17.
 2. ~~Current feed: confirm the cause.~~ Done 2026-11-17: the notes are live
    on relay.nfunc.xyz; the "unpublished" view was the dev build's own
    database. The user's answers on Current's direction are under
-   *Current feed: revisit*. Moving its four images to Blossom is small and
-   can go with the covers work (step 4); the note-format work is larger and
-   comes after the grid.
+   *Current feed: revisit*. Its four images moved to Blossom in 0.7.4
+   (done). The note-format work is larger and comes after the grid.
 3. **Cover grid view.** Medium, front end only, no schema or contract change;
    ports nview's paged grid. Do it before the covers checks, because it makes
    cover problems visible at a glance.
