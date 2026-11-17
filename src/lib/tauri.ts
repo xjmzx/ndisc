@@ -1068,6 +1068,28 @@ export interface CoverUpload {
 
 // Upload a release's local cover file to Blossom and make it the published
 // cover. Leaves the release stale.
+export interface FeedImageMigration {
+  server: string;
+  skipped: number;
+  migrated: number;
+  /** Notes whose images changed; each now needs a republish. */
+  notes: number[];
+  errors: string[];
+}
+
+// Move every feed-note image that isn't on the primary Blossom server onto
+// it. Rewrites the notes' image lists and leaves them needing a republish.
+export async function migrateFeedImagesToBlossom(
+  servers: string[],
+): Promise<FeedImageMigration> {
+  return invoke<FeedImageMigration>("migrate_feed_images_to_blossom", { servers });
+}
+
+// Upload a local image file to Blossom; resolves to its address.
+export async function uploadFeedImage(path: string, servers: string[]): Promise<string> {
+  return invoke<string>("upload_feed_image", { path, servers });
+}
+
 export async function uploadCoverToBlossom(
   releaseId: number,
   servers: string[],

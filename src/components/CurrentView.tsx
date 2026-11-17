@@ -19,15 +19,21 @@ import {
   Send,
   Undo2,
   Users,
+  Upload,
+  CloudUpload,
+  Image as ImageIcon,
   X,
   ShieldCheck,
 } from "lucide-react";
 import { nip19, type Event as NostrEvent } from "nostr-tools";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   listReleases,
   listFeedDrafts,
   saveFeedDraft,
   deleteFeedDraft,
+  migrateFeedImagesToBlossom,
+  uploadFeedImage,
   publishFeedNote,
   unpublishFeedNote,
   publishRegistry,
@@ -45,7 +51,17 @@ import { DB_BUTTON_CLS, SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
 interface Props {
   npub: string | null;
   relays: string[];
+  /** Primary first. Empty = no Blossom server, so upload/move are hidden. */
+  blossomServers: string[];
   reloadKey: number;
+}
+
+// An image is "on Blossom" when it is on the primary server. Anything else —
+// nostr.build or any other image host — is a valid choice too; moving is
+// optional.
+function onPrimary(url: string, servers: string[]): boolean {
+  const p = servers[0]?.replace(/\/+$/, "");
+  return !!p && url.trim().startsWith(p + "/");
 }
 
 const BLANK: FeedDraft = {
@@ -54,7 +70,7 @@ const BLANK: FeedDraft = {
   topics: [],
 };
 
-export function CurrentView({ npub, relays, reloadKey }: Props) {
+export function CurrentView({ npub, relays, blossomServers, reloadKey }: Props) {
   const { notes, events, contributors, loading } = useFeed(npub, relays);
 
   const myHex = useMemo(() => {
@@ -153,6 +169,44 @@ export function CurrentView({ npub, relays, reloadKey }: Props) {
     }
   };
 
+  // Images on other hosts, across all drafts — what "Move to Blossom" would take.
+  const offBlossom = useMemo(
+    () =>
+      blossomServers.length === 0
+        ? 0
+        : drafts.reduce(
+            (n, d) => n + d.images.filter((u) => !onPrimary(u, blossomServers)).length,
+            0,
+          ),
+    [drafts, blossomServers],
+  );
+  const [moving, setMoving] = useState(false);
+
+  const onMoveImages = async () => {
+    const ok = await ask(
+      `Copy ${offBlossom} image${offBlossom === 1 ? "" : "s"} from other hosts to ` +
+        `${blossomServers[0]} and point the notes at the copies? The originals ` +
+        "aren't deleted. Changed notes show as drafts until you republish them.",
+      { title: "Move feed images to Blossom", kind: "info" },
+    );
+    if (!ok) return;
+    setMoving(true);
+    setStatus(null);
+    try {
+      const r = await migrateFeedImagesToBlossom(blossomServers);
+      const parts = [`moved ${r.migrated} image${r.migrated === 1 ? "" : "s"}`];
+      if (r.notes.length)
+        parts.push(`${r.notes.length} note${r.notes.length === 1 ? "" : "s"} to republish`);
+      if (r.errors.length) parts.push(`${r.errors.length} failed: ${r.errors.join("; ")}`);
+      setStatus(parts.join(" · "));
+      reloadDrafts();
+    } catch (e) {
+      setStatus(`move failed — ${e}`);
+    } finally {
+      setMoving(false);
+    }
+  };
+
   const onDelete = async (d: FeedDraft) => {
     if (d.id == null) return;
     setBusy(d.id);
@@ -172,17 +226,30 @@ export function CurrentView({ npub, relays, reloadKey }: Props) {
       icon={<Radio size={16} />}
       title="Current"
       right={
-        <button
-          className={DB_BUTTON_CLS}
-          onClick={() => {
-            setEditing({ ...BLANK });
-            setStatus(null);
-          }}
-          disabled={!myHex}
-          title={myHex ? "Compose a feed note" : "Sign in to author notes"}
-        >
-          <Plus size={12} /> New note
-        </button>
+        <div className="flex items-center gap-2">
+          {offBlossom > 0 && (
+            <button
+              className={SUBTLE_BUTTON_CLS}
+              onClick={onMoveImages}
+              disabled={moving || !myHex}
+              title={`Copy images hosted elsewhere to ${blossomServers[0]}. Optional: images on other hosts work as they are.`}
+            >
+              <CloudUpload size={12} />
+              {moving ? "Moving…" : `Move ${offBlossom} image${offBlossom === 1 ? "" : "s"} to Blossom`}
+            </button>
+          )}
+          <button
+            className={DB_BUTTON_CLS}
+            onClick={() => {
+              setEditing({ ...BLANK });
+              setStatus(null);
+            }}
+            disabled={!myHex}
+            title={myHex ? "Compose a feed note" : "Sign in to author notes"}
+          >
+            <Plus size={12} /> New note
+          </button>
+        </div>
       }
       className="h-full"
       bodyClassName="min-h-0 overflow-y-auto [scrollbar-gutter:stable] gap-4"
@@ -200,6 +267,7 @@ export function CurrentView({ npub, relays, reloadKey }: Props) {
           setDraft={setEditing}
           releaseOptions={releaseOptions}
           myHex={myHex}
+          blossomServers={blossomServers}
           busy={busy === (editing.id ?? "new")}
           onSave={onSave}
           onCancel={() => setEditing(null)}
@@ -274,6 +342,7 @@ function Composer({
   setDraft,
   releaseOptions,
   myHex,
+  blossomServers,
   busy,
   onSave,
   onCancel,
@@ -282,6 +351,7 @@ function Composer({
   setDraft: (d: FeedDraft) => void;
   releaseOptions: Release[];
   myHex: string | null;
+  blossomServers: string[];
   busy: boolean;
   onSave: () => void;
   onCancel: () => void;
@@ -294,6 +364,32 @@ function Composer({
   // (which would strip the trailing separator mid-type). Seeded once per
   // edit-session (the Composer is keyed by draft id, so this remounts).
   const [topicsText, setTopicsText] = useState(draft.topics.join(", "));
+
+  // Image hosting is the user's choice: paste a link from any image host, or
+  // upload a local file to Blossom, which adds its address to the list.
+  // `imagesKey` remounts the list so it picks up the added line.
+  const [imagesKey, setImagesKey] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
+  async function uploadImage() {
+    const p = await openDialog({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp", "gif"] }],
+      title: "Upload an image to Blossom",
+    });
+    if (typeof p !== "string") return;
+    setUploading(true);
+    setUploadErr(null);
+    try {
+      const url = await uploadFeedImage(p, blossomServers);
+      set({ images: [...draft.images, url] });
+      setImagesKey((k) => k + 1);
+    } catch (e) {
+      setUploadErr(String(e));
+    } finally {
+      setUploading(false);
+    }
+  }
 
   return (
     <div className="rounded-lg border border-mauve/30 bg-panel p-3 flex flex-col gap-2">
@@ -332,10 +428,24 @@ function Composer({
       </select>
 
       <LineList
-        label="Image URLs (one per line)"
+        key={imagesKey}
+        label="Image URLs (one per line) — paste a link from any image host, or upload to Blossom"
         value={draft.images}
         onChange={(images) => set({ images })}
+        action={
+          blossomServers.length > 0 ? (
+            <button
+              className={SUBTLE_BUTTON_CLS}
+              onClick={uploadImage}
+              disabled={uploading || !myHex}
+              title={`Upload a local image to ${blossomServers[0]} and add its address`}
+            >
+              <Upload size={11} /> {uploading ? "Uploading…" : "Upload to Blossom"}
+            </button>
+          ) : null
+        }
       />
+      {uploadErr && <p className="text-[11px] text-alert">{uploadErr}</p>}
       <LineList
         label="Links (one per line)"
         value={draft.links}
@@ -379,10 +489,12 @@ function LineList({
   label,
   value,
   onChange,
+  action,
 }: {
   label: string;
   value: string[];
   onChange: (v: string[]) => void;
+  action?: React.ReactNode;
 }) {
   // Raw text held locally so a trailing newline survives while typing; parsed
   // to the array on change rather than re-derived from it. Seeded once (the
@@ -390,7 +502,10 @@ function LineList({
   const [text, setText] = useState(value.join("\n"));
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted">{label}</label>
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-muted">{label}</label>
+        {action && <span className="ml-auto">{action}</span>}
+      </div>
       <textarea
         className="bg-surface rounded px-2 py-1.5 text-xs font-mono text-fg placeholder:text-muted min-h-[2.5rem]"
         value={text}
@@ -434,9 +549,19 @@ function DraftRow({
         <span className="text-sm font-semibold text-fg truncate">
           {draft.title || draft.body?.slice(0, 40) || "(untitled note)"}
         </span>
+        {draft.images.length > 0 && (
+          <span
+            className="ml-auto inline-flex items-center gap-1 text-[10px] text-muted shrink-0"
+            title={draft.images.join("\n")}
+          >
+            <ImageIcon size={11} />
+            {draft.images.length}
+          </span>
+        )}
         <span
           className={
-            "ml-auto text-[10px] uppercase tracking-wide font-mono shrink-0 " +
+            (draft.images.length > 0 ? "" : "ml-auto ") +
+            "text-[10px] uppercase tracking-wide font-mono shrink-0 " +
             (published ? "text-nostr" : "text-muted")
           }
         >

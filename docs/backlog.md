@@ -145,8 +145,13 @@ notes** or **long-form notes**. (Today's notes are kind 31239 under the frozen
 that has an image link should say so, e.g. a small image icon or count on
 the card.
 
-**Images on Blossom.** Feed images should live on Blossom like everything
-else. Covers (2,016 on blossom.nfunc.xyz) and label images (290, moved from
+**Images on Blossom: built 2026-11-17 (unreleased).** Hosting stays the
+user's choice: the editor takes a pasted link from any image host, and an
+**Upload to Blossom** button beside it uploads a local file and adds its
+address. Existing images move with **Move N images to Blossom** in Current's
+header (command `migrate_feed_images_to_blossom`, record in
+`feed_image_migrations`); moved notes show as drafts until republished. Drafts
+now show an image icon with a count. Background: Covers (2,016 on blossom.nfunc.xyz) and label images (290, moved from
 nostr.build 2026-10-06, recorded in `label_image_migrations`) are already
 there; the four feed images are the only artwork left on nostr.build. Move
 them the way label images were moved (fetch, check, upload, keep the old

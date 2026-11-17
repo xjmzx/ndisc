@@ -135,6 +135,17 @@ CREATE TABLE IF NOT EXISTS label_image_migrations (
     bytes       INTEGER NOT NULL,
     migrated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
+-- The same record for feed-note (kind:31239) images moved to Blossom
+-- (migrate_feed_images_to_blossom), keyed by the note's local id.
+CREATE TABLE IF NOT EXISTS feed_image_migrations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id     INTEGER NOT NULL,
+    old_url     TEXT    NOT NULL,
+    new_url     TEXT    NOT NULL,
+    sha256      TEXT    NOT NULL,
+    bytes       INTEGER NOT NULL,
+    migrated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 CREATE TABLE IF NOT EXISTS cover_mirrors (
     sha256      TEXT    NOT NULL,
     server      TEXT    NOT NULL,
@@ -6342,6 +6353,149 @@ async fn migrate_label_art_to_blossom(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FeedImageMigration {
+    pub server: String,
+    /// Images already on the primary server, or not web addresses.
+    pub skipped: usize,
+    pub migrated: usize,
+    /// Notes whose image list changed. Each is left needing a republish.
+    pub notes: Vec<i64>,
+    pub errors: Vec<String>,
+}
+
+/// Move feed-note images onto the primary Blossom server, as label art was
+/// moved: fetch each from where it is now, check it (placeholder detection,
+/// image sniffing), upload it, and record the move in `feed_image_migrations`
+/// so the old address survives. Each note's image list is rewritten in place
+/// and its publish state cleared, so it shows as a draft until republished.
+/// It does not publish.
+#[tauri::command]
+async fn migrate_feed_images_to_blossom(
+    app: tauri::AppHandle,
+    servers: Vec<String>,
+) -> Result<FeedImageMigration, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+    let primary = servers[0].clone();
+
+    let notes: Vec<(i64, Vec<String>)> = {
+        let conn = open(&app)?;
+        let mut stmt = conn
+            .prepare("SELECT id, images FROM feed_notes ORDER BY id")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok())
+            .map(|(id, json)| (id, json_str_array(&json)))
+            .collect()
+    };
+
+    let needs_move = |url: &str| {
+        let url = url.trim();
+        (url.starts_with("https://") || url.starts_with("http://"))
+            && !blossom::is_on_server(url, &primary)
+    };
+    let mut result = FeedImageMigration {
+        server: primary.clone(),
+        skipped: 0,
+        migrated: 0,
+        notes: Vec::new(),
+        errors: Vec::new(),
+    };
+    let total: usize = notes
+        .iter()
+        .map(|(_, imgs)| imgs.iter().filter(|u| needs_move(u)).count())
+        .sum();
+    result.skipped = notes.iter().map(|(_, imgs)| imgs.len()).sum::<usize>() - total;
+    if total == 0 {
+        return Ok(result);
+    }
+
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+
+    // nostr.build (and others) answer 200 with a stock image for a missing
+    // file; learn each host's placeholders first, as the cover moves do.
+    let mut placeholders: HashMap<String, HashSet<String>> = HashMap::new();
+    for (_, imgs) in &notes {
+        for url in imgs.iter().filter(|u| needs_move(u)) {
+            if let Some(origin) = url_origin(url) {
+                if !placeholders.contains_key(&origin) {
+                    let learned = learn_placeholders(&http, &origin).await;
+                    placeholders.insert(origin, learned);
+                }
+            }
+        }
+    }
+
+    let mut done = 0usize;
+    for (note_id, imgs) in notes {
+        let mut changed = false;
+        let mut next: Vec<String> = Vec::with_capacity(imgs.len());
+        for url in imgs {
+            if !needs_move(&url) {
+                next.push(url);
+                continue;
+            }
+            done += 1;
+            let _ = app.emit(
+                "feed-images:progress",
+                ImportProgress { current: done, total, current_dir: url.clone() },
+            );
+            match move_image(&http, &keys, &primary, &placeholders, url.trim()).await {
+                Ok(stored) => {
+                    let conn = open(&app)?;
+                    conn.execute(
+                        "INSERT INTO feed_image_migrations (note_id, old_url, new_url, sha256, bytes)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![note_id, url, stored.url, stored.sha256, stored.bytes as i64],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    next.push(stored.url);
+                    changed = true;
+                    result.migrated += 1;
+                }
+                Err(e) => {
+                    result.errors.push(format!("note #{note_id}: {url}: {e}"));
+                    next.push(url);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if changed {
+            let json = serde_json::to_string(&next).map_err(|e| e.to_string())?;
+            let conn = open(&app)?;
+            conn.execute(
+                "UPDATE feed_notes
+                 SET images = ?1, last_published_at = NULL, last_published_event = NULL,
+                     updated_at = strftime('%s','now')
+                 WHERE id = ?2",
+                params![json, note_id],
+            )
+            .map_err(|e| e.to_string())?;
+            result.notes.push(note_id);
+        }
+    }
+    Ok(result)
+}
+
+/// Upload a local image file for a feed note to Blossom (primary, then the
+/// mirrors) and return its address for the note's image list. Changes no note:
+/// the editor adds the address and the user saves the draft.
+#[tauri::command]
+async fn upload_feed_image(path: String, servers: Vec<String>) -> Result<String, String> {
+    let servers = blossom::normalize_servers(&servers)?;
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+    let http = cover_http_client()?;
+    let body = std::fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
+    let stored = store_cover(&http, &keys, &servers[0], &body).await?;
+    Ok(stored.url)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoverMirroring {
     pub primary: String,
     pub mirrors: Vec<String>,
@@ -12532,6 +12686,8 @@ pub fn run() {
             upload_local_covers,
             mirror_covers_to_blossom,
             migrate_label_art_to_blossom,
+            migrate_feed_images_to_blossom,
+            upload_feed_image,
             list_release_notes,
             clear_release_notes,
             publish_blossom_servers,

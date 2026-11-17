@@ -752,7 +752,12 @@ export default function App() {
         </div>
       ) : (
         <div className="lg:flex-1 lg:min-h-0">
-          <CurrentView npub={npub} relays={relays} reloadKey={reloadKey} />
+          <CurrentView
+            npub={npub}
+            relays={relays}
+            blossomServers={blossomServers}
+            reloadKey={reloadKey}
+          />
         </div>
       )}
 
