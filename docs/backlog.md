@@ -106,6 +106,34 @@ Open / Create database) or a column within one; how it maps to publishing,
 given the rule of **one keypair per discography or pseudonym** (otherwise the
 `disco-vault:<id>` addresses collide); and whether a release can belong to two.
 
+### Cover grid view
+
+nview and glmps show the discography as a grid of covers; ndisc only has the
+list. Wanted: the same grid as another way to look at Home, using the same
+filters and search, with a click opening the release as the list does.
+
+Looks feasible. nview's grid (`src/App.tsx`) already solves the hard part for
+a catalogue this size: it renders 60 covers at a time and adds more when a
+sentinel scrolls into view (IntersectionObserver), with `loading="lazy"` on
+each image. ndisc's `coverImageSrc` already prefers the published URL and
+falls back to the local file through the asset protocol. For the grid the
+order should probably flip to **local file first** (no network, and the
+library copies are kept at 600 px), published URL as the fallback. A grid is
+also a quick way to *see* missing or wrong covers, which ties it to the covers
+vs Blossom work above. Open: whether it's a toggle on Home or its own view
+button; tile size; what a release with no cover shows.
+
+### Current feed: revisit
+
+The Current view (kind 31239 feed notes) works, but hasn't been looked at
+since it was built in June. Its notes all show as not live. Probable cause,
+not yet confirmed: the four notes in the catalogue were published between
+2026-06-23 and 2026-07-01, when the publishing relay was relay.fizx.uk. That
+box was shut down on 2026-11-05, so the notes went with it, while the local
+database still records them as published. A republish to relay.nfunc.xyz
+would test that. Beyond that, what Current is for now is an open question
+(see `schema/current-feed-2026-06-23.md`).
+
 ### Bandcamp import: no solution yet
 
 Bandcamp is the one store with no standard structured export of a fan's
@@ -116,3 +144,38 @@ records provenance (a receipt id and a store URL; see
 metadata. Today Bandcamp releases come in through the library scan of the
 downloaded files. Open: whether any route is worth it (e.g. purchase emails or
 the per-account ledgers kept by hand) or this stays scan-only.
+
+## Feasibility and a suggested order (2026-11-17)
+
+Reviewed together after 0.7.2. Each line says how big the work is and what it
+leans on. The order front-loads small, self-contained work and leaves the one
+structural change until last, so nothing built earlier has to be redone.
+
+1. **Release what's on `main`** (footer identity, Discogs token step, Ignored
+   folders guard) as 0.7.3.
+2. **Current feed: confirm the cause.** Small. A republish to relay.nfunc.xyz
+   either brings the notes back or shows a real fault. Do it early so the
+   later feed work starts from a known state.
+3. **Cover grid view.** Medium, front end only, no schema or contract change;
+   ports nview's paged grid. Do it before the covers checks, because it makes
+   cover problems visible at a glance.
+4. **Local covers vs Blossom: report, then Export list.** Medium; already
+   planned. The Export list needs ncover's "From a list…" to be useful, so
+   the two land together.
+5. **Discogs collection through the API.** Medium; builds on 0.7.3's token
+   step (the username is already in hand). Needs progress reporting and rate
+   limiting at 60 requests a minute.
+6. **Genre interests.** Small to medium, and optional. Easier after the grid,
+   since it changes how filters present genres in both views.
+7. **More than one discography.** Large and structural: database or column,
+   config, keys (one keypair per discography), publishing, and every view.
+   Write a design doc first. Anything stored per user before this (genre
+   interests, view choices) should be kept where it can later become per
+   discography.
+8. **Bandcamp import.** No technical route today; stays research until
+   Bandcamp offers an export, or another source (purchase emails, the hand-kept
+   ledgers) turns out to be good enough.
+
+Before tagging 0.7.3 it's still worth running the pending Windows test of a
+fresh database with a Discogs CSV import, which has so far only run against a
+stand-in backend.
