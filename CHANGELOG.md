@@ -21,6 +21,17 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.7.5 — 2026-11-18
+
+### Added
+- **Cover grid on Home.** A four-icon toggle in the release list's header
+  switches between **Grid**, **Small grid**, **Cover wall** and **≡ List +
+  editor**, the same control glmps uses. The grids take the full width and
+  keep search and every filter; they load 60 covers at a time and add more as
+  you scroll. Covers come from the local file first, with the published URL
+  as the fallback. Clicking a tile opens that release in the list and editor.
+  The chosen layout is remembered.
+
 ## 0.7.4 — 2026-11-17
 
 ### Added
