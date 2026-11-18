@@ -101,6 +101,39 @@ so ncover stays a reader of what ndisc exports and the file is usable by hand.
 Releases with no folder (physical) still get a line, keyed by artist — title,
 for the operator. ncover will skip them.
 
+## Label art: the same checks as covers (idea, 2026-11-18)
+
+**Why.** Label art has no local reference. Each label is `{name, imageUrl,
+siteUrl}` in the webview's localStorage (`ndisc.labels`), not the database,
+and is published whole as the kind 31238 manifest. The covers check, quality
+survey and Export list start from a release's local cover file, so they never
+see labels. The existing label tools are *Move label art to Blossom* and the
+copy in *Mirror covers*.
+
+**Facts, 2026-11-18 (read-only).** 290 labels, all with an image, all on
+blossom.nfunc.xyz (277 jpg, 13 png). The label masters
+folder (machine-local, 363 files:
+349 jpg, 8 png, 4 avif, 1 gif, 1 webp, dotted names like
+`Ultra.Records.label.jpg`) matches 244 labels by normalised name; 46 have no
+match, some only by spelling (`Red.Rhino.rcords`). **None of the 244 is
+byte-identical to its published copy** (re-encoded on the way out), so a
+hash comparison would flag them all: for labels compare size and shape, not
+hash. The `art_name` recorded in the old `labels.json` export has drifted
+(96 still exist).
+
+**Stages.**
+
+1. **Survey the published label images** (small). One ranged header read per
+   label, as for covers: size, PNG, not square, into the quality group. No
+   local files needed.
+2. **Move labels into the database** (medium). localStorage has been restored
+   by hand before (`pre-label-restore-20261005` backups); a table is the
+   footing stage 3 needs. Keep the 31238 manifest unchanged.
+3. **A label art folder** (medium). A setting, matched by normalised name,
+   with a per-label file pick for the misses. Then labels join the quality
+   survey and Export list (the `cover file` column already lets ncover work
+   on single files in a shared folder) and gain an *upload local file* fix.
+
 ## Discogs collection through the API (idea, 2026-11-17)
 
 Setup's Discogs token step (built 2026-11-17, see the onboarding design) checks
@@ -225,6 +258,9 @@ structural change until last, so nothing built earlier has to be redone.
    planned. The Export list needs ncover's "From a list…" to be useful, so
    the two land together. The grid's Cover wall already shows missing covers
    at a glance.
+4b. **Label art: the same checks as covers.** Stage 1 (survey the published
+   images) is small; stages 2–3 move labels into the database and add a
+   label art folder.
 5. **Discogs collection through the API.** Medium; builds on 0.7.3's token
    step (the username is already in hand). Needs progress reporting and rate
    limiting at 60 requests a minute.
