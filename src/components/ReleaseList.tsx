@@ -27,7 +27,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { ViewToggle, type ReleaseLayout } from "./ViewToggle";
 import { CoverGrid } from "./CoverGrid";
@@ -53,6 +53,8 @@ import {
   listReleaseNotes,
   mirrorCoversToBlossom,
   checkLocalCovers,
+  coverListText,
+  writeCoverList,
   tidyArtworkNames,
   assignReleaseFolders,
   uploadLocalCovers,
@@ -618,7 +620,7 @@ export function ReleaseList({
           setOpProgress(e.payload);
         }),
       );
-      const data = await checkLocalCovers();
+      const data = await checkLocalCovers(blossomServers);
       setOpSummary({ kind: "localCovers", data, uploads: null });
     } catch (e) {
       setError(String(e));
@@ -2342,6 +2344,24 @@ export function ReleaseList({
                   same as published{" "}
                   <span className="font-mono">{opSummary.data.same}</span>
                 </span>
+                {opSummary.data.elsewhere.length > 0 && (
+                  <span className="text-warn">
+                    elsewhere{" "}
+                    <span className="font-mono">{opSummary.data.elsewhere.length}</span>
+                  </span>
+                )}
+                {opSummary.data.noLocal.length > 0 && (
+                  <span className="text-warn">
+                    no local file{" "}
+                    <span className="font-mono">{opSummary.data.noLocal.length}</span>
+                  </span>
+                )}
+                {opSummary.data.noCover.length > 0 && (
+                  <span className="text-alert">
+                    no cover{" "}
+                    <span className="font-mono">{opSummary.data.noCover.length}</span>
+                  </span>
+                )}
                 {opSummary.data.warnings.length > 0 && (
                   <span className="text-warn">
                     warnings{" "}
@@ -3693,6 +3713,21 @@ function LocalCoverDetails({
   const larger = rows.filter((r) => r.shrunk).length;
   const failed = uploads?.results.filter((r) => r.status !== "ok") ?? [];
   const dims = (d: [number, number] | null) => (d ? `${d[0]}×${d[1]}` : "?");
+  const elsewhere = check.elsewhere.filter((d) => done.get(d.id) !== "ok");
+  const uploadableNoCover = check.noCover
+    .filter((r) => r.localPath && done.get(r.id) !== "ok")
+    .map((r) => r.id);
+  const chosenElsewhere = elsewhere.filter((r) => picked.has(r.id)).map((r) => r.id);
+  // Flags for a published image the library has no say over: over the size
+  // the library is kept to, or more than 2% off square.
+  const flags = (d: [number, number] | null) => {
+    if (!d) return "";
+    const long = Math.max(d[0], d[1]);
+    const out: string[] = [];
+    if (long > check.libraryPx) out.push(`over ${check.libraryPx} px`);
+    if (Math.abs(d[0] - d[1]) / long > 0.02) out.push("not square");
+    return out.length ? ` · ${out.join(" · ")}` : "";
+  };
   const toggle = (id: number) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -3701,8 +3736,43 @@ function LocalCoverDetails({
       return next;
     });
 
+  const listCount =
+    check.differing.length + check.elsewhere.length + check.noLocal.length + check.noCover.length;
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  async function exportList() {
+    setExportMsg(null);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const dest = await saveDialog({
+        title: "Export cover list",
+        defaultPath: `ndisc-covers-${stamp}.txt`,
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (typeof dest !== "string") return;
+      await writeCoverList(dest, coverListText(check));
+      setExportMsg(`${listCount.toLocaleString()} line${listCount === 1 ? "" : "s"} written to ${dest}`);
+    } catch (e) {
+      setExportMsg(`error: ${e}`);
+    }
+  }
+
   return (
     <>
+      {listCount > 0 && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 flex flex-wrap items-center gap-2 text-[10px]">
+          <span className="text-muted">
+            {exportMsg ??
+              `Export every listed release (${listCount.toLocaleString()}) as a folder list for ncover’s From a list…`}
+          </span>
+          <button
+            onClick={exportList}
+            className="ml-auto px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            title="One release folder per line, then artist — title, disk size, published size and kind, tab-separated"
+          >
+            Export list
+          </button>
+        </div>
+      )}
       {uploads && uploads.uploaded > 0 && (
         <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs text-muted">
           {uploads.uploaded.toLocaleString()} release
@@ -3801,6 +3871,165 @@ function LocalCoverDetails({
                     </span>
                   </span>
                 </label>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {elsewhere.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open>
+          <summary className="cursor-pointer text-xs text-warn">
+            {elsewhere.length} cover{elsewhere.length === 1 ? "" : "s"} published from
+            elsewhere{check.primary ? ` (not on ${check.primary})` : ""} · a file is on
+            disk
+          </summary>
+          <p className="mt-1 text-[10px] text-muted">
+            Uploading the local file puts the cover on Blossom at the library's size.
+            Move covers to Blossom would copy the published image as it is.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
+            <button
+              onClick={() =>
+                setPicked((prev) => new Set([...prev, ...elsewhere.map((r) => r.id)]))
+              }
+              className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            >
+              Tick all
+            </button>
+            <button
+              onClick={() =>
+                setPicked((prev) => {
+                  const next = new Set(prev);
+                  elsewhere.forEach((r) => next.delete(r.id));
+                  return next;
+                })
+              }
+              className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            >
+              Tick none
+            </button>
+            <button
+              onClick={() => onUpload(chosenElsewhere)}
+              disabled={chosenElsewhere.length === 0}
+              className="ml-auto px-2 py-0.5 rounded bg-nostr/15 text-nostr
+                         hover:bg-nostr hover:text-bg font-medium
+                         transition-colors disabled:opacity-40
+                         disabled:pointer-events-none"
+              title="Upload the ticked local covers and mark those releases stale"
+            >
+              Upload {chosenElsewhere.length} ticked
+            </button>
+          </div>
+          <ul className="mt-2 max-h-[28rem] overflow-auto space-y-1 text-[10px]">
+            {elsewhere.map((r) => (
+              <li key={r.id}>
+                <label className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={picked.has(r.id)}
+                    onChange={() => toggle(r.id)}
+                  />
+                  <img
+                    src={convertFileSrc(r.localPath)}
+                    loading="lazy"
+                    alt=""
+                    className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                    title="On disk"
+                  />
+                  <img
+                    src={r.publishedUrl}
+                    loading="lazy"
+                    alt=""
+                    className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                    title="Published"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-fg truncate">
+                      {r.artist} <span className="text-muted">·</span> {r.title}
+                    </span>
+                    <span className="block text-muted font-mono">
+                      {r.host} · disk {dims(r.localDims)} · published{" "}
+                      {dims(r.publishedDims)}
+                      {r.samePicture === true ? " · same file" : ""}
+                      {done.has(r.id) ? " · failed" : ""}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {check.noLocal.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary className="cursor-pointer text-xs text-warn">
+            {check.noLocal.length} published cover{check.noLocal.length === 1 ? "" : "s"}{" "}
+            with no file on disk
+          </summary>
+          <p className="mt-1 text-[10px] text-muted">
+            Nothing to upload. Reconcile published covers (Covers on disk) downloads
+            each one into its release folder.
+          </p>
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {check.noLocal.map((r) => (
+              <li key={r.id} className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50">
+                <img
+                  src={r.publishedUrl}
+                  loading="lazy"
+                  alt=""
+                  className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                  title="Published"
+                />
+                <span className="min-w-0">
+                  <span className="block text-fg truncate">
+                    {r.artist} <span className="text-muted">·</span> {r.title}
+                  </span>
+                  <span className="block text-muted font-mono">
+                    {r.host} · published {dims(r.publishedDims)}
+                    {flags(r.publishedDims)}
+                  </span>
+                  <span className="block text-muted truncate" title={r.missingPath ?? undefined}>
+                    {r.missingPath ? `not found: ${r.missingPath}` : "no cover file recorded"}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {check.noCover.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary className="cursor-pointer text-xs text-alert">
+            {check.noCover.length} published release{check.noCover.length === 1 ? "" : "s"}{" "}
+            with no cover
+          </summary>
+          {uploadableNoCover.length > 0 && (
+            <div className="mt-2 flex items-center gap-2 text-[10px]">
+              <span className="text-muted">
+                {uploadableNoCover.length} ha{uploadableNoCover.length === 1 ? "s" : "ve"} a
+                file on disk that was never published.
+              </span>
+              <button
+                onClick={() => onUpload(uploadableNoCover)}
+                className="ml-auto px-2 py-0.5 rounded bg-nostr/15 text-nostr
+                           hover:bg-nostr hover:text-bg font-medium transition-colors"
+                title="Upload these local covers and mark those releases stale"
+              >
+                Upload {uploadableNoCover.length}
+              </button>
+            </div>
+          )}
+          <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+            {check.noCover.map((r) => (
+              <li key={r.id} className="px-2 py-1 rounded bg-bg/50">
+                <span className="block text-fg truncate">
+                  {r.artist} <span className="text-muted">·</span> {r.title}
+                </span>
+                <span className="block text-muted truncate" title={r.localPath ?? undefined}>
+                  {r.localPath
+                    ? `${done.get(r.id) === "ok" ? "uploaded" : "on disk"}: ${r.localPath}`
+                    : "no file on disk either"}
+                </span>
               </li>
             ))}
           </ul>

@@ -1098,6 +1098,8 @@ export async function uploadCoverToBlossom(
 }
 
 export interface LocalCoverItem {
+  // The release folder, as published.json keys it; null when there is none.
+  folder: string | null;
   id: number;
   artist: string;
   title: string;
@@ -1116,18 +1118,98 @@ export interface LocalCoverItem {
   shrunk: boolean;
 }
 
+// Published elsewhere: the cover isn't on the primary Blossom server, but a
+// file is on disk. Uploading the local file is the fix.
+export interface ElsewhereCoverItem {
+  // The release folder, as published.json keys it; null when there is none.
+  folder: string | null;
+  id: number;
+  artist: string;
+  title: string;
+  localPath: string;
+  publishedUrl: string;
+  host: string;
+  localBytes: number;
+  localDims: [number, number] | null;
+  publishedDims: [number, number] | null;
+  // true/false when the URL names a SHA-256; null when it carries none.
+  samePicture: boolean | null;
+}
+
+// Published with a cover URL but no readable file on disk.
+export interface NoLocalCoverItem {
+  // The release folder, as published.json keys it; null when there is none.
+  folder: string | null;
+  id: number;
+  artist: string;
+  title: string;
+  publishedUrl: string;
+  host: string;
+  // The recorded path that no longer reads; null when none is recorded.
+  missingPath: string | null;
+  publishedDims: [number, number] | null;
+}
+
+// Published with no cover URL. localPath: a file on disk never published.
+export interface NoCoverItem {
+  // The release folder, as published.json keys it; null when there is none.
+  folder: string | null;
+  id: number;
+  artist: string;
+  title: string;
+  localPath: string | null;
+}
+
 export interface LocalCoverCheck {
+  published: number;
   considered: number;
   same: number;
   differing: LocalCoverItem[];
+  elsewhere: ElsewhereCoverItem[];
+  noLocal: NoLocalCoverItem[];
+  noCover: NoCoverItem[];
+  primary: string | null;
+  // The long side the library's cover files are kept to.
+  libraryPx: number;
   warnings: string[];
 }
 
-// Read-only: compare each published release's local cover file with the image
-// its event points at (by the SHA-256 in the Blossom URL), and size both for
-// the ones that differ. Emits `cover-local:started` / `cover-local:progress`.
-export async function checkLocalCovers(): Promise<LocalCoverCheck> {
-  return invoke<LocalCoverCheck>("check_local_covers");
+// Read-only sweep of every published release's cover: compare the local file
+// with the image on the primary Blossom server (by the SHA-256 in its URL),
+// and list the ones that can't be compared — published from another host,
+// published with no file on disk, no cover at all. Sizes the published images
+// it lists. Emits `cover-local:started` / `cover-local:progress`.
+export async function checkLocalCovers(servers: string[]): Promise<LocalCoverCheck> {
+  return invoke<LocalCoverCheck>("check_local_covers", { servers });
+}
+
+// The cover list for ncover's "From a list…" scope: one line per release,
+// tab-separated — folder (or "artist — title" when there is none), artist —
+// title, disk WxH, published WxH, kind. No header line, so every line is a
+// release. Built from a check already in hand; nothing is re-read.
+export function coverListText(check: LocalCoverCheck): string {
+  const dims = (d: [number, number] | null | undefined) => (d ? `${d[0]}x${d[1]}` : "-");
+  const clean = (v: string) => v.replace(/[\t\r\n]+/g, " ").trim();
+  const lines: string[] = [];
+  const add = (
+    r: { folder: string | null; artist: string; title: string },
+    disk: [number, number] | null | undefined,
+    published: [number, number] | null | undefined,
+    kind: string,
+  ) => {
+    const name = clean(`${r.artist} — ${r.title}`);
+    lines.push([r.folder ? clean(r.folder) : name, name, dims(disk), dims(published), kind].join("\t"));
+  };
+  for (const r of check.differing)
+    add(r, r.localDims, r.publishedDims, r.shrunk ? "shrunk" : r.publishedLarger ? "published-larger" : "different-picture");
+  for (const r of check.elsewhere) add(r, r.localDims, r.publishedDims, `elsewhere:${r.host}`);
+  for (const r of check.noLocal) add(r, null, r.publishedDims, "no-local-file");
+  for (const r of check.noCover) add(r, null, null, r.localPath ? "never-published" : "no-cover");
+  return lines.length ? lines.join("\n") + "\n" : "";
+}
+
+export async function writeCoverList(destPath: string, text: string): Promise<void> {
+  return invoke<void>("write_cover_list", { destPath, text });
 }
 
 export interface LocalCoverUploads {

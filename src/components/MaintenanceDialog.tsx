@@ -177,8 +177,9 @@ export const MAINT_GROUPS: MaintGroup[] = [
         label: "Local covers vs Blossom",
         description:
           "Compares each published release's cover file with the copy on " +
-          "Blossom and lists the ones changed on disk since publishing. You " +
-          "choose which to upload.",
+          "Blossom and lists the ones changed on disk since publishing, and " +
+          "the ones it can't compare: published from elsewhere, no file on " +
+          "disk, no cover. You choose which to upload.",
         mode: "check",
       },
       {

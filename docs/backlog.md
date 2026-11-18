@@ -8,6 +8,15 @@ existing checks are in [`open-issues-2026-09-22.md`](open-issues-2026-09-22.md).
 
 ## Local covers vs Blossom: report what it cannot compare (planned 2026-11-13)
 
+**Built 2026-11-18, unreleased.** The check now sweeps every published
+release: besides "differ" and "same" it lists *published from elsewhere*
+(tickable upload of the local file), *published with no local file* (sized,
+flagged over 600 px or more than 2% off square), and *no cover* (upload when
+a file is on disk). The 600 px stays a fixed value shown in the result, not a
+setting. On the real catalogue that day: 2,016 of 2,017 compared, 0
+elsewhere, 0 without a local file, 1 with no cover (a file on disk never
+published).
+
 **Why.** The check (0.6.20) compares a published release's cover file with the
 image its event points at, by the SHA-256 in the Blossom URL. Two kinds of
 published cover fall outside that and are currently skipped without a word.
@@ -49,6 +58,15 @@ Both lists go into the export below.
 setting in ndisc, or is only shown for the operator to judge.
 
 ## Local covers vs Blossom: Export list (planned 2026-11-13)
+
+**Built 2026-11-18, unreleased.** **Export list** on the check's result
+writes `ndisc-covers-<date>.txt`: no header, one line per listed release,
+tab-separated `folder`, `artist — title`, disk `WxH`, published `WxH` (`-`
+when unknown), kind (`shrunk`, `published-larger`, `different-picture`,
+`elsewhere:<host>`, `no-local-file`, `never-published`, `no-cover`). A
+release with no folder has `artist — title` as its first column. On the real
+catalogue that day the 46 mismatches all had a folder holding the cover.
+ncover's `From a list…` is still to build (ncover's backlog).
 
 **Why.** It is the first step of the cover review loop shared with ncover, set
 out in [ncover's `docs/backlog.md`](https://github.com/xjmzx/ncover/blob/main/docs/backlog.md).
