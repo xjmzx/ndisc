@@ -1332,6 +1332,23 @@ export async function writeCoverList(destPath: string, text: string): Promise<vo
   return invoke<void>("write_cover_list", { destPath, text });
 }
 
+export interface SavePublishedCovers {
+  saved: number;
+  results: { id: number; status: string; written: string | null }[];
+  // Where this run moved the replaced local covers.
+  attic: string;
+}
+
+// "Blossom is the right one": download each release's published cover and
+// make it the cover on disk. The download must match the hash in its URL;
+// every cover.* it replaces is moved to the app's cover-attic (with a log),
+// never deleted. Publishes nothing: the disk then matches what's published.
+export async function savePublishedCoversToDisk(
+  releaseIds: number[],
+): Promise<SavePublishedCovers> {
+  return invoke<SavePublishedCovers>("save_published_covers_to_disk", { releaseIds });
+}
+
 export interface LocalCoverUploads {
   uploaded: number;
   results: { id: number; status: string; newUrl: string | null }[];

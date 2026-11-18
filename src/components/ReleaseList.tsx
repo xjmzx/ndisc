@@ -53,6 +53,8 @@ import {
   listReleaseNotes,
   mirrorCoversToBlossom,
   checkLocalCovers,
+  savePublishedCoversToDisk,
+  type SavePublishedCovers,
   coverListText,
   qualityKinds,
   writeCoverList,
@@ -86,6 +88,7 @@ import {
   type NoteGroup,
   type CoverMirroring,
   type LocalCoverCheck,
+  type LocalCoverItem,
   type ArtworkTidy,
   type FolderAssignments,
   type LocalCoverUploads,
@@ -325,6 +328,7 @@ export function ReleaseList({
   // "localCovers" runs twice — the check, then the upload — and the progress
   // line says which.
   const [localUploading, setLocalUploading] = useState(false);
+  const [localSaving, setLocalSaving] = useState(false);
   const [opProgress, setOpProgress] = useState<ImportProgress | null>(null);
   // Rows for the drift review dialog, captured from the last scan summary.
   // null = dialog closed.
@@ -355,6 +359,7 @@ export function ReleaseList({
         kind: "localCovers";
         data: LocalCoverCheck;
         uploads: LocalCoverUploads | null;
+        saves: SavePublishedCovers | null;
       }
     | null
   >(null);
@@ -622,7 +627,7 @@ export function ReleaseList({
         }),
       );
       const data = await checkLocalCovers(blossomServers);
-      setOpSummary({ kind: "localCovers", data, uploads: null });
+      setOpSummary({ kind: "localCovers", data, uploads: null, saves: null });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -635,7 +640,11 @@ export function ReleaseList({
   // Upload the chosen local covers to Blossom. Signs uploads and re-points each
   // release, so it is an explicit, confirmed step after the check. It does not
   // publish — uploaded releases are left stale for the ordinary publish step.
-  async function runLocalCoverUpload(check: LocalCoverCheck, ids: number[]) {
+  async function runLocalCoverUpload(
+    check: LocalCoverCheck,
+    ids: number[],
+    saves: SavePublishedCovers | null,
+  ) {
     if (activeOp !== null || ids.length === 0) return;
     if (blossomServers.length === 0) {
       setError(
@@ -667,13 +676,58 @@ export function ReleaseList({
         }),
       );
       const uploads = await uploadLocalCovers(ids, blossomServers);
-      setOpSummary({ kind: "localCovers", data: check, uploads });
+      setOpSummary({ kind: "localCovers", data: check, uploads, saves });
       await reload();
     } catch (e) {
       setError(String(e));
     } finally {
       unlisteners.forEach((f) => f());
       setLocalUploading(false);
+      setActiveOp(null);
+      setOpProgress(null);
+    }
+  }
+
+  // Blossom wins: download the chosen releases' published covers over the
+  // local files. The replaced files go to the cover attic, never deleted.
+  async function runSavePublishedCovers(
+    check: LocalCoverCheck,
+    ids: number[],
+    uploads: LocalCoverUploads | null,
+  ) {
+    if (activeOp !== null || ids.length === 0) return;
+    const n = ids.length;
+    const yes = await ask(
+      `Replace ${n.toLocaleString()} local cover${n === 1 ? "" : "s"} with the published image?\n\n` +
+        "Each release's published cover is downloaded from Blossom, checked " +
+        "against the hash in its address, and written as cover.* in the " +
+        "release folder. The cover file it replaces is moved to ndisc's " +
+        "cover attic (with a log), not deleted.\n\n" +
+        "Nothing is published: afterwards the file on disk is what readers " +
+        "already see.",
+      { title: "Keep the Blossom copy", kind: "info" },
+    );
+    if (!yes) return;
+
+    setActiveOp("localCovers");
+    setLocalSaving(true);
+    setOpProgress({ current: 0, total: n, currentDir: "" });
+    setError(null);
+    const unlisteners: UnlistenFn[] = [];
+    try {
+      unlisteners.push(
+        await listen<ImportProgress>("cover-local:progress", (e) => {
+          setOpProgress(e.payload);
+        }),
+      );
+      const saves = await savePublishedCoversToDisk(ids);
+      setOpSummary({ kind: "localCovers", data: check, uploads, saves });
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      unlisteners.forEach((f) => f());
+      setLocalSaving(false);
       setActiveOp(null);
       setOpProgress(null);
     }
@@ -1864,7 +1918,9 @@ export function ReleaseList({
                             : activeOp === "localCovers"
                               ? localUploading
                                 ? "uploading local covers to Blossom"
-                                : "comparing local covers with Blossom"
+                                : localSaving
+                                  ? "saving published covers to disk"
+                                  : "comparing local covers with Blossom"
                             : activeOp === "contentAudit"
                           ? "comparing published events with the catalogue"
                           : activeOp === "repressing"
@@ -2616,7 +2672,11 @@ export function ReleaseList({
         <LocalCoverDetails
           check={opSummary.data}
           uploads={opSummary.uploads}
-          onUpload={(ids) => runLocalCoverUpload(opSummary.data, ids)}
+          saves={opSummary.saves}
+          onUpload={(ids) => runLocalCoverUpload(opSummary.data, ids, opSummary.saves)}
+          onSaveFromBlossom={(ids) =>
+            runSavePublishedCovers(opSummary.data, ids, opSummary.uploads)
+          }
         />
       )}
 
@@ -3698,25 +3758,67 @@ function ArtworkTidyDetails({ tidy }: { tidy: ArtworkTidy }) {
 // shape), where uploading changes the download size and nothing a reader
 // sees. A larger published copy beside an UNCHANGED file is the opposite —
 // the disk copy is the poorer one — and is flagged, never pre-ticked.
+// Size and shape filters for the "differ" list. Every row with both sizes
+// known is in exactly one size class: identical dims, long side within 5%
+// ("close"), or more than 5% larger on one side.
+const SIZE_BAND = 0.05;
+type SizeFilter = "all" | "diskLarger" | "blossomLarger" | "close" | "sameSize";
+type ShapeFilter = "all" | "diskSquare" | "diskOff" | "blossomSquare" | "blossomOff";
+const longSide = (d: [number, number] | null) => (d ? Math.max(d[0], d[1]) : null);
+const isSquare = (d: [number, number] | null, tolPct: number) =>
+  d ? Math.abs(d[0] - d[1]) / Math.max(d[0], d[1]) <= tolPct / 100 : null;
+function sizeClass(r: LocalCoverItem): Exclude<SizeFilter, "all"> | null {
+  const l = longSide(r.localDims);
+  const p = longSide(r.publishedDims);
+  if (l == null || p == null) return null;
+  if (r.localDims![0] === r.publishedDims![0] && r.localDims![1] === r.publishedDims![1])
+    return "sameSize";
+  if (l > p * (1 + SIZE_BAND)) return "diskLarger";
+  if (p > l * (1 + SIZE_BAND)) return "blossomLarger";
+  return "close";
+}
+
 function LocalCoverDetails({
   check,
   uploads,
+  saves,
   onUpload,
+  onSaveFromBlossom,
 }: {
   check: LocalCoverCheck;
   uploads: LocalCoverUploads | null;
+  saves: SavePublishedCovers | null;
   onUpload: (ids: number[]) => void;
+  onSaveFromBlossom: (ids: number[]) => void;
 }) {
+  // Rows an upload or a save has settled leave the lists.
   const done = useMemo(() => {
     const m = new Map<number, string>();
     uploads?.results.forEach((r) => m.set(r.id, r.status));
+    saves?.results.forEach((r) => {
+      if (m.get(r.id) !== "ok") m.set(r.id, r.status);
+    });
     return m;
-  }, [uploads]);
+  }, [uploads, saves]);
+  const [sizeF, setSizeF] = useState<SizeFilter>("all");
+  const [shapeF, setShapeF] = useState<ShapeFilter>("all");
   const rows = check.differing.filter((d) => done.get(d.id) !== "ok");
   const [picked, setPicked] = useState<Set<number>>(
     () => new Set(check.differing.filter((d) => d.shrunk).map((d) => d.id)),
   );
-  const chosen = rows.filter((r) => picked.has(r.id)).map((r) => r.id);
+  const tol = check.squareTolerancePct;
+  const passSize = (r: LocalCoverItem, f: SizeFilter) => f === "all" || sizeClass(r) === f;
+  const passShape = (r: LocalCoverItem, f: ShapeFilter) =>
+    f === "all" ||
+    (f === "diskSquare" && isSquare(r.localDims, tol) === true) ||
+    (f === "diskOff" && isSquare(r.localDims, tol) === false) ||
+    (f === "blossomSquare" && isSquare(r.publishedDims, tol) === true) ||
+    (f === "blossomOff" && isSquare(r.publishedDims, tol) === false);
+  const shown = rows.filter((r) => passSize(r, sizeF) && passShape(r, shapeF));
+  // Actions take the ticked rows that are SHOWN, so a filter never hides
+  // what a button is about to change.
+  const chosen = shown.filter((r) => picked.has(r.id)).map((r) => r.id);
+  const savedFailed = saves?.results.filter((r) => r.status !== "ok") ?? [];
   const larger = rows.filter((r) => r.shrunk).length;
   const failed = uploads?.results.filter((r) => r.status !== "ok") ?? [];
   const dims = (d: [number, number] | null) => (d ? `${d[0]}×${d[1]}` : "?");
@@ -3743,7 +3845,16 @@ function LocalCoverDetails({
       return next;
     });
 
-  const listText = useMemo(() => coverListText(check), [check]);
+  // Rows an upload or save has settled are left out of the export.
+  const listText = useMemo(() => {
+    const open = (r: { id: number }) => done.get(r.id) !== "ok";
+    return coverListText({
+      ...check,
+      differing: check.differing.filter(open),
+      elsewhere: check.elsewhere.filter(open),
+      noCover: check.noCover.filter(open),
+    });
+  }, [check, done]);
   const listCount = listText ? listText.split("\n").length - 1 : 0;
   const [qFilter, setQFilter] = useState<"all" | "low" | "over" | "png" | "shape">("all");
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -3788,6 +3899,27 @@ function LocalCoverDetails({
           the old cover until you publish them from the Nostr panel.
         </div>
       )}
+      {saves && saves.saved > 0 && (
+        <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs text-muted break-words">
+          {saves.saved.toLocaleString()} cover{saves.saved === 1 ? "" : "s"} on disk
+          replaced by the published image. The files they replaced are in{" "}
+          <span className="font-mono">{saves.attic}</span>.
+        </div>
+      )}
+      {savedFailed.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open>
+          <summary className="text-alert cursor-pointer text-xs">
+            {savedFailed.length} cover{savedFailed.length === 1 ? "" : "s"} not saved
+          </summary>
+          <ul className="mt-2 max-h-40 overflow-auto space-y-1 text-[10px]">
+            {savedFailed.map((f) => (
+              <li key={f.id} className="px-2 py-1 rounded bg-bg/50 text-alert break-words">
+                release {f.id}: {f.status}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {failed.length > 0 && (
         <details className="mt-2 px-3 py-2 rounded-md bg-surface/40" open>
           <summary className="text-alert cursor-pointer text-xs">
@@ -3808,6 +3940,61 @@ function LocalCoverDetails({
             {rows.length} cover{rows.length === 1 ? "" : "s"} on disk differ from
             the published image · {larger} shrunk since publishing
           </summary>
+          <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px]">
+            <span className="text-muted mr-1">Size</span>
+            {(
+              [
+                ["all", "All", rows.length],
+                ["diskLarger", "Larger on disk", rows.filter((r) => sizeClass(r) === "diskLarger").length],
+                ["blossomLarger", "Larger on Blossom", rows.filter((r) => sizeClass(r) === "blossomLarger").length],
+                ["close", "Close", rows.filter((r) => sizeClass(r) === "close").length],
+                ["sameSize", "Same size", rows.filter((r) => sizeClass(r) === "sameSize").length],
+              ] as const
+            ).map(([k, label, n]) => (
+              <button
+                key={k}
+                onClick={() => setSizeF(k)}
+                title={
+                  k === "diskLarger" || k === "blossomLarger"
+                    ? "long side more than 5% larger"
+                    : k === "close"
+                      ? "long sides within 5%, not identical"
+                      : k === "sameSize"
+                        ? "identical width and height"
+                        : undefined
+                }
+                className={cn(
+                  "px-2 py-0.5 rounded",
+                  sizeF === k ? "bg-accent/15 text-accent" : "bg-surface text-muted hover:text-fg",
+                )}
+              >
+                {label} <span className="font-mono">{n}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+            <span className="text-muted mr-1">Shape</span>
+            {(
+              [
+                ["all", "All", rows.length],
+                ["diskSquare", "Square on disk", rows.filter((r) => isSquare(r.localDims, tol) === true).length],
+                ["diskOff", "Not square on disk", rows.filter((r) => isSquare(r.localDims, tol) === false).length],
+                ["blossomSquare", "Square on Blossom", rows.filter((r) => isSquare(r.publishedDims, tol) === true).length],
+                ["blossomOff", "Not square on Blossom", rows.filter((r) => isSquare(r.publishedDims, tol) === false).length],
+              ] as const
+            ).map(([k, label, n]) => (
+              <button
+                key={k}
+                onClick={() => setShapeF(k)}
+                className={cn(
+                  "px-2 py-0.5 rounded",
+                  shapeF === k ? "bg-accent/15 text-accent" : "bg-surface text-muted hover:text-fg",
+                )}
+              >
+                {label} <span className="font-mono">{n}</span>
+              </button>
+            ))}
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
             <button
               onClick={() =>
@@ -3818,10 +4005,12 @@ function LocalCoverDetails({
               Tick shrunk only
             </button>
             <button
-              onClick={() => setPicked(new Set(rows.map((r) => r.id)))}
+              onClick={() =>
+                setPicked((prev) => new Set([...prev, ...shown.map((r) => r.id)]))
+              }
               className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
             >
-              Tick all
+              Tick shown
             </button>
             <button
               onClick={() => setPicked(new Set())}
@@ -3829,20 +4018,38 @@ function LocalCoverDetails({
             >
               Tick none
             </button>
-            <button
-              onClick={() => onUpload(chosen)}
-              disabled={chosen.length === 0}
-              className="ml-auto px-2 py-0.5 rounded bg-nostr/15 text-nostr
-                         hover:bg-nostr hover:text-bg font-medium
-                         transition-colors disabled:opacity-40
-                         disabled:pointer-events-none"
-              title="Upload the ticked local covers and mark those releases stale"
-            >
-              Upload {chosen.length} ticked
-            </button>
+            <span className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => onSaveFromBlossom(chosen)}
+                disabled={chosen.length === 0}
+                className="px-2 py-0.5 rounded bg-accent/15 text-accent
+                           hover:bg-accent hover:text-bg font-medium
+                           transition-colors disabled:opacity-40
+                           disabled:pointer-events-none"
+                title="Blossom is right: download the published image over the file on disk (the old file goes to the cover attic)"
+              >
+                Keep Blossom · save {chosen.length} to disk
+              </button>
+              <button
+                onClick={() => onUpload(chosen)}
+                disabled={chosen.length === 0}
+                className="px-2 py-0.5 rounded bg-nostr/15 text-nostr
+                           hover:bg-nostr hover:text-bg font-medium
+                           transition-colors disabled:opacity-40
+                           disabled:pointer-events-none"
+                title="Disk is right: upload the ticked local covers and mark those releases stale"
+              >
+                Keep disk · upload {chosen.length}
+              </button>
+            </span>
           </div>
+          {shown.length < rows.length && (
+            <p className="mt-2 text-[10px] text-muted">
+              Showing {shown.length} of {rows.length}. The buttons act on ticked rows that are shown.
+            </p>
+          )}
           <ul className="mt-2 max-h-[28rem] overflow-auto space-y-1 text-[10px]">
-            {rows.map((r) => (
+            {shown.map((r) => (
               <li key={r.id}>
                 <label className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50 cursor-pointer">
                   <input

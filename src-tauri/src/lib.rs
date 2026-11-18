@@ -6375,6 +6375,154 @@ fn write_cover_list(dest_path: String, text: String) -> Result<(), String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SavePublishedItem {
+    pub id: i64,
+    /// "ok", or the error.
+    pub status: String,
+    pub written: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavePublishedCovers {
+    pub saved: usize,
+    pub results: Vec<SavePublishedItem>,
+    /// Where the replaced local covers were moved, for this run.
+    pub attic: String,
+}
+
+/// "Blossom is the right one": for each release, download its published cover
+/// and make it the cover on disk — the batch form of the per-release save to
+/// disk, with two differences. The download must hash to the SHA-256 its URL
+/// names (a hash-addressed URL is required), and every `cover.*` it replaces
+/// is MOVED, not deleted, into `<app data>/cover-attic/<run>/` with a line in
+/// `cover-attic/log.tsv` (release id, original path, kept as, written).
+///
+/// Nothing is published or marked stale: afterwards the file on disk is the
+/// published image, so the release is already in step.
+/// Emits `cover-local:started` / `cover-local:progress`.
+#[tauri::command]
+async fn save_published_covers_to_disk(
+    app: tauri::AppHandle,
+    release_ids: Vec<i64>,
+) -> Result<SavePublishedCovers, String> {
+    let attic_root = app_data_dir(&app)?.join(if cfg!(debug_assertions) {
+        "cover-attic-dev"
+    } else {
+        "cover-attic"
+    });
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let attic = attic_root.join(format!("run-{stamp}"));
+    let log_path = attic_root.join("log.tsv");
+    let http = cover_http_client()?;
+
+    let total = release_ids.len();
+    let _ = app.emit("cover-local:started", total);
+    let mut out = SavePublishedCovers {
+        saved: 0,
+        results: Vec::new(),
+        attic: attic.to_string_lossy().into_owned(),
+    };
+    for (i, id) in release_ids.into_iter().enumerate() {
+        let row: Option<(String, Option<String>, Option<String>)> = open(&app)?
+            .query_row(
+                "SELECT artist || ' — ' || title, file_path, cover_art_url FROM releases WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let name = row.as_ref().map(|r| r.0.clone()).unwrap_or_else(|| format!("release {id}"));
+        let _ = app.emit(
+            "cover-local:progress",
+            ImportProgress { current: i + 1, total, current_dir: name },
+        );
+        let result: Result<String, String> = async {
+            let (_, folder, url) = row.ok_or("release not found")?;
+            let url = url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).ok_or("no cover URL")?;
+            let want = blossom::sha256_in_url(&url).ok_or("cover URL has no SHA-256 to check against")?;
+            let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty()).ok_or("release has no folder")?;
+            let dir = PathBuf::from(&folder);
+            let dir = if dir.is_dir() { dir } else { dir.parent().map(Path::to_path_buf).ok_or("no folder")? };
+            if !dir.is_dir() {
+                return Err(format!("folder not found: {}", dir.display()));
+            }
+            let response = http
+                .get(&url)
+                .timeout(Duration::from_secs(60))
+                .send()
+                .await
+                .map_err(|e| format!("fetch {url}: {e}"))?;
+            if !response.status().is_success() {
+                return Err(format!("fetch {url}: {}", response.status()));
+            }
+            let ct = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            let body = response.bytes().await.map_err(|e| format!("read {url}: {e}"))?;
+            if blossom::sha256_hex(&body) != want {
+                return Err("download does not match the hash in its URL; nothing changed".into());
+            }
+            let ext = ext_for_content_type(ct.as_deref(), &url);
+            let dest = dir.join(format!("cover.{ext}"));
+
+            // Keep every cover.* this replaces (the destination included).
+            let mut log = String::new();
+            for p in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.filter_map(|e| e.ok()).map(|e| e.path()) {
+                let is_cover = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.eq_ignore_ascii_case("cover"));
+                if !(p.is_file() && is_cover && is_image_ext(&p)) {
+                    continue;
+                }
+                let kept_dir = attic.join(id.to_string());
+                std::fs::create_dir_all(&kept_dir).map_err(|e| format!("attic: {e}"))?;
+                let kept = kept_dir.join(p.file_name().unwrap_or_default());
+                if std::fs::rename(&p, &kept).is_err() {
+                    std::fs::copy(&p, &kept).map_err(|e| format!("keep {}: {e}", p.display()))?;
+                    std::fs::remove_file(&p).map_err(|e| format!("remove {}: {e}", p.display()))?;
+                }
+                log.push_str(&format!("{stamp}\t{id}\t{}\t{}\t{}\n", p.display(), kept.display(), dest.display()));
+            }
+            std::fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
+            if !log.is_empty() {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                    .map_err(|e| format!("log: {e}"))?;
+                let _ = f.write_all(log.as_bytes());
+            }
+            let dest_s = dest.to_string_lossy().into_owned();
+            open(&app)?
+                .execute(
+                    "UPDATE releases SET cover_art_path = ?1, updated_at = strftime('%s','now') WHERE id = ?2",
+                    params![dest_s, id],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(dest_s)
+        }
+        .await;
+        match result {
+            Ok(written) => {
+                out.saved += 1;
+                out.results.push(SavePublishedItem { id, status: "ok".into(), written: Some(written) });
+            }
+            Err(e) => out.results.push(SavePublishedItem { id, status: e, written: None }),
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalCoverUploadItem {
     pub id: i64,
     /// "ok", or the error.
@@ -12930,6 +13078,7 @@ pub fn run() {
             upload_cover_to_blossom,
             check_local_covers,
             write_cover_list,
+            save_published_covers_to_disk,
             upload_local_covers,
             mirror_covers_to_blossom,
             migrate_label_art_to_blossom,
