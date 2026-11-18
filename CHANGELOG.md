@@ -21,6 +21,24 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.7.6 — 2026-11-18
+
+### Added
+- **Local covers vs Blossom checks every published release.** Besides the
+  covers that differ from Blossom, it now lists the ones it couldn't compare
+  before: **published from elsewhere** (not on the primary server; upload the
+  local file), **published with no file on disk** (sized and flagged; fixed
+  by Reconcile published covers), and **no cover** (upload when a file is on
+  disk that was never published).
+- **Cover quality survey** in the same check: local covers with a long side
+  under 400 px (worth a better source), over 600 px, PNG, or more than 2% off
+  square, with filter chips. Read from each file's header; nothing changes.
+- **Export list** writes the result as a text file for ncover: one line per
+  release with the folder, the exact cover file, both sizes, format, what
+  was found, and the action each needs (`resource`, `review`,
+  `ncover:square`, `ncover:cap`, `ncover:convert`, `ndisc:reconcile`,
+  `ndisc:upload`).
+
 ## 0.7.5 — 2026-11-18
 
 ### Added
