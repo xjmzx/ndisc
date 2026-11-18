@@ -5946,6 +5946,48 @@ pub struct LocalCoverItem {
 /// the check so a published image over it, or a local one, stands out. Not a
 /// setting yet (docs/backlog.md).
 const LIBRARY_COVER_PX: u32 = 600;
+/// Below this long side a cover is flagged low resolution: worth finding a
+/// better source, not reprocessing.
+const COVER_LOW_PX: u32 = 400;
+/// How far off square (short side short of the long, as a fraction of the
+/// long) a cover may be before it is flagged.
+const COVER_SQUARE_TOLERANCE: f64 = 0.02;
+
+/// A local cover file that is fine to publish but not in the shape the
+/// library keeps: too small, over the publishing size, PNG, or not square.
+/// Read from the file's header only; nothing is decoded or changed.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverQualityItem {
+    pub id: i64,
+    pub artist: String,
+    pub title: String,
+    pub folder: Option<String>,
+    pub local_path: String,
+    pub local_bytes: u64,
+    pub dims: Option<(u32, u32)>,
+    /// "jpeg", "png" or "other", from the file's first bytes.
+    pub format: String,
+    /// Long side under COVER_LOW_PX.
+    pub low_res: bool,
+    /// Long side over LIBRARY_COVER_PX.
+    pub over_size: bool,
+    pub png: bool,
+    /// How far off square, in percent (0 for square); flagged over the
+    /// tolerance.
+    pub off_square_pct: f64,
+    pub not_square: bool,
+}
+
+fn image_format(b: &[u8]) -> &'static str {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "png"
+    } else if b.starts_with(&[0xff, 0xd8]) {
+        "jpeg"
+    } else {
+        "other"
+    }
+}
 
 /// A published release whose cover is not on the primary Blossom server, but
 /// whose cover file is on disk. The fix is to upload the local file.
@@ -6018,6 +6060,11 @@ pub struct LocalCoverCheck {
     pub elsewhere: Vec<ElsewhereCoverItem>,
     pub no_local: Vec<NoLocalCoverItem>,
     pub no_cover: Vec<NoCoverItem>,
+    /// Every published release's local cover that is low resolution, over
+    /// the publishing size, PNG or not square — whatever its Blossom state.
+    pub quality: Vec<CoverQualityItem>,
+    pub low_px: u32,
+    pub square_tolerance_pct: f64,
     /// The primary server compared against; None when no server is set, in
     /// which case "elsewhere" means a URL with no hash in it.
     pub primary: Option<String>,
@@ -6097,7 +6144,7 @@ async fn check_local_covers(
 
     // Hashing ~2,000 files is disk work; keep it off the async runtime.
     let hash_app = app.clone();
-    type Hashed = (String, u64, Option<(u32, u32)>, bool);
+    type Hashed = (String, u64, Option<(u32, u32)>, bool, &'static str);
     type Row = (i64, String, String, Option<String>, Option<String>, Option<Hashed>, Option<String>);
     let hashed: Vec<Row> = tauri::async_runtime::spawn_blocking(move || {
         rows.into_iter()
@@ -6125,6 +6172,7 @@ async fn check_local_covers(
                             b.len() as u64,
                             blossom::image_dims(&b[..b.len().min(256 * 1024)]),
                             changed,
+                            image_format(&b),
                         )
                     })
                 });
@@ -6143,6 +6191,9 @@ async fn check_local_covers(
         elsewhere: Vec::new(),
         no_local: Vec::new(),
         no_cover: Vec::new(),
+        quality: Vec::new(),
+        low_px: COVER_LOW_PX,
+        square_tolerance_pct: COVER_SQUARE_TOLERANCE * 100.0,
         primary: primary.clone(),
         library_px: LIBRARY_COVER_PX,
         warnings: Vec::new(),
@@ -6158,7 +6209,40 @@ async fn check_local_covers(
             });
             continue;
         };
-        let Some((local_sha, local_bytes, local_dims, changed_since_publish)) = local else {
+        if let (Some(p), Some((_, bytes, dims, _, format))) = (&path, &local) {
+            let (low_res, over_size, off) = match dims {
+                Some((w, h)) => {
+                    let long = (*w).max(*h);
+                    let short = (*w).min(*h);
+                    (
+                        long < COVER_LOW_PX,
+                        long > LIBRARY_COVER_PX,
+                        if long == 0 { 0.0 } else { (long - short) as f64 / long as f64 },
+                    )
+                }
+                None => (false, false, 0.0),
+            };
+            let png = *format == "png";
+            let not_square = off > COVER_SQUARE_TOLERANCE;
+            if low_res || over_size || png || not_square || dims.is_none() {
+                result.quality.push(CoverQualityItem {
+                    id,
+                    artist: artist.clone(),
+                    title: title.clone(),
+                    folder: folder.clone(),
+                    local_path: p.clone(),
+                    local_bytes: *bytes,
+                    dims: *dims,
+                    format: format.to_string(),
+                    low_res,
+                    over_size,
+                    png,
+                    off_square_pct: (off * 1000.0).round() / 10.0,
+                    not_square,
+                });
+            }
+        }
+        let Some((local_sha, local_bytes, local_dims, changed_since_publish, _)) = local else {
             result.no_local.push(NoLocalCoverItem {
                 id,
                 folder: folder.clone(),

@@ -60,13 +60,31 @@ setting in ndisc, or is only shown for the operator to judge.
 ## Local covers vs Blossom: Export list (planned 2026-11-13)
 
 **Built 2026-11-18, unreleased.** **Export list** on the check's result
-writes `ndisc-covers-<date>.txt`: no header, one line per listed release,
-tab-separated `folder`, `artist — title`, disk `WxH`, published `WxH` (`-`
-when unknown), kind (`shrunk`, `published-larger`, `different-picture`,
-`elsewhere:<host>`, `no-local-file`, `never-published`, `no-cover`). A
-release with no folder has `artist — title` as its first column. On the real
-catalogue that day the 46 mismatches all had a folder holding the cover.
+writes `ndisc-covers-<date>.txt`: no header, one line per release (a release
+flagged twice is still one line), tab-separated:
+
+`folder` · `cover file` · `artist — title` · disk `WxH` · published `WxH` ·
+format · kinds · actions
+
+`-` marks an empty field. A release with no folder has `artist — title` as its
+first column. **cover file** is the exact image the flags are about, so ncover
+touches it and not the rest of the folder (inlays, backs). **Kinds**
+(comma-separated): `shrunk`, `published-larger`, `different-picture`,
+`elsewhere:<host>`, `no-local-file`, `never-published`, `no-cover`, and from
+the quality survey `low-res<400`, `over-600`, `png`, `off-square-N%`,
+`unreadable`. **Actions** (comma-separated, a fixed vocabulary in run order,
+`COVER_ACTIONS` in `src/lib/tauri.ts`): `resource`, `review`, `ncover:square`,
+`ncover:cap`, `ncover:convert`, `ndisc:reconcile`, `ndisc:upload`. A cover
+marked `resource` gets no ncover action, since re-sourcing replaces it.
 ncover's `From a list…` is still to build (ncover's backlog).
+
+**Quality survey, built 2026-11-18, unreleased.** The same check reads every
+published release's local cover header and lists those under 400 px long
+side, over 600 px, PNG, or more than 2% off square (fixed numbers; a range
+setting is later). Real catalogue that day: 382 covers — 112 low-res, 2 over
+600, 29 PNG, 254 not square. As actions: 247 `ncover:square`, 112
+`resource`, 23 `ncover:convert`, 2 `ncover:cap`. Nothing is changed; fixes are
+ncover's.
 
 **Why.** It is the first step of the cover review loop shared with ncover, set
 out in [ncover's `docs/backlog.md`](https://github.com/xjmzx/ncover/blob/main/docs/backlog.md).

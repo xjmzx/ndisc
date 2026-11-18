@@ -54,6 +54,7 @@ import {
   mirrorCoversToBlossom,
   checkLocalCovers,
   coverListText,
+  qualityKinds,
   writeCoverList,
   tidyArtworkNames,
   assignReleaseFolders,
@@ -2356,6 +2357,12 @@ export function ReleaseList({
                     <span className="font-mono">{opSummary.data.noLocal.length}</span>
                   </span>
                 )}
+                {opSummary.data.quality.length > 0 && (
+                  <span className="text-warn">
+                    quality{" "}
+                    <span className="font-mono">{opSummary.data.quality.length}</span>
+                  </span>
+                )}
                 {opSummary.data.noCover.length > 0 && (
                   <span className="text-alert">
                     no cover{" "}
@@ -3736,8 +3743,9 @@ function LocalCoverDetails({
       return next;
     });
 
-  const listCount =
-    check.differing.length + check.elsewhere.length + check.noLocal.length + check.noCover.length;
+  const listText = useMemo(() => coverListText(check), [check]);
+  const listCount = listText ? listText.split("\n").length - 1 : 0;
+  const [qFilter, setQFilter] = useState<"all" | "low" | "over" | "png" | "shape">("all");
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   async function exportList() {
     setExportMsg(null);
@@ -3749,7 +3757,7 @@ function LocalCoverDetails({
         filters: [{ name: "Text", extensions: ["txt"] }],
       });
       if (typeof dest !== "string") return;
-      await writeCoverList(dest, coverListText(check));
+      await writeCoverList(dest, listText);
       setExportMsg(`${listCount.toLocaleString()} line${listCount === 1 ? "" : "s"} written to ${dest}`);
     } catch (e) {
       setExportMsg(`error: ${e}`);
@@ -4032,6 +4040,80 @@ function LocalCoverDetails({
                 </span>
               </li>
             ))}
+          </ul>
+        </details>
+      )}
+      {check.quality.length > 0 && (
+        <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+          <summary className="cursor-pointer text-xs text-warn">
+            {check.quality.length} local cover{check.quality.length === 1 ? "" : "s"} outside
+            the library’s shape · {check.quality.filter((r) => r.lowRes).length} low-res ·{" "}
+            {check.quality.filter((r) => r.overSize).length} over {check.libraryPx} px ·{" "}
+            {check.quality.filter((r) => r.png).length} PNG ·{" "}
+            {check.quality.filter((r) => r.notSquare).length} not square
+          </summary>
+          <p className="mt-1 text-[10px] text-muted">
+            Read from each file’s header; nothing is changed. Low-res is a long side
+            under {check.lowPx} px (worth a better source); over {check.libraryPx} px
+            and PNG aren’t optimised for publishing; not square is more than{" "}
+            {check.squareTolerancePct}% off. Resizing, converting and cropping are
+            ncover’s job: Export list includes these.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px]">
+            {(
+              [
+                ["all", "All", check.quality.length],
+                ["low", "Low-res", check.quality.filter((r) => r.lowRes).length],
+                ["over", `Over ${check.libraryPx}`, check.quality.filter((r) => r.overSize).length],
+                ["png", "PNG", check.quality.filter((r) => r.png).length],
+                ["shape", "Not square", check.quality.filter((r) => r.notSquare).length],
+              ] as const
+            ).map(([k, label, n]) => (
+              <button
+                key={k}
+                onClick={() => setQFilter(k)}
+                className={cn(
+                  "px-2 py-0.5 rounded",
+                  qFilter === k ? "bg-accent/15 text-accent" : "bg-surface text-muted hover:text-fg",
+                )}
+              >
+                {label} <span className="font-mono">{n}</span>
+              </button>
+            ))}
+          </div>
+          <ul className="mt-2 max-h-[28rem] overflow-auto space-y-1 text-[10px]">
+            {check.quality
+              .filter((r) =>
+                qFilter === "low"
+                  ? r.lowRes
+                  : qFilter === "over"
+                    ? r.overSize
+                    : qFilter === "png"
+                      ? r.png
+                      : qFilter === "shape"
+                        ? r.notSquare
+                        : true,
+              )
+              .map((r) => (
+                <li key={r.id} className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50">
+                  <img
+                    src={convertFileSrc(r.localPath)}
+                    loading="lazy"
+                    alt=""
+                    className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                    title={r.localPath}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-fg truncate">
+                      {r.artist} <span className="text-muted">·</span> {r.title}
+                    </span>
+                    <span className="block text-muted font-mono">
+                      {dims(r.dims)} · {r.format} · {(r.localBytes / 1024).toFixed(0)} KB ·{" "}
+                      {qualityKinds(r, check).join(" · ")}
+                    </span>
+                  </span>
+                </li>
+              ))}
           </ul>
         </details>
       )}

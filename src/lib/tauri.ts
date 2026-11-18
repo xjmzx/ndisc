@@ -1160,6 +1160,23 @@ export interface NoCoverItem {
   localPath: string | null;
 }
 
+// A local cover outside the shape the library keeps. Header-only read.
+export interface CoverQualityItem {
+  id: number;
+  artist: string;
+  title: string;
+  folder: string | null;
+  localPath: string;
+  localBytes: number;
+  dims: [number, number] | null;
+  format: "jpeg" | "png" | "other";
+  lowRes: boolean;
+  overSize: boolean;
+  png: boolean;
+  offSquarePct: number;
+  notSquare: boolean;
+}
+
 export interface LocalCoverCheck {
   published: number;
   considered: number;
@@ -1168,6 +1185,10 @@ export interface LocalCoverCheck {
   elsewhere: ElsewhereCoverItem[];
   noLocal: NoLocalCoverItem[];
   noCover: NoCoverItem[];
+  quality: CoverQualityItem[];
+  // Long side below which a cover is low resolution.
+  lowPx: number;
+  squareTolerancePct: number;
   primary: string | null;
   // The long side the library's cover files are kept to.
   libraryPx: number;
@@ -1183,29 +1204,128 @@ export async function checkLocalCovers(servers: string[]): Promise<LocalCoverChe
   return invoke<LocalCoverCheck>("check_local_covers", { servers });
 }
 
-// The cover list for ncover's "From a list…" scope: one line per release,
-// tab-separated — folder (or "artist — title" when there is none), artist —
-// title, disk WxH, published WxH, kind. No header line, so every line is a
-// release. Built from a check already in hand; nothing is re-read.
+// The cover list for ncover's "From a list…" scope: one line per release, no
+// header, tab-separated:
+//   folder · cover file · artist — title · disk WxH · published WxH · format ·
+//   kinds · actions
+// `folder` is the release folder (or "artist — title" when there is none);
+// `cover file` is the exact image the flags are about ("-" when there is
+// none), so ncover touches that file and not the rest of the folder. Kinds
+// and actions are comma-separated; "-" marks an empty field. Built from a
+// check already in hand; nothing is re-read.
+//
+// Actions, a fixed vocabulary (COVER_ACTIONS), in the order they should run:
+//   resource         find a better source by hand (low-res, no cover)
+//   review           look before doing anything (different picture, …)
+//   ncover:square    crop to square
+//   ncover:cap       shrink to the publishing size
+//   ncover:convert   PNG → JPEG
+//   ndisc:reconcile  download the published cover into the folder
+//   ndisc:upload     upload the local file and republish
+// A cover marked `resource` gets no ncover action: re-sourcing replaces it,
+// so processing it first is wasted work.
+export const COVER_ACTIONS = [
+  "resource",
+  "review",
+  "ncover:square",
+  "ncover:cap",
+  "ncover:convert",
+  "ndisc:reconcile",
+  "ndisc:upload",
+] as const;
+
+const KIND_ACTION: [RegExp, (typeof COVER_ACTIONS)[number]][] = [
+  [/^shrunk$/, "ndisc:upload"],
+  [/^published-larger$/, "review"],
+  [/^different-picture$/, "review"],
+  [/^elsewhere:/, "ndisc:upload"],
+  [/^no-local-file$/, "ndisc:reconcile"],
+  [/^never-published$/, "ndisc:upload"],
+  [/^no-cover$/, "resource"],
+  [/^unreadable$/, "review"],
+  [/^low-res/, "resource"],
+  [/^over-/, "ncover:cap"],
+  [/^png$/, "ncover:convert"],
+  [/^off-square-/, "ncover:square"],
+];
+
+export function coverActions(kinds: string[]): string[] {
+  const set = new Set<string>();
+  for (const k of kinds) for (const [re, a] of KIND_ACTION) if (re.test(k)) set.add(a);
+  if (set.has("resource")) for (const a of [...set]) if (a.startsWith("ncover:")) set.delete(a);
+  return COVER_ACTIONS.filter((a) => set.has(a));
+}
+
 export function coverListText(check: LocalCoverCheck): string {
   const dims = (d: [number, number] | null | undefined) => (d ? `${d[0]}x${d[1]}` : "-");
   const clean = (v: string) => v.replace(/[\t\r\n]+/g, " ").trim();
-  const lines: string[] = [];
+  type Line = {
+    folder: string | null;
+    file: string | null;
+    name: string;
+    disk: [number, number] | null | undefined;
+    published: [number, number] | null | undefined;
+    format: string;
+    kinds: string[];
+  };
+  const byId = new Map<number, Line>();
   const add = (
-    r: { folder: string | null; artist: string; title: string },
+    r: { id: number; folder: string | null; artist: string; title: string },
+    file: string | null,
     disk: [number, number] | null | undefined,
     published: [number, number] | null | undefined,
     kind: string,
+    format?: string,
   ) => {
-    const name = clean(`${r.artist} — ${r.title}`);
-    lines.push([r.folder ? clean(r.folder) : name, name, dims(disk), dims(published), kind].join("\t"));
+    const line = byId.get(r.id) ?? {
+      folder: r.folder,
+      file: null,
+      name: clean(`${r.artist} — ${r.title}`),
+      disk,
+      published,
+      format: "-",
+      kinds: [],
+    };
+    line.file ??= file;
+    line.disk ??= disk;
+    line.published ??= published;
+    if (format) line.format = format;
+    line.kinds.push(kind);
+    byId.set(r.id, line);
   };
   for (const r of check.differing)
-    add(r, r.localDims, r.publishedDims, r.shrunk ? "shrunk" : r.publishedLarger ? "published-larger" : "different-picture");
-  for (const r of check.elsewhere) add(r, r.localDims, r.publishedDims, `elsewhere:${r.host}`);
-  for (const r of check.noLocal) add(r, null, r.publishedDims, "no-local-file");
-  for (const r of check.noCover) add(r, null, null, r.localPath ? "never-published" : "no-cover");
+    add(r, r.localPath, r.localDims, r.publishedDims, r.shrunk ? "shrunk" : r.publishedLarger ? "published-larger" : "different-picture");
+  for (const r of check.elsewhere) add(r, r.localPath, r.localDims, r.publishedDims, `elsewhere:${r.host}`);
+  for (const r of check.noLocal) add(r, null, null, r.publishedDims, "no-local-file");
+  for (const r of check.noCover) add(r, r.localPath, null, null, r.localPath ? "never-published" : "no-cover");
+  for (const r of check.quality) {
+    const kinds = qualityKinds(r, check);
+    kinds.forEach((k, n) => add(r, r.localPath, r.dims, null, k, n === 0 ? r.format : undefined));
+  }
+  const lines = [...byId.values()].map((l) =>
+    [
+      l.folder ? clean(l.folder) : l.name,
+      l.file ? clean(l.file) : "-",
+      l.name,
+      dims(l.disk),
+      dims(l.published),
+      l.format,
+      l.kinds.join(","),
+      coverActions(l.kinds).join(",") || "-",
+    ].join("\t"),
+  );
   return lines.length ? lines.join("\n") + "\n" : "";
+}
+
+// The flags of one quality item, as export kinds.
+export function qualityKinds(r: CoverQualityItem, check: LocalCoverCheck): string[] {
+  const k: string[] = [];
+  if (!r.dims) k.push("unreadable");
+  if (r.lowRes) k.push(`low-res<${check.lowPx}`);
+  if (r.overSize) k.push(`over-${check.libraryPx}`);
+  if (r.png) k.push("png");
+  if (r.notSquare) k.push(`off-square-${r.offSquarePct}%`);
+  return k;
 }
 
 export async function writeCoverList(destPath: string, text: string): Promise<void> {
