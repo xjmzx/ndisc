@@ -29,6 +29,8 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
+import { ViewToggle, type ReleaseLayout } from "./ViewToggle";
+import { CoverGrid } from "./CoverGrid";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import {
   auditRelays,
@@ -156,6 +158,10 @@ interface Props {
   blossomServers: string[];
   // Label-art URLs, so "Mirror covers" copies those along with the covers.
   labelImageUrls: string[];
+  // Home layout: the three cover grids take the whole width (App hides the
+  // editor column); "list" is the list + editor.
+  layout: ReleaseLayout;
+  onLayoutChange: (l: ReleaseLayout) => void;
 }
 
 type MediumFilter = "" | "physical" | "digital";
@@ -185,6 +191,8 @@ export function ReleaseList({
   relays,
   blossomServers,
   labelImageUrls,
+  layout,
+  onLayoutChange,
 }: Props) {
   const [query, setQuery] = useState("");
   const [medium, setMedium] = useState<MediumFilter>("");
@@ -230,6 +238,19 @@ export function ReleaseList({
 
   // Scroll container, for the index-rail jump-to-letter chevrons.
   const listRef = useRef<HTMLUListElement>(null);
+  // Coming back from a cover grid with a tile picked: bring that row into
+  // view, since the list remounts at the top.
+  useEffect(() => {
+    if (layout !== "list" || selected?.id == null) return;
+    const id = selected.id;
+    requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector(`[data-release-id="${id}"]`)
+        ?.scrollIntoView({ block: "center" });
+    });
+    // Only on entering the list layout, not on every selection in it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout]);
 
   // Jump the list to the next (dir=1) / previous (dir=-1) index character —
   // the nearest first-of-bucket row below / above the current scroll top.
@@ -1504,6 +1525,7 @@ export function ReleaseList({
   return (
     <Section
       title=""
+      icon={<ViewToggle value={layout} onChange={onLayoutChange} />}
       bodyClassName="lg:min-h-0"
       right={
         <span className="text-xs text-muted">
@@ -2680,6 +2702,20 @@ export function ReleaseList({
           rest of the DB — so it shows as many rows as the monitor allows.
           Below lg the layout stacks and scrolls as a page, so we fall back to
           the viewport-minus-chrome height. */}
+      {layout !== "list" ? (
+        <div className="relative mt-1 h-[calc(100vh-220px)] lg:h-auto lg:flex-1 lg:min-h-0">
+          {/* A tile opens the release in the editor: back to the list layout
+              with it selected. */}
+          <CoverGrid
+            items={items}
+            layout={layout}
+            onSelect={(r) => {
+              onSelect(r);
+              onLayoutChange("list");
+            }}
+          />
+        </div>
+      ) : (
       <div className="relative mt-1 h-[calc(100vh-220px)] lg:h-auto lg:flex-1
                       lg:min-h-0">
         {/* Jump to previous / next index character. Pinned over the rail
@@ -2737,6 +2773,7 @@ export function ReleaseList({
               key={r.id}
               onClick={() => onSelect(r)}
               data-bucket-start={marker ? "" : undefined}
+              data-release-id={r.id}
               className={cn(
                 "cursor-pointer hover:bg-surface/40 text-xs",
                 "flex items-stretch",
@@ -3015,6 +3052,7 @@ export function ReleaseList({
         })}
       </ul>
       </div>
+      )}
     </Section>
   );
 }

@@ -49,6 +49,11 @@ import {
   type ProfileMeta,
 } from "./components/NostrPanel";
 import { ReactionsProvider } from "./hooks/useReactions";
+import {
+  LAYOUT_STORAGE_KEY,
+  readLayout,
+  type ReleaseLayout,
+} from "./components/ViewToggle";
 import type { FeedbackTone } from "./components/FeedbackArea";
 import {
   clearKeypair,
@@ -321,6 +326,18 @@ export default function App() {
   const [view, setView] = useState<
     "library" | "stats" | "table" | "labels" | "current"
   >("library");
+  // Home layout: the list + editor, or one of three full-width cover grids.
+  // Remembered between launches.
+  const [layout, setLayoutState] = useState<ReleaseLayout>(readLayout);
+  const setLayout = (l: ReleaseLayout) => {
+    setLayoutState(l);
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEY, l);
+    } catch {
+      /* not remembered, still applied */
+    }
+  };
+  const gridLayout = layout !== "list";
   // Relays & servers window — opened from the publishing strip on Home or the
   // release list's ⋮ menu.
   const [relaysOpen, setRelaysOpen] = useState(false);
@@ -638,8 +655,14 @@ export default function App() {
       </header>
 
       {view === "library" ? (
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]
-                        gap-2 items-stretch lg:flex-1 lg:min-h-0">
+        <div
+          className={cn(
+            "grid grid-cols-1 gap-2 items-stretch lg:flex-1 lg:min-h-0",
+            // A cover grid takes the whole width; the editor column returns
+            // with the list layout.
+            !gridLayout && "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]",
+          )}
+        >
           <div className="flex flex-col gap-2 min-w-0 lg:min-h-0">
             {lib.active && <LibraryFlowPanel lib={lib} />}
             {enrich.active && <DiscogsEnrichPanel enrich={enrich} />}
@@ -651,8 +674,11 @@ export default function App() {
               relays={relays}
               blossomServers={blossomServers}
               labelImageUrls={labelImageUrls}
+              layout={layout}
+              onLayoutChange={setLayout}
             />
           </div>
+          {!gridLayout && (
           <div
             className={cn(
               "flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]",
@@ -711,6 +737,7 @@ export default function App() {
               />
             </div>
           </div>
+          )}
         </div>
       ) : view === "stats" ? (
         <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto [scrollbar-gutter:stable]">

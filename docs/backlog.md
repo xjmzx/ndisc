@@ -108,6 +108,13 @@ given the rule of **one keypair per discography or pseudonym** (otherwise the
 
 ### Cover grid view
 
+**Built 2026-11-18.** A four-icon toggle (glmps's ViewToggle) in the release
+list header: Grid, Small grid, Cover wall, and ≡ for the list + editor. Grid
+modes take the full width, keep search and filters, page 60 at a time
+(nview's sentinel), load the local cover first with the published URL as the
+fallback, and a tile opens the release in the list. The choice is remembered.
+The note below is the original idea.
+
 nview and glmps show the discography as a grid of covers; ndisc only has the
 list. Wanted: the same grid as another way to look at Home, using the same
 filters and search, with a click opening the release as the list does.
@@ -215,7 +222,7 @@ structural change until last, so nothing built earlier has to be redone.
    database. The user's answers on Current's direction are under
    *Current feed: revisit*. Its four images moved to Blossom in 0.7.4
    (done). The note-format work is larger and comes after the grid.
-3. **Cover grid view.** Medium, front end only, no schema or contract change;
+3. ~~**Cover grid view.**~~ Done 2026-11-18. Medium, front end only, no schema or contract change;
    ports nview's paged grid. Do it before the covers checks, because it makes
    cover problems visible at a glance.
 4. **Local covers vs Blossom: report, then Export list.** Medium; already
