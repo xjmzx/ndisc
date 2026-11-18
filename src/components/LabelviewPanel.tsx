@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownAZ, ArrowDownWideNarrow, Check, ImageOff, Link2Off, List, Search, X } from "lucide-react";
+import { ArrowDownAZ, ArrowDownWideNarrow, Check, ImageOff, ImageUp, Link2Off, List, Search, X } from "lucide-react";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
 import { Section } from "./Section";
-import { listDistinctLabels, type LabelCount } from "../lib/tauri";
+import { listDistinctLabels, uploadFeedImage, type LabelCount } from "../lib/tauri";
 import { genreDisplay } from "../lib/genre";
 import type { LabelEntry } from "./LabelPanel";
 
@@ -11,6 +12,8 @@ interface Props {
   setLabels: (next: LabelEntry[]) => void;
   reloadKey: number;
   onPick: (name: string, existingUrl: string, existingSite: string) => void;
+  // Ordered Blossom servers (first = primary), for the bulk image's upload.
+  blossomServers: string[];
   // When the right column's detail card is collapsed this panel flexes to
   // fill the freed height — so let the label list grow to fill it (≈24+ rows)
   // instead of its compact fixed 8-row footprint. Responsive to actual height.
@@ -24,6 +27,29 @@ interface Props {
 const MAX_ROWS = 5000;
 
 type Mode = "library" | "orphans";
+
+// Release-count filter. "N+" is at least N; "=N" exactly N; "1-2" the long
+// tail. Not remembered: it's a working filter, like the A–Z letter.
+type CountFilter = "all" | "100+" | "50+" | "25+" | "10+" | "5+" | "3+" | "=2" | "=1" | "1-2";
+const COUNT_FILTERS: [CountFilter, string][] = [
+  ["all", "any count"],
+  ["100+", "100+ releases"],
+  ["50+", "50+ releases"],
+  ["25+", "25+ releases"],
+  ["10+", "10+ releases"],
+  ["5+", "5+ releases"],
+  ["3+", "3+ releases"],
+  ["=2", "2 releases"],
+  ["=1", "1 release"],
+  ["1-2", "1–2 releases"],
+];
+
+function passCount(f: CountFilter, n: number): boolean {
+  if (f === "all") return true;
+  if (f === "1-2") return n >= 1 && n <= 2;
+  if (f.startsWith("=")) return n === Number(f.slice(1));
+  return n >= Number(f.slice(0, -1));
+}
 
 function normaliseName(s: string): string {
   return s.trim().toLowerCase();
@@ -64,8 +90,13 @@ export function LabelviewPanel({
   setLabels,
   reloadKey,
   onPick,
+  blossomServers,
   fill = false,
 }: Props) {
+  const [countF, setCountF] = useState<CountFilter>("all");
+  const [bulkUrl, setBulkUrl] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
   const [distinct, setDistinct] = useState<LabelCount[]>([]);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("library");
@@ -146,12 +177,16 @@ export function LabelviewPanel({
   // Optional "no art" filter — keeps only names whose entry is missing or
   // has an empty imageUrl. Useful for finding labels still awaiting art.
   const artFiltered = useMemo(() => {
-    if (!noArtOnly) return source;
-    return source.filter((n) => {
+    let out = source;
+    // Orphans have no releases, so the count filter is a library filter.
+    if (mode === "library" && countF !== "all")
+      out = out.filter((n) => passCount(countF, countByName.get(normaliseName(n)) ?? 0));
+    if (!noArtOnly) return out;
+    return out.filter((n) => {
       const e = byName.get(normaliseName(n));
       return !e || !e.imageUrl;
     });
-  }, [source, noArtOnly, byName]);
+  }, [source, noArtOnly, byName, mode, countF, countByName]);
 
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -201,6 +236,57 @@ export function LabelviewPanel({
 
   function removeOrphan(entry: LabelEntry) {
     setLabels(labels.filter((l) => l !== entry));
+  }
+
+  // The labels the bulk image would go to: shown, in the library, with no
+  // image yet. Never one that already has art.
+  const bulkTargets =
+    mode === "library"
+      ? filtered.filter((n) => !byName.get(normaliseName(n))?.imageUrl)
+      : [];
+
+  async function pickAndUpload() {
+    setBulkMsg(null);
+    if (blossomServers.length === 0) {
+      setBulkMsg("No Blossom server is set (Nostr panel → Blossom servers).");
+      return;
+    }
+    const p = await openDialog({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp"] }],
+    });
+    if (typeof p !== "string") return;
+    setBulkBusy(true);
+    try {
+      setBulkUrl(await uploadFeedImage(p, blossomServers));
+    } catch (e) {
+      setBulkMsg(`upload failed: ${e}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function applyBulk() {
+    const url = bulkUrl.trim();
+    const n = bulkTargets.length;
+    if (!url || n === 0) return;
+    const yes = await ask(
+      `Set this image on ${n.toLocaleString()} label${n === 1 ? "" : "s"} with no artwork?\n\n${url}\n\n` +
+        "Labels that already have an image are left alone. Nothing is " +
+        "published until you publish the labels manifest.",
+      { title: "Set one image on the shown labels", kind: "info" },
+    );
+    if (!yes) return;
+    const targets = new Set(bulkTargets.map(normaliseName));
+    const next = labels.map((l) =>
+      targets.has(normaliseName(l.name)) && !l.imageUrl ? { ...l, imageUrl: url } : l,
+    );
+    const have = new Set(labels.map((l) => normaliseName(l.name)));
+    for (const name of bulkTargets)
+      if (!have.has(normaliseName(name))) next.push({ name, imageUrl: url });
+    setLabels(next);
+    setBulkMsg(`Image set on ${n.toLocaleString()} label${n === 1 ? "" : "s"}. Publish the labels manifest to send it.`);
   }
 
   const orphansToggle =
@@ -466,6 +552,24 @@ export function LabelviewPanel({
             </button>
           );
         })}
+        {mode === "library" && (
+          <select
+            value={countF}
+            onChange={(e) => setCountF(e.target.value as CountFilter)}
+            title="Show labels by how many releases they have"
+            aria-label="Filter by release count"
+            className={cn(
+              "ml-auto h-5 px-1 rounded bg-surface text-[10px] font-mono outline-none",
+              countF === "all" ? "text-fg/70" : "text-accent",
+            )}
+          >
+            {COUNT_FILTERS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+        )}
         {/* Back to the whole list, most releases first: clears the letter
             and the A–Z order in one click. */}
         <button
@@ -477,7 +581,8 @@ export function LabelviewPanel({
           aria-pressed={!letter && sort === "count"}
           title="All labels, most releases first"
           className={cn(
-            "ml-auto h-5 px-2 rounded flex items-center gap-1 transition-colors",
+            mode === "library" ? "h-5 px-2" : "ml-auto h-5 px-2",
+            "rounded flex items-center gap-1 transition-colors",
             !letter && sort === "count"
               ? "bg-surface text-accent"
               : "text-fg/70 hover:bg-surface hover:text-fg",
@@ -487,6 +592,49 @@ export function LabelviewPanel({
           by count
         </button>
       </div>
+      {mode === "library" && noArtOnly && (bulkTargets.length > 0 || bulkMsg) && (
+        <div className="shrink-0 mb-2 px-2 py-1.5 rounded-md bg-surface/40 flex flex-wrap items-center gap-2 text-[10px]">
+          {bulkTargets.length > 0 && (
+            <>
+              <span className="text-muted">
+                One image for these {bulkTargets.length.toLocaleString()}:
+              </span>
+              <input
+                type="text"
+                value={bulkUrl}
+                onChange={(e) => setBulkUrl(e.target.value)}
+                placeholder="image URL…"
+                spellCheck={false}
+                className="flex-1 min-w-[12rem] px-2 py-0.5 rounded bg-surface text-fg font-mono
+                           outline-none border border-transparent focus:border-accent/50
+                           placeholder:text-muted"
+              />
+              <button
+                type="button"
+                onClick={pickAndUpload}
+                disabled={bulkBusy}
+                title="Upload a local image to the primary Blossom server and use its address"
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-surface text-muted
+                           hover:text-fg disabled:opacity-40"
+              >
+                <ImageUp size={10} />
+                {bulkBusy ? "uploading…" : "Upload to Blossom"}
+              </button>
+              <button
+                type="button"
+                onClick={applyBulk}
+                disabled={!bulkUrl.trim() || bulkBusy}
+                className="px-2 py-0.5 rounded bg-mauve/15 text-mauve hover:bg-mauve
+                           hover:text-bg font-medium transition-colors disabled:opacity-40
+                           disabled:pointer-events-none"
+              >
+                Set on {bulkTargets.length.toLocaleString()}
+              </button>
+            </>
+          )}
+          {bulkMsg && <span className="w-full text-muted">{bulkMsg}</span>}
+        </div>
+      )}
       {/* Two columns, filled row by row. In A–Z order each letter starts on a
           heading across both columns. Compact mode keeps a fixed height;
           fill mode grows to the column. */}

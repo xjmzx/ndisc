@@ -753,6 +753,7 @@ export default function App() {
                 setLabels={setLabels}
                 reloadKey={reloadKey}
                 onPick={promptAddLabel}
+                blossomServers={blossomServers}
                 fill
               />
               <LabelPanel
