@@ -106,39 +106,13 @@ Open / Create database) or a column within one; how it maps to publishing,
 given the rule of **one keypair per discography or pseudonym** (otherwise the
 `disco-vault:<id>` addresses collide); and whether a release can belong to two.
 
-### Cover grid view
-
-**Built 2026-11-18.** A four-icon toggle (glmps's ViewToggle) in the release
-list header: Grid, Small grid, Cover wall, and ≡ for the list + editor. Grid
-modes take the full width, keep search and filters, page 60 at a time
-(nview's sentinel), load the local cover first with the published URL as the
-fallback, and a tile opens the release in the list. The choice is remembered.
-The note below is the original idea.
-
-nview and glmps show the discography as a grid of covers; ndisc only has the
-list. Wanted: the same grid as another way to look at Home, using the same
-filters and search, with a click opening the release as the list does.
-
-Looks feasible. nview's grid (`src/App.tsx`) already solves the hard part for
-a catalogue this size: it renders 60 covers at a time and adds more when a
-sentinel scrolls into view (IntersectionObserver), with `loading="lazy"` on
-each image. ndisc's `coverImageSrc` already prefers the published URL and
-falls back to the local file through the asset protocol. For the grid the
-order should probably flip to **local file first** (no network, and the
-library copies are kept at 600 px), published URL as the fallback. A grid is
-also a quick way to *see* missing or wrong covers, which ties it to the covers
-vs Blossom work above. Open: whether it's a toggle on Home or its own view
-button; tile size; what a release with no cover shows.
-
 ### Current feed: revisit
 
 The Current view (kind 31239 feed notes) works, but hasn't been looked at
 since it was built in June. Checked 2026-11-17: all four notes in the
 catalogue are live on relay.nfunc.xyz with the event ids ndisc stored, and no
 deletion touches them; they were not lost with relay.fizx.uk. (They looked
-unpublished in the **dev** build, which reads its own `-dev` database.) Their
-images are on `i.nostr.build` and still real (checked by size and content,
-since nostr.build answers 200 for any id).
+unpublished in the **dev** build, which reads its own `-dev` database.)
 
 **What Current is for (the user, 2026-11-17).** It was a first build of
 letting an ndisc user publish a Nostr note with a release from the
@@ -152,13 +126,7 @@ notes** or **long-form notes**. (Today's notes are kind 31239 under the frozen
 that has an image link should say so, e.g. a small image icon or count on
 the card.
 
-~~**Images on Blossom.**~~ **Done 2026-11-17 (0.7.4).** Hosting stays the
-user's choice: the editor takes a pasted link from any image host, and
-**Upload to Blossom** uploads a local file and adds its address. **Move N
-images to Blossom** moved the four nostr.build feed images (recorded in
-`feed_image_migrations`), and the four notes were republished; each live
-image verified by hash on blossom.nfunc.xyz. Drafts show an image icon with a
-count. Covers, label images and feed images are now all on Blossom; the only
+**Images on Blossom:** shipped in 0.7.4 (see CHANGELOG). The only
 nostr.build files left are ntree/nsmpl's 11 audio clips (the clip.v1 work).
 
 ### Current: image gallery and formatted text (recorded 2026-11-17)
@@ -173,8 +141,7 @@ disc). Displaying them needs no contract change; it's a glmps change
 (`src/pages/Current.tsx`, in both site forks) and optionally ndisc's card.
 *Labelling* each view (back, inlay, disc…) would be a contract addition,
 e.g. an optional second value on the tag, `["image", url, "back"]`, which
-readers that don't know it ignore. Images should go to Blossom (see *Current
-feed: revisit*).
+readers that don't know it ignore. Images go to Blossom (0.7.4).
 
 **Formatted text.** Nostr has no formatting of its own: an event's content is
 just a string, and what it means is up to the event kind. Regular notes
@@ -216,18 +183,12 @@ Reviewed together after 0.7.2. Each line says how big the work is and what it
 leans on. The order front-loads small, self-contained work and leaves the one
 structural change until last, so nothing built earlier has to be redone.
 
-1. ~~Release what's on `main` as 0.7.3.~~ Done 2026-11-17.
-2. ~~Current feed: confirm the cause.~~ Done 2026-11-17: the notes are live
-   on relay.nfunc.xyz; the "unpublished" view was the dev build's own
-   database. The user's answers on Current's direction are under
-   *Current feed: revisit*. Its four images moved to Blossom in 0.7.4
-   (done). The note-format work is larger and comes after the grid.
-3. ~~**Cover grid view.**~~ Done 2026-11-18. Medium, front end only, no schema or contract change;
-   ports nview's paged grid. Do it before the covers checks, because it makes
-   cover problems visible at a glance.
+1.–3. Done: 0.7.3 released; Current feed checked and its images moved to
+   Blossom (0.7.4); cover grid view (0.7.5). See the CHANGELOG.
 4. **Local covers vs Blossom: report, then Export list.** Medium; already
    planned. The Export list needs ncover's "From a list…" to be useful, so
-   the two land together.
+   the two land together. The grid's Cover wall already shows missing covers
+   at a glance.
 5. **Discogs collection through the API.** Medium; builds on 0.7.3's token
    step (the username is already in hand). Needs progress reporting and rate
    limiting at 60 requests a minute.
@@ -236,12 +197,16 @@ structural change until last, so nothing built earlier has to be redone.
 7. **More than one discography.** Large and structural: database or column,
    config, keys (one keypair per discography), publishing, and every view.
    Write a design doc first. Anything stored per user before this (genre
-   interests, view choices) should be kept where it can later become per
-   discography.
+   interests, view choices such as the grid layout, kept today under the one
+   `ndisc.homeLayout` localStorage key) should be kept where it can later
+   become per discography.
 8. **Bandcamp import.** No technical route today; stays research until
    Bandcamp offers an export, or another source (purchase emails, the hand-kept
    ledgers) turns out to be good enough.
 
-Before tagging 0.7.3 it's still worth running the pending Windows test of a
-fresh database with a Discogs CSV import, which has so far only run against a
-stand-in backend.
+## Still to test: Discogs CSV import on Windows
+
+A fresh database with a Discogs CSV import has only run against a stand-in
+backend, never the real one on Windows. It was meant to happen before 0.7.3;
+0.7.3–0.7.5 shipped without it. Run it on the Windows machine with a new
+database and a real collection export.
