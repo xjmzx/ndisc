@@ -21,6 +21,23 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## 0.7.7 — 2026-11-18
+
+### Added
+- **Keep Blossom.** In Local covers vs Blossom, ticked releases can take the
+  published image as their cover on disk: it is downloaded, checked against
+  the hash in its address, and written as `cover.*`. The file it replaces is
+  moved to ndisc's `cover-attic` folder with a log line, never deleted.
+  Nothing needs republishing. The upload button is now **Keep disk**.
+- **Size and shape filters** on the covers that differ: larger on disk,
+  larger on Blossom (over 5%), close (within 5%), same size; square or not,
+  on disk and on Blossom. The buttons act only on ticked rows that are shown.
+- **Labels: release-count filter** (100+ down to exactly 1, and 1–2).
+- **Labels: one image for the long tail.** With "no artwork" on, set one
+  image address on every shown label that has none (labels with art are
+  never touched), with an Upload to Blossom button for it.
+- **Labels: Upload to Blossom** in the label form.
+
 ## 0.7.6 — 2026-11-18
 
 ### Added
