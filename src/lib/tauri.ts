@@ -1004,6 +1004,10 @@ export interface PublishedCoverReconcile {
   onDisk: number;
   gaps: PublishedCoverGap[];
   fixed: number;
+  // Gaps whose folder another gap in the same run already claims — two
+  // releases sharing one file_path. A folder holds one cover.*, so only the
+  // first is in `gaps` and these are left alone, with the reason in `fixed`.
+  shared: PublishedCoverGap[];
   errors: string[];
 }
 

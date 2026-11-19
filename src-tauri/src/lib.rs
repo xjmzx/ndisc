@@ -5187,7 +5187,113 @@ pub struct PublishedCoverReconcile {
     pub gaps: Vec<PublishedCoverGap>,
     /// Gaps materialized this run (0 in flag-only mode).
     pub fixed: usize,
+    /// Gaps whose folder another gap in this same run already claims — two
+    /// releases sharing one `file_path`. Each would write that folder's one
+    /// `cover.*`, so only the first is in `gaps`; these are reported and left
+    /// alone. `fixed` carries the reason.
+    pub shared: Vec<PublishedCoverGap>,
     pub errors: Vec<String>,
+}
+
+/// Split gaps into the ones a run can write and the ones whose folder is
+/// already taken by an earlier gap in the same run.
+///
+/// A release folder holds exactly one `cover.*` — `download_cover_into_dir`
+/// removes the siblings on purpose, so one canonical file per release is
+/// guaranteed and every consumer agrees on which image is the cover. Nothing
+/// stops two releases sharing a `file_path`, though: there is no unique index
+/// on it, and a folder can be set by hand. Two such releases are both gaps at
+/// partition time, and without this the second download would delete or
+/// overwrite the file the first had just written, with the run reporting both
+/// as fixed.
+///
+/// So the second is set aside, with the reason in `fixed`, and the first keeps
+/// the folder. The count the Materialize button shows is a promise about how
+/// many of someone's files are about to be written, and it has to be a number
+/// the loop can keep. Order is preserved in both lists.
+fn split_shared_folders(
+    gaps: Vec<PublishedCoverGap>,
+) -> (Vec<PublishedCoverGap>, Vec<PublishedCoverGap>) {
+    let mut claimed: HashMap<String, i64> = HashMap::new();
+    let mut keep: Vec<PublishedCoverGap> = Vec::new();
+    let mut shared: Vec<PublishedCoverGap> = Vec::new();
+    for gap in gaps {
+        match claimed.get(&gap.dir) {
+            Some(&first) => shared.push(PublishedCoverGap {
+                fixed: Some(format!(
+                    "shares this folder with release {first}, which this run writes; left alone"
+                )),
+                ..gap
+            }),
+            None => {
+                claimed.insert(gap.dir.clone(), gap.id);
+                keep.push(gap);
+            }
+        }
+    }
+    (keep, shared)
+}
+
+#[cfg(test)]
+mod shared_folder_tests {
+    use super::{split_shared_folders, PublishedCoverGap};
+
+    fn gap(id: i64, dir: &str) -> PublishedCoverGap {
+        PublishedCoverGap {
+            id,
+            artist: format!("artist {id}"),
+            title: format!("title {id}"),
+            dir: dir.into(),
+            cover_art_url: format!("https://example.invalid/{id}.jpg"),
+            fixed: None,
+            bytes: None,
+            written: None,
+        }
+    }
+
+    #[test]
+    fn two_releases_in_one_folder_leave_the_second_alone() {
+        // Both would write <dir>/cover.<ext>, and the second download would
+        // take the first's file with it.
+        let (keep, shared) = split_shared_folders(vec![
+            gap(1, "/lib/Autechre/Amber"),
+            gap(2, "/lib/Autechre/Amber"),
+        ]);
+        assert_eq!(keep.iter().map(|g| g.id).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(shared.iter().map(|g| g.id).collect::<Vec<_>>(), vec![2]);
+        assert!(keep[0].fixed.is_none(), "the one that will be written is not pre-judged");
+        assert_eq!(
+            shared[0].fixed.as_deref(),
+            Some("shares this folder with release 1, which this run writes; left alone"),
+            "the reason names the release holding the folder"
+        );
+    }
+
+    #[test]
+    fn folders_nothing_else_wants_are_all_kept_in_order() {
+        let (keep, shared) = split_shared_folders(vec![
+            gap(1, "/lib/A/One"),
+            gap(2, "/lib/A/Two"),
+            gap(3, "/lib/B/Three"),
+        ]);
+        assert_eq!(keep.iter().map(|g| g.id).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert!(shared.is_empty());
+    }
+
+    #[test]
+    fn a_third_release_in_the_same_folder_names_the_first_too() {
+        // Not the second: the first is the one that actually holds the folder.
+        let (keep, shared) = split_shared_folders(vec![
+            gap(7, "/lib/A/One"),
+            gap(8, "/lib/A/One"),
+            gap(9, "/lib/A/One"),
+        ]);
+        assert_eq!(keep.len(), 1);
+        assert_eq!(shared.iter().map(|g| g.id).collect::<Vec<_>>(), vec![8, 9]);
+        assert!(shared.iter().all(|g| g.fixed.as_deref() == Some(
+            "shares this folder with release 7, which this run writes; left alone"
+        )));
+    }
 }
 
 /// Reconcile each *published* release's canonical art against what's on disk,
@@ -5257,19 +5363,22 @@ async fn reconcile_published_covers(
         };
         if find_cover_deep(&dir).is_some() {
             on_disk += 1;
-        } else {
-            gaps.push(PublishedCoverGap {
-                id,
-                artist,
-                title,
-                dir: dir.to_string_lossy().into_owned(),
-                cover_art_url,
-                fixed: None,
-                bytes: None,
-                written: None,
-            });
+            continue;
         }
+        gaps.push(PublishedCoverGap {
+            id,
+            artist,
+            title,
+            dir: dir.to_string_lossy().into_owned(),
+            cover_art_url,
+            fixed: None,
+            bytes: None,
+            written: None,
+        });
     }
+    // 2b. One folder, one `cover.*`: set aside any gap whose folder an earlier
+    //     gap in this same run already claims.
+    let (mut gaps, shared) = split_shared_folders(gaps);
 
     // 3. Flag-only: report and stop. Nothing written.
     if !fix {
@@ -5278,6 +5387,7 @@ async fn reconcile_published_covers(
             on_disk,
             gaps,
             fixed: 0,
+            shared,
             errors: Vec::new(),
         });
     }
@@ -5342,6 +5452,7 @@ async fn reconcile_published_covers(
         on_disk,
         gaps,
         fixed,
+        shared,
         errors,
     })
 }
@@ -6426,6 +6537,13 @@ async fn save_published_covers_to_disk(
         results: Vec::new(),
         attic: attic.to_string_lossy().into_owned(),
     };
+    // Which release this run has already written each folder's cover for. Two
+    // releases can share a `file_path` (nothing enforces otherwise), and a
+    // folder holds one `cover.*`: the second would move the first's fresh file
+    // into the attic and write its own, with both reported "ok". Nothing would
+    // be lost — the attic keeps it — but the folder would quietly end up with
+    // one of the two covers and no sign of which.
+    let mut written_dirs: HashMap<PathBuf, i64> = HashMap::new();
     for (i, id) in release_ids.into_iter().enumerate() {
         let row: Option<(String, Option<String>, Option<String>)> = open(&app)?
             .query_row(
@@ -6440,6 +6558,22 @@ async fn save_published_covers_to_disk(
             "cover-local:progress",
             ImportProgress { current: i + 1, total, current_dir: name },
         );
+        // The folder this release would write, worked out before the download
+        // so a clash costs nothing and says so.
+        let target_dir = row.as_ref().and_then(|r| r.1.as_deref()).and_then(|f| {
+            let p = PathBuf::from(f.trim());
+            if p.is_dir() { Some(p) } else { p.parent().map(Path::to_path_buf) }
+        });
+        if let Some(first) = target_dir.as_ref().and_then(|d| written_dirs.get(d)).copied() {
+            out.results.push(SavePublishedItem {
+                id,
+                status: format!(
+                    "shares its folder with release {first}, whose cover this run already wrote; left alone"
+                ),
+                written: None,
+            });
+            continue;
+        }
         let result: Result<String, String> = async {
             let (_, folder, url) = row.ok_or("release not found")?;
             let url = url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).ok_or("no cover URL")?;
@@ -6513,8 +6647,13 @@ async fn save_published_covers_to_disk(
         match result {
             Ok(written) => {
                 out.saved += 1;
+                if let Some(d) = target_dir {
+                    written_dirs.insert(d, id);
+                }
                 out.results.push(SavePublishedItem { id, status: "ok".into(), written: Some(written) });
             }
+            // Claimed only on success: a folder the run failed to write is
+            // still the next release's to try.
             Err(e) => out.results.push(SavePublishedItem { id, status: e, written: None }),
         }
     }

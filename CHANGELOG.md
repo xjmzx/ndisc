@@ -21,6 +21,25 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Fixed
+- **Two releases sharing one folder no longer take each other's cover.** A
+  release folder holds exactly one `cover.*` — the siblings are removed on
+  purpose, so every reader agrees which image is the cover — and nothing stops
+  two releases pointing at the same folder. Both were gaps at the start of a
+  **Reconcile published covers** run, so the second download deleted or
+  overwrote the file the first had just written, and the run reported both as
+  fixed. Only the first now writes; the rest are listed as *folder already
+  claimed by another release in this run*, with the release that holds it
+  named, and the Materialize count is again the number of files the run will
+  write. **Keep Blossom** had the same ordering with the attic underneath it
+  (nothing was lost, but a folder quietly ended up with one of the two covers);
+  the second release is now left alone and says why.
+  Found by auditing these jobs against the same bug in the GTK n.cover, which
+  plans a whole run's output names for this reason. *Give every release a
+  folder* already guarded against it and is unchanged.
+
 ## 0.7.7 — 2026-11-18
 
 ### Added

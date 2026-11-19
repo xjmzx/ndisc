@@ -2207,6 +2207,19 @@ export function ReleaseList({
                     {opSummary.data.gaps.filter((g) => g.fixed !== "ok").length}
                   </span>
                 </span>
+                {opSummary.data.shared.length > 0 && (
+                  <span
+                    className="text-warn"
+                    title={opSummary.data.shared
+                      .map((g) => `${g.artist} — ${g.title}: ${g.dir}`)
+                      .join("\n")}
+                  >
+                    share a folder{" "}
+                    <span className="font-mono">
+                      {opSummary.data.shared.length}
+                    </span>
+                  </span>
+                )}
                 <span className="text-muted">
                   already on disk{" "}
                   <span className="font-mono">{opSummary.data.onDisk}</span>
@@ -2735,6 +2748,40 @@ export function ReleaseList({
                       }
                     >
                       {g.fixed === "ok" ? "✓" : "✗"}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+      {!activeOp &&
+        opSummary?.kind === "coverGap" &&
+        opSummary.data.shared.length > 0 && (
+          <details className="mt-2 px-3 py-2 rounded-md bg-surface/40">
+            <summary className="text-warn cursor-pointer text-xs">
+              {opSummary.data.shared.length} release
+              {opSummary.data.shared.length === 1 ? "" : "s"} — folder already
+              claimed by another release in this run
+            </summary>
+            <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
+              {opSummary.data.shared.map((g) => (
+                <li
+                  key={g.id}
+                  className="px-2 py-1 rounded bg-bg/50 flex items-start gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-fg">
+                      {g.artist} <span className="text-muted">·</span> {g.title}
+                    </div>
+                    <div className="text-muted font-mono break-all">
+                      {g.dir}
+                    </div>
+                  </div>
+                  {g.fixed && (
+                    <span className="shrink-0 text-muted" title={g.fixed}>
+                      left alone
                     </span>
                   )}
                 </li>
