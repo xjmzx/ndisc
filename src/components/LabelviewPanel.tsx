@@ -1,9 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownAZ, ArrowDownWideNarrow, Check, ImageOff, ImageUp, Link2Off, List, Search, X } from "lucide-react";
+import { ArrowDownAZ, ArrowDownWideNarrow, Check, ImageOff, ImageUp, Link2Off, List, ScanSearch, Search, X } from "lucide-react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
 import { Section } from "./Section";
-import { listDistinctLabels, uploadFeedImage, type LabelCount } from "../lib/tauri";
+import {
+  checkLabelArt,
+  labelArtKinds,
+  listDistinctLabels,
+  uploadFeedImage,
+  type ImportProgress,
+  type LabelArtCheck,
+  type LabelArtItem,
+  type LabelCount,
+} from "../lib/tauri";
 import { genreDisplay } from "../lib/genre";
 import type { LabelEntry } from "./LabelPanel";
 
@@ -27,6 +37,30 @@ interface Props {
 const MAX_ROWS = 5000;
 
 type Mode = "library" | "orphans";
+
+// The label art check's filter chips: every flagged image, or one flag.
+type ArtFilter = "flagged" | "low" | "over" | "png" | "shape" | "other" | "elsewhere" | "unreadable";
+
+function artPasses(f: ArtFilter, r: LabelArtItem, check: LabelArtCheck): boolean {
+  switch (f) {
+    case "low":
+      return r.lowRes;
+    case "over":
+      return r.overSize;
+    case "png":
+      return r.png;
+    case "shape":
+      return r.notSquare;
+    case "other":
+      return r.otherFormat;
+    case "elsewhere":
+      return !!check.primary && !r.onPrimary;
+    case "unreadable":
+      return !!r.unreadable;
+    default:
+      return labelArtKinds(r, check).length > 0;
+  }
+}
 
 // Release-count filter. "N+" is at least N; "=N" exactly N; "1-2" the long
 // tail. Not remembered: it's a working filter, like the A–Z letter.
@@ -94,6 +128,12 @@ export function LabelviewPanel({
   fill = false,
 }: Props) {
   const [countF, setCountF] = useState<CountFilter>("all");
+  // The label art check (backlog 4b, stage 1): read-only, run on request.
+  const [artCheck, setArtCheck] = useState<LabelArtCheck | null>(null);
+  const [artProgress, setArtProgress] = useState<ImportProgress | null>(null);
+  const [artRunning, setArtRunning] = useState(false);
+  const [artErr, setArtErr] = useState<string | null>(null);
+  const [artFilter, setArtFilter] = useState<ArtFilter>("flagged");
   const [bulkUrl, setBulkUrl] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
@@ -289,6 +329,42 @@ export function LabelviewPanel({
     setBulkMsg(`Image set on ${n.toLocaleString()} label${n === 1 ? "" : "s"}. Publish the labels manifest to send it.`);
   }
 
+  async function runArtCheck() {
+    if (artRunning) return;
+    setArtRunning(true);
+    setArtErr(null);
+    setArtCheck(null);
+    setArtProgress(null);
+    let un: UnlistenFn | null = null;
+    try {
+      un = await listen<ImportProgress>("label-art:progress", (e) => setArtProgress(e.payload));
+      setArtCheck(await checkLabelArt(labels, blossomServers));
+      setArtFilter("flagged");
+    } catch (e) {
+      setArtErr(String(e));
+    } finally {
+      un?.();
+      setArtRunning(false);
+      setArtProgress(null);
+    }
+  }
+
+  const artCheckButton = (
+    <button
+      type="button"
+      onClick={runArtCheck}
+      disabled={artRunning || labels.length === 0}
+      title="Check label art: the size, format and shape of every published label image, read from each image's first bytes. Nothing is changed."
+      aria-label="Check label art"
+      className={cn(
+        "transition-colors p-1 rounded-md hover:bg-surface disabled:opacity-40",
+        artCheck || artRunning ? "text-accent bg-surface" : "text-muted hover:text-accent",
+      )}
+    >
+      <ScanSearch size={12} />
+    </button>
+  );
+
   const orphansToggle =
     orphans.length > 0 ? (
       <button
@@ -378,6 +454,7 @@ export function LabelviewPanel({
       {sortToggle}
       {orphansToggle}
       {noArtToggle}
+      {artCheckButton}
     </div>
   );
 
@@ -633,6 +710,139 @@ export function LabelviewPanel({
             </>
           )}
           {bulkMsg && <span className="w-full text-muted">{bulkMsg}</span>}
+        </div>
+      )}
+      {(artRunning || artCheck || artErr) && (
+        <div className="shrink-0 mb-2 px-2 py-1.5 rounded-md bg-surface/40 text-[10px]">
+          <div className="flex items-start gap-2">
+            <span className="flex-1 text-muted">
+              {artRunning &&
+                (artProgress
+                  ? `reading label images ${artProgress.current} / ${artProgress.total} · ${artProgress.currentDir}`
+                  : "reading label images…")}
+              {artErr && <span className="text-warn">{artErr}</span>}
+              {artCheck && (() => {
+                const flagged = artCheck.items.filter((r) => artPasses("flagged", r, artCheck));
+                const labelsHit = flagged.reduce((n, r) => n + r.labels.length, 0);
+                return (
+                  <>
+                    <span className="text-fg">
+                      {artCheck.images.toLocaleString()} image{artCheck.images === 1 ? "" : "s"} for{" "}
+                      {artCheck.withImage.toLocaleString()} labels
+                    </span>
+                    {" · "}
+                    <span className={flagged.length ? "text-warn" : undefined}>
+                      {flagged.length} outside the library’s shape ({labelsHit.toLocaleString()} label
+                      {labelsHit === 1 ? "" : "s"})
+                    </span>
+                    {artCheck.labels > artCheck.withImage &&
+                      ` · ${(artCheck.labels - artCheck.withImage).toLocaleString()} with no image`}
+                  </>
+                );
+              })()}
+            </span>
+            {!artRunning && (
+              <button
+                type="button"
+                onClick={() => {
+                  setArtCheck(null);
+                  setArtErr(null);
+                }}
+                title="Close the label art check"
+                aria-label="Close the label art check"
+                className="text-muted hover:text-fg"
+              >
+                <X size={10} />
+              </button>
+            )}
+          </div>
+          {artCheck && (
+            <>
+              <p className="mt-1 text-muted">
+                Read from each image’s first bytes; nothing is changed. Low-res is a long side
+                under {artCheck.lowPx} px; over {artCheck.libraryPx} px and PNG aren’t optimised
+                for publishing; not square is more than {artCheck.squareTolerancePct}% off.
+                Click a label to edit it.
+              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                {(
+                  [
+                    ["flagged", "Flagged"],
+                    ["low", "Low-res"],
+                    ["over", `Over ${artCheck.libraryPx}`],
+                    ["png", "PNG"],
+                    ["shape", "Not square"],
+                    ["other", "Other format"],
+                    ["elsewhere", "Not on primary"],
+                    ["unreadable", "Unreadable"],
+                  ] as const
+                )
+                  .map(([k, label]) => [k, label, artCheck.items.filter((r) => artPasses(k, r, artCheck)).length] as const)
+                  .filter(([k, , n]) => k === "flagged" || n > 0)
+                  .map(([k, label, n]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setArtFilter(k)}
+                      aria-pressed={artFilter === k}
+                      className={cn(
+                        "px-2 py-0.5 rounded",
+                        artFilter === k ? "bg-accent/15 text-accent" : "bg-surface text-muted hover:text-fg",
+                      )}
+                    >
+                      {label} <span className="font-mono">{n}</span>
+                    </button>
+                  ))}
+              </div>
+              <ul className="mt-1.5 max-h-56 overflow-auto space-y-1">
+                {artCheck.items
+                  .filter((r) => artPasses(artFilter, r, artCheck))
+                  .map((r) => (
+                    <li key={r.url} className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50">
+                      <img
+                        src={r.url}
+                        loading="lazy"
+                        alt=""
+                        className="w-10 h-10 object-contain bg-surface rounded shrink-0"
+                        title={r.url}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate">
+                          {r.labels.slice(0, 4).map((name, i) => (
+                            <span key={name}>
+                              {i > 0 && <span className="text-muted">, </span>}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const e = byName.get(normaliseName(name));
+                                  onPick(name, e?.imageUrl ?? r.url, e?.siteUrl ?? "");
+                                }}
+                                className="text-fg hover:text-accent"
+                              >
+                                {name}
+                              </button>
+                            </span>
+                          ))}
+                          {r.labels.length > 4 && (
+                            <span className="text-muted" title={r.labels.join(", ")}>
+                              {" "}
+                              and {r.labels.length - 4} more
+                            </span>
+                          )}
+                        </span>
+                        <span className="block text-muted font-mono truncate" title={r.unreadable ?? r.url}>
+                          {r.dims ? `${r.dims[0]}×${r.dims[1]}` : "size ?"} · {r.format} · {r.host}
+                          {labelArtKinds(r, artCheck).length > 0 && ` · ${labelArtKinds(r, artCheck).join(" · ")}`}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                {artCheck.items.filter((r) => artPasses(artFilter, r, artCheck)).length === 0 && (
+                  <li className="px-2 py-1 text-muted">nothing here: every label image is in shape</li>
+                )}
+              </ul>
+            </>
+          )}
         </div>
       )}
       {/* Two columns, filled row by row. In A–Z order each letter starts on a

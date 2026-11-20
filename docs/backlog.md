@@ -123,9 +123,13 @@ hash. The `art_name` recorded in the old `labels.json` export has drifted
 
 **Stages.**
 
-1. **Survey the published label images** (small). One ranged header read per
-   label, as for covers: size, PNG, not square, into the quality group. No
-   local files needed.
+1. ~~Survey the published label images~~ — **built 2026-11-20**
+   (`check_label_art`, the scan icon in the Labels list). One read per
+   distinct image, flagged as covers are, shown in the Labels view rather
+   than the release list's cover check. First run, 2026-11-20: 583 labels,
+   292 images (280 labels share one 1024 px PNG placeholder); 12 low-res,
+   19 over 600 px, 10 PNG, 4 not square, all on blossom.nfunc.xyz, none
+   unreadable.
 2. **Move labels into the database** (medium). localStorage has been restored
    by hand before (`pre-label-restore-20261005` backups); a table is the
    footing stage 3 needs. Keep the 31238 manifest unchanged.
@@ -260,8 +264,8 @@ structural change until last, so nothing built earlier has to be redone.
    the two land together. The grid's Cover wall already shows missing covers
    at a glance.
 4b. **Label art: the same checks as covers.** Stage 1 (survey the published
-   images) is small; stages 2–3 move labels into the database and add a
-   label art folder.
+   images) built 2026-11-20; stages 2–3 move labels into the database and
+   add a label art folder.
 5. **Discogs collection through the API.** Medium; builds on 0.7.3's token
    step (the username is already in hand). Needs progress reporting and rate
    limiting at 60 requests a minute.

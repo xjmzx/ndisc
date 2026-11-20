@@ -23,6 +23,20 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+### Added
+- **Check label art** (the scan icon in the Labels list header): the size,
+  format and shape of every published label image, read from each image's
+  first 128 KB, flagged as the covers' quality group is — low-res, over the
+  publishing size, PNG, not square — plus another format, not on the
+  primary Blossom server, or unreadable. An image several labels share is
+  read once and lists them all, so 583 labels are 292 reads. Filter chips
+  pick one flag; clicking a label opens it for editing. Read-only: nothing
+  is downloaded whole, uploaded or published. Stage 1 of label art getting
+  the covers' checks (docs/backlog.md, 4b).
+- The label fingerprint's separator is written as `\u0000` rather than a raw
+  NUL byte, which made git treat `LabelPanel.tsx` as binary (no diffs, no
+  merges). The string is identical, so publish state is unchanged.
+
 ### Fixed
 - **Two releases sharing one folder no longer take each other's cover.** A
   release folder holds exactly one `cover.*` — the siblings are removed on

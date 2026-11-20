@@ -1208,6 +1208,61 @@ export async function checkLocalCovers(servers: string[]): Promise<LocalCoverChe
   return invoke<LocalCoverCheck>("check_local_covers", { servers });
 }
 
+// One published label image, read from its first bytes. Labels sharing an
+// image share one item.
+export interface LabelArtItem {
+  url: string;
+  host: string;
+  labels: string[];
+  dims: [number, number] | null;
+  format: string;
+  onPrimary: boolean;
+  lowRes: boolean;
+  overSize: boolean;
+  png: boolean;
+  offSquarePct: number;
+  notSquare: boolean;
+  otherFormat: boolean;
+  unreadable: string | null;
+}
+
+export interface LabelArtCheck {
+  labels: number;
+  withImage: number;
+  images: number;
+  items: LabelArtItem[];
+  lowPx: number;
+  libraryPx: number;
+  squareTolerancePct: number;
+  primary: string | null;
+}
+
+// Read-only survey of every published label image (backlog 4b, stage 1):
+// one header read per distinct address, flagged as the cover quality group
+// is. Emits `label-art:started` / `label-art:progress`.
+export async function checkLabelArt(
+  labels: { name: string; imageUrl: string }[],
+  servers: string[],
+): Promise<LabelArtCheck> {
+  return invoke<LabelArtCheck>("check_label_art", {
+    labels: labels.map((l) => ({ name: l.name, imageUrl: l.imageUrl })),
+    servers,
+  });
+}
+
+// The flags of one label image, in the cover quality group's words.
+export function labelArtKinds(r: LabelArtItem, check: LabelArtCheck): string[] {
+  const k: string[] = [];
+  if (r.unreadable) k.push("unreadable");
+  if (r.lowRes) k.push(`low-res<${check.lowPx}`);
+  if (r.overSize) k.push(`over-${check.libraryPx}`);
+  if (r.png) k.push("png");
+  if (r.otherFormat) k.push(r.format);
+  if (r.notSquare) k.push(`off-square-${Math.round(r.offSquarePct)}%`);
+  if (check.primary && !r.onPrimary) k.push("not-on-primary");
+  return k;
+}
+
 // The cover list for ncover's "From a list…" scope: one line per release, no
 // header, tab-separated:
 //   folder · cover file · artist — title · disk WxH · published WxH · format ·

@@ -6475,6 +6475,297 @@ async fn check_local_covers(
     Ok(result)
 }
 
+/// A label as the front end holds it: the name and its image address. Labels
+/// live in the webview (`ndisc.labels`), not the database, so the check is
+/// handed them rather than reading them.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtInput {
+    pub name: String,
+    pub image_url: String,
+}
+
+/// One published label image, read from its first bytes. Several labels may
+/// share one image (a placeholder for the long tail), so an image is read
+/// once and lists every label that uses it.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtItem {
+    pub url: String,
+    pub host: String,
+    /// Every label using this image, A–Z.
+    pub labels: Vec<String>,
+    pub dims: Option<(u32, u32)>,
+    /// "jpeg", "png", "webp", "gif", "avif" or "other", from the first bytes.
+    pub format: String,
+    pub on_primary: bool,
+    pub low_res: bool,
+    pub over_size: bool,
+    pub png: bool,
+    pub off_square_pct: f64,
+    pub not_square: bool,
+    /// Not JPEG or PNG: the readers show it, but it is outside the library's
+    /// shape and its size cannot be read here.
+    pub other_format: bool,
+    /// The read failed, or the header held no size. The reason, when the
+    /// read itself failed.
+    pub unreadable: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtCheck {
+    /// Labels handed in.
+    pub labels: usize,
+    /// Of those, labels with an image address.
+    pub with_image: usize,
+    /// Distinct image addresses read.
+    pub images: usize,
+    /// Every image, flagged or not, most labels first.
+    pub items: Vec<LabelArtItem>,
+    pub low_px: u32,
+    pub library_px: u32,
+    pub square_tolerance_pct: f64,
+    pub primary: Option<String>,
+}
+
+/// `image_format` plus the other web formats a label image turns up in.
+fn image_format_wide(b: &[u8]) -> &'static str {
+    match image_format(b) {
+        "other" if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" => "webp",
+        "other" if b.starts_with(b"GIF8") => "gif",
+        "other" if b.len() >= 12 && &b[4..8] == b"ftyp" && (&b[8..12] == b"avif" || &b[8..12] == b"avis") => "avif",
+        f => f,
+    }
+}
+
+/// The distinct image addresses among `labels`, each with the labels using
+/// it (A–Z), most-used first, then by address. Labels with no `http` address
+/// have no image to read and are left out.
+fn group_label_images(labels: &[LabelArtInput]) -> Vec<(String, Vec<String>)> {
+    let mut by_url: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for l in labels {
+        let url = l.image_url.trim();
+        if url.starts_with("http") {
+            by_url.entry(url.to_string()).or_default().push(l.name.trim().to_string());
+        }
+    }
+    let mut out: Vec<(String, Vec<String>)> = by_url
+        .into_iter()
+        .map(|(u, mut n)| {
+            n.sort_by_key(|s| s.to_lowercase());
+            n.dedup();
+            (u, n)
+        })
+        .collect();
+    out.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
+/// The same flags the cover quality group sets, from one image's first bytes
+/// (or the reason they could not be read).
+fn label_art_item(
+    url: String,
+    labels: Vec<String>,
+    head: Result<Vec<u8>, String>,
+    primary: Option<&str>,
+) -> LabelArtItem {
+    let host = url_host(&url);
+    let on_primary = primary.is_some_and(|p| blossom::is_on_server(&url, p));
+    let (format, dims, unreadable) = match &head {
+        Ok(b) => {
+            let f = image_format_wide(b);
+            let d = blossom::image_dims(b);
+            let why = (d.is_none() && matches!(f, "jpeg" | "png"))
+                .then(|| "the header holds no size".to_string());
+            (f, d, why)
+        }
+        Err(e) => ("other", None, Some(e.clone())),
+    };
+    let (low_res, over_size, off) = match dims {
+        Some((w, h)) => {
+            let long = w.max(h);
+            let short = w.min(h);
+            (
+                long < COVER_LOW_PX,
+                long > LIBRARY_COVER_PX,
+                if long == 0 { 0.0 } else { (long - short) as f64 / long as f64 },
+            )
+        }
+        None => (false, false, 0.0),
+    };
+    LabelArtItem {
+        url,
+        host,
+        labels,
+        dims,
+        format: format.to_string(),
+        on_primary,
+        low_res,
+        over_size,
+        png: format == "png",
+        off_square_pct: (off * 1000.0).round() / 10.0,
+        not_square: off > COVER_SQUARE_TOLERANCE,
+        other_format: head.is_ok() && !matches!(format, "jpeg" | "png"),
+        unreadable,
+    }
+}
+
+/// Stage 1 of label art getting the covers' checks (docs/backlog.md, 4b):
+/// read the first 128 KB of every published label image and flag the ones
+/// outside the library's shape — low-res, over the publishing size, PNG, not
+/// square, another format, or not on the primary Blossom server. Each
+/// distinct address is read once, however many labels share it, up to eight
+/// at a time, a failed read tried once more.
+///
+/// Read-only: nothing is downloaded whole, uploaded, written or published.
+/// Emits `label-art:started` / `label-art:progress` (ImportProgress).
+#[tauri::command]
+async fn check_label_art(
+    app: tauri::AppHandle,
+    labels: Vec<LabelArtInput>,
+    servers: Vec<String>,
+) -> Result<LabelArtCheck, String> {
+    let started = app.clone();
+    survey_label_art(labels, &servers, move |done, total, name| {
+        if done == 0 {
+            let _ = started.emit("label-art:started", total);
+        } else {
+            let _ = started.emit(
+                "label-art:progress",
+                ImportProgress { current: done, total, current_dir: name.to_string() },
+            );
+        }
+    })
+    .await
+}
+
+/// The check without the app: `progress(0, total, "")` once, then
+/// `progress(done, total, label)` per image read.
+async fn survey_label_art(
+    labels: Vec<LabelArtInput>,
+    servers: &[String],
+    progress: impl Fn(usize, usize, &str),
+) -> Result<LabelArtCheck, String> {
+    use futures::stream::{self, StreamExt};
+    let primary = blossom::normalize_servers(servers)
+        .ok()
+        .and_then(|s| s.into_iter().next());
+    let with_image = labels.iter().filter(|l| l.image_url.trim().starts_with("http")).count();
+    let groups = group_label_images(&labels);
+    let n = groups.len();
+    progress(0, n, "");
+    let http = cover_http_client()?;
+    let mut reads = stream::iter(groups.into_iter())
+        .map(|(url, names)| {
+            let http = http.clone();
+            async move {
+                let mut head = fetch_head(&http, &url, 128 * 1024).await;
+                if head.is_err() {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    head = fetch_head(&http, &url, 128 * 1024).await;
+                }
+                (url, names, head)
+            }
+        })
+        .buffer_unordered(8);
+    let mut items = Vec::with_capacity(n);
+    let mut done = 0usize;
+    while let Some((url, names, head)) = reads.next().await {
+        done += 1;
+        progress(done, n, names.first().map(String::as_str).unwrap_or(""));
+        items.push(label_art_item(url, names, head, primary.as_deref()));
+    }
+    items.sort_by(|a, b| b.labels.len().cmp(&a.labels.len()).then_with(|| a.url.cmp(&b.url)));
+    Ok(LabelArtCheck {
+        labels: labels.len(),
+        with_image,
+        images: n,
+        items,
+        low_px: COVER_LOW_PX,
+        library_px: LIBRARY_COVER_PX,
+        square_tolerance_pct: COVER_SQUARE_TOLERANCE * 100.0,
+        primary,
+    })
+}
+
+#[cfg(test)]
+mod label_art_tests {
+    use super::*;
+
+    fn label(name: &str, url: &str) -> LabelArtInput {
+        LabelArtInput { name: name.into(), image_url: url.into() }
+    }
+
+    fn png_head(w: u32, h: u32) -> Vec<u8> {
+        let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        b.extend_from_slice(&w.to_be_bytes());
+        b.extend_from_slice(&h.to_be_bytes());
+        b
+    }
+
+    #[test]
+    fn a_shared_image_is_read_once_and_lists_every_label() {
+        let g = group_label_images(&[
+            label("Warp", "https://b.example/aa.jpg"),
+            label("mute", "https://b.example/ph.png"),
+            label("Ultra", "https://b.example/ph.png"),
+            label("No Art", ""),
+            label("Local", "file:///x.jpg"),
+            label("Ultra", " https://b.example/ph.png "),
+        ]);
+        assert_eq!(g.len(), 2, "two addresses; empty and non-http left out");
+        assert_eq!(g[0].0, "https://b.example/ph.png", "the most shared first");
+        assert_eq!(g[0].1, ["mute", "Ultra"], "A–Z, a label listed twice counted once");
+        assert_eq!(g[1].1, ["Warp"]);
+    }
+
+    /// The real survey over a label list exported from the app's storage:
+    /// `NDISC_LABELS_JSON=<file of [{name, imageUrl}]> cargo test real_label_art -- --ignored --nocapture`.
+    /// Network reads, read-only.
+    #[test]
+    #[ignore]
+    fn real_label_art() {
+        let Ok(path) = std::env::var("NDISC_LABELS_JSON") else { return };
+        let labels: Vec<LabelArtInput> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let servers = vec![std::env::var("NDISC_BLOSSOM").unwrap_or_default()];
+        let c = tauri::async_runtime::block_on(survey_label_art(labels, &servers, |_, _, _| {})).unwrap();
+        let count = |f: &dyn Fn(&LabelArtItem) -> bool| c.items.iter().filter(|r| f(r)).count();
+        println!(
+            "{} labels, {} with an image, {} images · low-res {} · over {} · png {} · not square {} · other format {} · not on primary {} · unreadable {}",
+            c.labels, c.with_image, c.images,
+            count(&|r| r.low_res), count(&|r| r.over_size), count(&|r| r.png), count(&|r| r.not_square),
+            count(&|r| r.other_format), count(&|r| !r.on_primary), count(&|r| r.unreadable.is_some()),
+        );
+        for r in c.items.iter().take(5) {
+            println!("  {} labels · {:?} {} · {}", r.labels.len(), r.dims, r.format, r.url);
+        }
+        for r in c.items.iter().filter(|r| r.unreadable.is_some()).take(5) {
+            println!("  unreadable: {:?} {}", r.unreadable, r.url);
+        }
+    }
+
+    #[test]
+    fn the_flags_are_the_covers_flags() {
+        let p = Some("https://blossom.example");
+        let wide = label_art_item("https://blossom.example/a.png".into(), vec![], Ok(png_head(800, 400)), p);
+        assert!(wide.png && wide.over_size && wide.not_square && !wide.low_res);
+        assert_eq!(wide.off_square_pct, 50.0);
+        assert!(wide.on_primary && !wide.other_format && wide.unreadable.is_none());
+
+        let small = label_art_item("https://elsewhere.example/b.png".into(), vec![], Ok(png_head(300, 300)), p);
+        assert!(small.low_res && !small.not_square && !small.on_primary);
+
+        let webp = label_art_item("https://x/c".into(), vec![], Ok(b"RIFF\0\0\0\0WEBPVP8 ".to_vec()), p);
+        assert_eq!(webp.format, "webp");
+        assert!(webp.other_format && webp.dims.is_none() && webp.unreadable.is_none());
+
+        let gone = label_art_item("https://x/d".into(), vec![], Err("fetch: 404".into()), p);
+        assert_eq!(gone.unreadable.as_deref(), Some("fetch: 404"));
+        assert!(!gone.other_format, "a failed read is unreadable, not another format");
+    }
+}
+
 /// Write the cover list the "Local covers vs Blossom" result exports for
 /// ncover's `From a list…` scope: one release folder per line, further
 /// tab-separated columns for the operator. The front end builds the text from
@@ -13216,6 +13507,7 @@ pub fn run() {
             migrate_covers_to_blossom,
             upload_cover_to_blossom,
             check_local_covers,
+            check_label_art,
             write_cover_list,
             save_published_covers_to_disk,
             upload_local_covers,
