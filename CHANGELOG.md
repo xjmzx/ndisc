@@ -24,6 +24,17 @@ wave; an app-only change bumps ndisc alone. See
 ## Unreleased
 
 ### Added
+- **Labels live in the database.** The label library (name, image address,
+  website) was kept only in the app's webview storage, which has had to be
+  restored by hand before. It is now a `labels` table in the catalogue
+  database. The first time each database opens, the existing list is taken
+  in unchanged — same labels, same order, duplicates and all — and the old
+  webview copy is left where it was as a backup, no longer written. Clearing
+  every label stays cleared: the backup is never read again. The published
+  labels manifest (kind:31238) is built from the same list as before, so
+  nothing republishes. Labels now belong to the catalogue they were made
+  for: opening another database shows its own labels (the first time, a
+  copy of the backup). Stage 2 of label art getting the covers' checks.
 - **Review**, an overlay for the results of *Local covers vs Blossom* and
   *Check label art*, over the app like *Relays & servers* but nearly
   window-sized, with a Covers and a Labels tab and a Run button for each.

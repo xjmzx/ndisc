@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   RotateCw,
   FolderOpen,
@@ -61,6 +61,8 @@ import {
   clearKeypair,
   getNpub,
   getRelease,
+  loadLabelsDb,
+  saveLabelsDb,
   keyringBackend,
   initDb,
   recountTracks,
@@ -69,9 +71,11 @@ import {
 } from "./lib/tauri";
 
 
+// Where the labels lived until 0.7.8. Read once per database, by the first
+// load_labels, and otherwise left alone as a backup; never written now.
 const LABELS_STORAGE_KEY = "ndisc.labels";
 
-function loadLabels(): LabelEntry[] {
+function loadStoredLabels(): LabelEntry[] {
   try {
     const raw = localStorage.getItem(LABELS_STORAGE_KEY);
     if (!raw) return [];
@@ -182,7 +186,10 @@ export default function App() {
   // footer cannot name a keychain that is not there.
   const [keyringStore, setKeyringStore] = useState<string>("…");
   const [profile, setProfile] = useState<ProfileMeta | null>(null);
-  const [labels, setLabelsState] = useState<LabelEntry[]>(() => loadLabels());
+  // The label library, from the database (load_labels). Empty until the
+  // database is open; `labelsReady` keeps an early edit from saving over it.
+  const [labels, setLabelsState] = useState<LabelEntry[]>([]);
+  const labelsReady = useRef(false);
   const [theme, setTheme] = useState<Theme>(loadTheme);
 
   // Apply + persist the colour theme: fizx.uk (default) or upleb.uk.
@@ -199,21 +206,32 @@ export default function App() {
 
   function setLabels(next: LabelEntry[]) {
     setLabelsState(next);
-    try {
-      localStorage.setItem(LABELS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
+    if (!labelsReady.current) return;
+    saveLabelsDb(next).catch((e) => setDbError(`Labels not saved: ${e}`));
   }
 
-  // On load, persist any one-shot URL migration clearStaleBundleUrls applied
-  // in loadLabels. No first-run seeding: a fresh install starts with no
-  // labels and the Label panel shows its branded carousel cards until the
-  // user adds their own.
-  useEffect(() => {
-    if (labels.length > 0) setLabels(labels);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Read the labels from the open database: at start, and after switching
+  // database. The first read of a database takes the old localStorage list
+  // in (load_labels does that once). The one-shot URL clean-up
+  // (clearStaleBundleUrls) is applied and saved if it changed anything. No
+  // first-run seeding: a fresh install starts with no labels.
+  async function loadLabelsFromDb() {
+    labelsReady.current = false;
+    try {
+      const r = await loadLabelsDb(loadStoredLabels());
+      const loaded: LabelEntry[] = r.labels.map((l) => ({
+        name: l.name,
+        imageUrl: l.imageUrl,
+        ...(l.siteUrl ? { siteUrl: l.siteUrl } : {}),
+      }));
+      const cleaned = clearStaleBundleUrls(loaded);
+      setLabelsState(cleaned);
+      labelsReady.current = true;
+      if (cleaned !== loaded) await saveLabelsDb(cleaned);
+    } catch (e) {
+      setDbError(`Labels not loaded: ${e}`);
+    }
+  }
 
   // Wipe every stored label after a confirm. The branded carousel cards
   // aren't stored labels, so the panel still has something to show.
@@ -347,7 +365,10 @@ export default function App() {
 
   useEffect(() => {
     initDb()
-      .then(setDbPath)
+      .then((p) => {
+        setDbPath(p);
+        void loadLabelsFromDb();
+      })
       .catch((e) => setDbError(String(e)));
     getVersion()
       .then(setAppVersion)
@@ -480,6 +501,7 @@ export default function App() {
     try {
       const updated = await setDbPathCmd(newPath);
       setDbPath(updated);
+      await loadLabelsFromDb();
       reload();
     } catch (e) {
       setDbError(String(e));

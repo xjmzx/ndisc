@@ -181,9 +181,15 @@ hash. The `art_name` recorded in the old `labels.json` export has drifted
    292 images (280 labels share one 1024 px PNG placeholder); 12 low-res,
    19 over 600 px, 10 PNG, 4 not square, all on blossom.nfunc.xyz, none
    unreadable.
-2. **Move labels into the database** (medium). localStorage has been restored
-   by hand before (`pre-label-restore-20261005` backups); a table is the
-   footing stage 3 needs. Keep the 31238 manifest unchanged.
+2. ~~Move labels into the database~~ — **built 2026-11-20.** A `labels`
+   table (position, name, image_url, site_url; names not unique, as they
+   were not in localStorage) and `label_store`, a once-per-database marker.
+   `load_labels` takes the localStorage list in on a database's first load
+   if the table is empty, and never again; `save_labels` replaces the whole
+   list per change, as the app wrote localStorage. localStorage is left as
+   a backup and no longer written. The 31238 manifest is unchanged. Labels
+   now follow the open database. Checked: the real 583 round-trip
+   identical.
 3. **A label art folder** (medium). A setting, matched by normalised name,
    with a per-label file pick for the misses. Then labels join the quality
    survey and Export list (the `cover file` column lets ncover work on

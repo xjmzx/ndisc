@@ -1208,6 +1208,28 @@ export async function checkLocalCovers(servers: string[]): Promise<LocalCoverChe
   return invoke<LocalCoverCheck>("check_local_covers", { servers });
 }
 
+// The label library, in the database since 0.7.8 (it was localStorage only).
+// The first load of each database takes `fromStorage` (the old localStorage
+// list) if the table is empty, and never again.
+export interface LabelRow {
+  name: string;
+  imageUrl: string;
+  siteUrl?: string;
+}
+
+export async function loadLabelsDb(
+  fromStorage: LabelRow[] | null,
+): Promise<{ labels: LabelRow[]; imported: number }> {
+  return invoke("load_labels", { fromStorage });
+}
+
+// Replace every label with `labels` (the whole list, as the app holds it).
+export async function saveLabelsDb(labels: LabelRow[]): Promise<void> {
+  return invoke("save_labels", {
+    labels: labels.map((l) => ({ name: l.name, imageUrl: l.imageUrl, siteUrl: l.siteUrl })),
+  });
+}
+
 // One published label image, read from its first bytes. Labels sharing an
 // image share one item.
 export interface LabelArtItem {

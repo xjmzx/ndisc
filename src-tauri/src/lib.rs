@@ -152,6 +152,25 @@ CREATE TABLE IF NOT EXISTS cover_mirrors (
     mirrored_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     PRIMARY KEY (sha256, server)
 );
+-- The label library: one row per label, in the order the app keeps them.
+-- Until 0.7.8 this lived only in the webview's localStorage (`ndisc.labels`);
+-- `load_labels` imports that once per database (`label_store`). Names are
+-- not unique here because they were not unique there: the rows are what the
+-- app had, unchanged. The labels.v1 manifest (kind:31238) is built from
+-- these exactly as it was from localStorage.
+CREATE TABLE IF NOT EXISTS labels (
+    position    INTEGER NOT NULL,
+    name        TEXT    NOT NULL,
+    image_url   TEXT    NOT NULL DEFAULT '',
+    site_url    TEXT
+);
+-- One row once this database has taken its labels from localStorage (or
+-- found none to take), so a later empty table is a real "no labels".
+CREATE TABLE IF NOT EXISTS label_store (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    imported    INTEGER NOT NULL,
+    at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
 "#;
 
 #[derive(Serialize, Deserialize)]
@@ -9425,8 +9444,181 @@ async fn revoke_approval(
     })
 }
 
+/// One label as the app holds it. `site_url` is optional, as it was in
+/// localStorage.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelRow {
+    pub name: String,
+    pub image_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_url: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelLoad {
+    pub labels: Vec<LabelRow>,
+    /// How many rows were taken from localStorage on this call (only ever
+    /// non-zero once per database).
+    pub imported: usize,
+}
+
+fn read_labels(conn: &Connection) -> Result<Vec<LabelRow>, String> {
+    let mut stmt = conn
+        .prepare("SELECT name, image_url, site_url FROM labels ORDER BY position, rowid")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(LabelRow { name: r.get(0)?, image_url: r.get(1)?, site_url: r.get(2)? })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+/// Replace every label with `labels`, in one transaction: the app hands over
+/// its whole list on each change, as it did to localStorage.
+fn write_labels(conn: &mut Connection, labels: &[LabelRow]) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM labels", []).map_err(|e| e.to_string())?;
+    {
+        let mut ins = tx
+            .prepare("INSERT INTO labels (position, name, image_url, site_url) VALUES (?1, ?2, ?3, ?4)")
+            .map_err(|e| e.to_string())?;
+        for (i, l) in labels.iter().enumerate() {
+            let site = l.site_url.as_deref().filter(|s| !s.trim().is_empty());
+            ins.execute(params![i as i64, l.name, l.image_url, site])
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// The labels, from the database. The first time a database is asked, and
+/// only then, `from_storage` (the app's localStorage list) is taken in if the
+/// table is empty; either way the database is marked so it is never asked
+/// again. localStorage itself is left as it was, as a backup.
+fn load_labels_conn(conn: &mut Connection, from_storage: Option<Vec<LabelRow>>) -> Result<LabelLoad, String> {
+    let done: bool = conn
+        .query_row("SELECT EXISTS(SELECT 1 FROM label_store WHERE id = 1)", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let mut imported = 0;
+    if !done {
+        let have: i64 = conn
+            .query_row("SELECT COUNT(*) FROM labels", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if have == 0 {
+            if let Some(list) = from_storage.filter(|l| !l.is_empty()) {
+                write_labels(conn, &list)?;
+                imported = list.len();
+            }
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO label_store (id, imported) VALUES (1, ?1)",
+            params![imported as i64],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(LabelLoad { labels: read_labels(conn)?, imported })
+}
+
+#[tauri::command]
+fn load_labels(app: tauri::AppHandle, from_storage: Option<Vec<LabelRow>>) -> Result<LabelLoad, String> {
+    let mut conn = open(&app)?;
+    load_labels_conn(&mut conn, from_storage)
+}
+
+#[tauri::command]
+fn save_labels(app: tauri::AppHandle, labels: Vec<LabelRow>) -> Result<(), String> {
+    let mut conn = open(&app)?;
+    write_labels(&mut conn, &labels)
+}
+
+#[cfg(test)]
+mod label_store_tests {
+    use super::*;
+
+    fn db() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c
+    }
+    fn l(name: &str, url: &str, site: Option<&str>) -> LabelRow {
+        LabelRow { name: name.into(), image_url: url.into(), site_url: site.map(Into::into) }
+    }
+
+    #[test]
+    fn local_storage_is_taken_in_once_in_order_and_unchanged() {
+        let mut c = db();
+        let list = vec![
+            l("Warp", "https://b/w.jpg", Some("https://warp.net")),
+            l("Mute", "", None),
+            l("Warp", "https://b/w2.jpg", None), // a duplicate name, kept as it was
+        ];
+        let first = load_labels_conn(&mut c, Some(list.clone())).unwrap();
+        assert_eq!(first.imported, 3);
+        assert_eq!(first.labels, list);
+
+        // A second load never imports again, even with a different list.
+        let again = load_labels_conn(&mut c, Some(vec![l("Other", "x", None)])).unwrap();
+        assert_eq!(again.imported, 0);
+        assert_eq!(again.labels, list);
+    }
+
+    /// The real label list round-trips exactly:
+    /// `NDISC_LABELS_JSON=<file> cargo test real_label_import -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_label_import() {
+        let Ok(path) = std::env::var("NDISC_LABELS_JSON") else { return };
+        let list: Vec<LabelRow> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut c = db();
+        let r = load_labels_conn(&mut c, Some(list.clone())).unwrap();
+        let norm = |v: &[LabelRow]| -> Vec<LabelRow> {
+            v.iter()
+                .map(|l| LabelRow {
+                    site_url: l.site_url.clone().filter(|s| !s.trim().is_empty()),
+                    ..l.clone()
+                })
+                .collect()
+        };
+        assert_eq!(r.imported, list.len());
+        assert_eq!(r.labels, norm(&list), "every label, in order, unchanged");
+        println!("{} labels imported and read back identical", r.imported);
+    }
+
+    #[test]
+    fn clearing_every_label_stays_cleared() {
+        let mut c = db();
+        load_labels_conn(&mut c, Some(vec![l("Warp", "u", None)])).unwrap();
+        write_labels(&mut c, &[]).unwrap();
+        // The old localStorage copy is still offered; it must not come back.
+        let r = load_labels_conn(&mut c, Some(vec![l("Warp", "u", None)])).unwrap();
+        assert!(r.labels.is_empty() && r.imported == 0);
+    }
+
+    #[test]
+    fn a_fresh_database_with_nothing_to_take_is_marked_too() {
+        let mut c = db();
+        assert_eq!(load_labels_conn(&mut c, None).unwrap().imported, 0);
+        let r = load_labels_conn(&mut c, Some(vec![l("Late", "u", None)])).unwrap();
+        assert!(r.labels.is_empty(), "the first answer stands");
+    }
+
+    #[test]
+    fn a_save_replaces_the_whole_list_and_drops_an_empty_site() {
+        let mut c = db();
+        load_labels_conn(&mut c, None).unwrap();
+        write_labels(&mut c, &[l("A", "u", Some("  ")), l("B", "v", Some("https://b"))]).unwrap();
+        write_labels(&mut c, &[l("B", "v", Some("https://b"))]).unwrap();
+        assert_eq!(read_labels(&c).unwrap(), [l("B", "v", Some("https://b"))]);
+        write_labels(&mut c, &[l("A", "u", Some(" "))]).unwrap();
+        assert_eq!(read_labels(&c).unwrap()[0].site_url, None);
+    }
+}
+
 /// Inbound shape for `publish_labels`. Carries the per-label image URL
-/// the frontend already has (from `localStorage["ndisc.labels"]`).
+/// the frontend already has (from the `labels` table, via load_labels).
 /// Entries with an empty `name` or `image_url` are dropped at the Rust
 /// boundary so the published manifest only contains real entries.
 #[derive(Deserialize)]
@@ -13508,6 +13700,8 @@ pub fn run() {
             upload_cover_to_blossom,
             check_local_covers,
             check_label_art,
+            load_labels,
+            save_labels,
             write_cover_list,
             save_published_covers_to_disk,
             upload_local_covers,
