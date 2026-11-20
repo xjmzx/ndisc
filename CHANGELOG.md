@@ -21,7 +21,7 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
-## Unreleased
+## 0.8.0 — 2026-11-20
 
 ### Added
 - **A label art folder.** The folder icon in the Labels list header sets
@@ -86,11 +86,11 @@ wave; an app-only change bumps ndisc alone. See
   pick one flag; clicking a label opens it for editing. Read-only: nothing
   is downloaded whole, uploaded or published. Stage 1 of label art getting
   the covers' checks (docs/backlog.md, 4b).
+
+### Fixed
 - The label fingerprint's separator is written as `\u0000` rather than a raw
   NUL byte, which made git treat `LabelPanel.tsx` as binary (no diffs, no
   merges). The string is identical, so publish state is unchanged.
-
-### Fixed
 - **Two releases sharing one folder no longer take each other's cover.** A
   release folder holds exactly one `cover.*` — the siblings are removed on
   purpose, so every reader agrees which image is the cover — and nothing stops
