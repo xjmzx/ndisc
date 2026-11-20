@@ -57,13 +57,6 @@ Home is open; off Home, the Covers tab shows its results read-only.
 The other maintenance results (Reconcile, Mirror errors, Relay audit, Tidy
 names) stay where they are; any can move into the overlay later.
 
-## Startup check: count labels too (note, 2026-11-20)
-
-The Startup check's catalogue line reads "2,606 releases". Since labels moved
-into the database (0.8.0) they can be counted the same way: "2,606 releases ·
-583 labels". Small; `startup_status` would return the count from the
-`labels` table.
-
 ## Local covers vs Blossom: report what it cannot compare (planned 2026-11-13)
 
 **Built 2026-11-18, unreleased.** The check now sweeps every published
@@ -209,8 +202,54 @@ hash. The `art_name` recorded in the old `labels.json` export has drifted
    image) and `noLocal`. Real run: 15 low-res, 14 over 600, 6 PNG, 7 not
    square, 1 other format; 43 masters never published (`publishedNotOwn`: the
    label publishes someone else's image; two names for one label sharing
-   their own image don't count); 43 where the published copy is larger. Still to build: **3c** label lines
-   in the Export list, **3d** upload a label's local file. Original note: A setting, matched by normalised name,
+   their own image don't count); 4 where the published copy is larger
+   (43 in 0.8.0, which compared masters with the placeholder). **3c built 2026-11-20** (after 0.8.0):
+   `labelListText`, Export list in Review's Local files; flagged labels
+   with a file only (a fileless line would ask ncover for the whole
+   folder). Real export 76 lines; ncover reads it (with its fix that named
+   files ignore the name filter). Still to build: **3d** upload a label's
+   local file, and **3e** filling `_labels` (below).
+
+   **`_labels`: one clean label art folder under the library root (agreed
+   2026-11-20).** Supersedes the 3e first written the same day.
+
+   *Why.* The masters folder in use (`~/Documents/Discogs/…/tjmzx-labels`)
+   is a working directory: misspellings (`rcords`, `Reocrds`), variants
+   (`label2`, `-out`, `alt`), two names on one file. It stays as it is, as
+   a backup. A folder ndisc writes itself can be looked at systematically,
+   local against Blossom, from a fresh start.
+
+   *What.*
+   - **Location:** `<library root>/_labels` by default — the library root
+     is already set per machine and per OS (`libraryRoot` in config), so
+     the folder follows on Linux, macOS and Windows with no new setting.
+     The 3a folder picker stays as an override. Underscore, not a dot:
+     Finder and Explorer hide dot-folders, and these files are meant to be
+     seen. `_labels` is a reserved name in the suite.
+   - **Scans ignore it explicitly.** ndisc imports only folders with audio,
+     so an images-only folder is already not a release, but every library
+     walk gets a named skip for `_labels` so that is guaranteed, not
+     incidental. nplay and ntree also key on audio; note it for them.
+   - **One naming rule:** `<Label name>.<ext>`, Windows-illegal characters
+     replaced ("Planet μ / Matador" → "Planet μ - Matador"). ndisc records
+     the file name on the label (`art_file`) when it writes one, so every
+     match is exact.
+   - **Filling it**, reported first, then a confirmed run; never overwrite,
+     log every file (label, source, file written):
+     1. from the old folder: COPY each label's matched master (name,
+        close or hand pick, as 3a finds them), renamed to the rule;
+     2. from Blossom: each label that publishes its own image (not the
+        placeholder; `publishedNotOwn` false) and has no master yet gets
+        it downloaded, checked against the SHA-256 in its address; a
+        second name whose sibling has the file is skipped (EMI America →
+        EMI). Real count 2026-11-20: 24 such labels;
+     3. the rest (placeholder, no master anywhere) listed for a person.
+   - **Then** Local files, Not its own image and the Export list all work
+     from `_labels`; ncover needs nothing new (its write-back would keep
+     originals under `originals/_labels/<file>`). 3d (upload a label's
+     local file) reads from `_labels`.
+   - **Backup comes free:** microbolt2's rsync mirror of `/data/music`
+     carries `_labels`. Original note: A setting, matched by normalised name,
    with a per-label file pick for the misses. Then labels join the quality
    survey and Export list (the `cover file` column lets ncover work on
    single files in a shared folder: several lines in one folder since GTK

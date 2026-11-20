@@ -164,6 +164,8 @@ export interface StartupStatus {
   dbPath: string;
   dbExists: boolean;
   releases: number | null;
+  // Null until this database has taken its labels in (its first launch).
+  labels: number | null;
   dbError: string | null;
   libraryRoot: string | null;
   libraryRootExists: boolean;
@@ -1390,6 +1392,10 @@ export const COVER_ACTIONS = [
 ] as const;
 
 const KIND_ACTION: [RegExp, (typeof COVER_ACTIONS)[number]][] = [
+  // Label art (backlog 4b, 3c): a master the label's published image is
+  // not, and a master in a format ncover does not write.
+  [/^not-its-own-image$/, "ndisc:upload"],
+  [/^other-format:/, "review"],
   [/^shrunk$/, "ndisc:upload"],
   [/^published-larger$/, "review"],
   [/^different-picture$/, "review"],
@@ -1469,6 +1475,50 @@ export function coverListText(check: LocalCoverCheck): string {
       coverActions(l.kinds).join(",") || "-",
     ].join("\t"),
   );
+  return lines.length ? lines.join("\n") + "\n" : "";
+}
+
+// The label list for ncover's "From a list…" (backlog 4b, stage 3c): the
+// cover list's format, one line per label whose own file in the label art
+// folder is flagged:
+//   label art folder · the label's file (full path) · label name ·
+//   local WxH · published WxH · format · kinds · actions
+// Every line names its file, so ncover takes only that file from the shared
+// folder (ncover's list scope keeps several named files per folder). Labels
+// with no file are left out: a line without a file would ask ncover for the
+// whole folder. Kinds as the label check's chips; actions from the same
+// table as covers, so Square and Cap pick the lines they are for.
+export function labelListText(check: LabelArtCheck): string {
+  if (!check.folder) return "";
+  const folder = check.folder.replace(/[\\/]+$/, "");
+  const dims = (d: [number, number] | null) => (d ? `${d[0]}x${d[1]}` : "-");
+  const clean = (v: string) => v.replace(/[\t\r\n]+/g, " ").trim();
+  const lines = check.locals
+    .map((r) => {
+      const kinds: string[] = [];
+      if (!r.dims && !r.otherFormat) kinds.push("unreadable");
+      if (r.lowRes) kinds.push(`low-res<${check.lowPx}`);
+      if (r.overSize) kinds.push(`over-${check.libraryPx}`);
+      if (r.png) kinds.push("png");
+      if (r.otherFormat) kinds.push(`other-format:${r.format}`);
+      if (r.notSquare) kinds.push(`off-square-${r.offSquarePct}%`);
+      if (r.publishedNotOwn) kinds.push("not-its-own-image");
+      if (r.publishedLarger) kinds.push("published-larger");
+      return { r, kinds };
+    })
+    .filter(({ kinds }) => kinds.length > 0)
+    .map(({ r, kinds }) =>
+      [
+        clean(folder),
+        clean(`${folder}/${r.file}`),
+        clean(r.name),
+        dims(r.dims),
+        dims(r.publishedDims),
+        r.format,
+        kinds.join(","),
+        coverActions(kinds).join(",") || "-",
+      ].join("\t"),
+    );
   return lines.length ? lines.join("\n") + "\n" : "";
 }
 

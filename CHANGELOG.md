@@ -21,6 +21,30 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Added
+- **The startup check counts labels.** "Catalogue loaded" reads e.g.
+  "2,017 releases / 583 labels". On a database's first launch after the
+  move to the database, before its labels are taken in, it shows releases
+  only rather than "0 labels".
+- **Export list for labels.** Review → Labels → Local files has **Export
+  list**: one line per flagged label file, in the cover list's format
+  (the label art folder, the label's file, its name, local and published
+  size, format, flags, actions), for ncover's *From a list…*. Every line
+  names its file, so ncover takes only that file from the shared folder;
+  labels with no file are left out. Actions come from the covers' table,
+  plus `ndisc:upload` for a master the label does not publish and `review`
+  for a format ncover does not write. First real export: 76 lines — 14 to
+  cap, 5 to square, 43 to upload, 5 to review, 15 to re-source. Stage 3c.
+
+### Fixed
+- **"Published is larger" counted the placeholder.** A label publishing
+  the shared 1024 px placeholder was flagged as having a larger published
+  copy of its 600 px master, though the placeholder is no copy of it. The
+  flag is now set only when the published image is the label's own: 4
+  labels instead of 43, and their export lines no longer ask for review.
+
 ## 0.8.0 — 2026-11-20
 
 ### Added

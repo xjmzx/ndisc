@@ -3,9 +3,12 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { ExternalLink, Pencil, Play, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { useReview, type ReviewTab } from "../lib/review";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   labelArtKinds,
+  labelListText,
   labelLocalKinds,
+  writeCoverList,
   type LabelArtCheck,
   type LabelArtItem,
   type LabelLocalItem,
@@ -183,9 +186,45 @@ function LabelLocalDetails({
 }) {
   const [filter, setFilter] = useState<LocalFilter>("all");
   const folder = check.folder ?? "";
+  // The flagged labels as a list for ncover's From a list… (stage 3c).
+  const listText = labelListText(check);
+  const listCount = listText ? listText.split("\n").length - 1 : 0;
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  async function exportList() {
+    setExportMsg(null);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const dest = await saveDialog({
+        title: "Export label list",
+        defaultPath: `ndisc-labels-${stamp}.txt`,
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (typeof dest !== "string") return;
+      await writeCoverList(dest, listText);
+      setExportMsg(`${listCount.toLocaleString()} line${listCount === 1 ? "" : "s"} written to ${dest}`);
+    } catch (e) {
+      setExportMsg(`error: ${e}`);
+    }
+  }
   const shown = filter === "none" ? [] : check.locals.filter((r) => localPasses(filter, r));
   return (
     <div className="text-xs">
+      {listCount > 0 && (
+        <div className="mb-2 px-3 py-2 rounded-md bg-surface/40 flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-muted">
+            {exportMsg ??
+              `Export every flagged label (${listCount.toLocaleString()}) as a list for ncover’s From a list… — one line per label file; Square and Cap pick the lines they are for.`}
+          </span>
+          <button
+            type="button"
+            onClick={exportList}
+            className="ml-auto px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+            title="The cover list's format: the label art folder, the label's file, its name, local and published size, format, flags and actions, tab-separated. Labels with no file are left out."
+          >
+            Export list
+          </button>
+        </div>
+      )}
       <p className="text-muted">
         Each label’s own file in <span className="font-mono">{folder}</span>, beside what is
         published for it. Not its own image: the label publishes an image that is not this file

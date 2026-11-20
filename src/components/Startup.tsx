@@ -309,8 +309,15 @@ function StartupCheck({
 
     // 6. Catalogue
     if (dbOk) {
-      const n = (await startupStatus().catch(() => s)).releases ?? 0;
-      put("catalogue", "ok", `${n.toLocaleString()} release${n === 1 ? "" : "s"}`);
+      const now = await startupStatus().catch(() => s);
+      const n = now.releases ?? 0;
+      const l = now.labels;
+      put(
+        "catalogue",
+        "ok",
+        `${n.toLocaleString()} release${n === 1 ? "" : "s"}` +
+          (l == null ? "" : ` / ${l.toLocaleString()} label${l === 1 ? "" : "s"}`),
+      );
     } else {
       put("catalogue", "fail", "The database didn't open");
     }

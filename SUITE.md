@@ -170,6 +170,15 @@ reads as missing files.
 Worth knowing before either app grows a "change library location" feature: for
 `nplay` that is a settings field, for `ndisc` it is a migration.
 
+**`_labels` under the library root is reserved (2026-11-20, planned).** ndisc
+will keep its label art in `<library root>/_labels` — record-label images,
+one file per label, named after the label, written by ndisc (see ndisc's
+`docs/backlog.md`, label art 3e). It is not a release and holds no audio.
+Every app that walks the library (`ndisc`, `nplay`, `ntree`, `nsmpl`, `ncover`'s
+folder scope) must skip it by name rather than rely on it holding no audio.
+Underscore, not a dot, so Finder and Explorer show it. It travels and is
+backed up with the library.
+
 - **Desktop = Tauri 2** (React + Vite + TypeScript front end, Rust backend over
   IPC). **Mobile = Capacitor** (`nview` only).
 - **SQLite** (`rusqlite`, bundled) where a local library index is needed

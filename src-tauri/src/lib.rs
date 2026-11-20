@@ -1211,6 +1211,9 @@ pub struct StartupStatus {
     /// Release count, read-only. None when the file is missing or unreadable
     /// (no `releases` table yet counts as 0).
     pub releases: Option<i64>,
+    /// Label count, once the database holds its labels (see
+    /// `count_labels_read_only`).
+    pub labels: Option<i64>,
     pub db_error: Option<String>,
     /// The configured or derived library root; derived only when the database
     /// exists, since deriving opens it.
@@ -1236,6 +1239,31 @@ fn count_releases_read_only(path: &std::path::Path) -> Result<i64, String> {
     }
     conn.query_row("SELECT COUNT(*) FROM releases", [], |r| r.get(0))
         .map_err(|e| e.to_string())
+}
+
+/// Label count, read-only, for the startup check. None until this database
+/// has taken its labels in (`label_store`): on the first launch after the
+/// move to the database the check runs before the import, and "0 labels"
+/// would be a claim about a moment, not about the catalogue.
+fn count_labels_read_only(path: &std::path::Path) -> Option<i64> {
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    let imported: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'label_store')",
+            [],
+            |r| r.get(0),
+        )
+        .ok()?;
+    if !imported {
+        return None;
+    }
+    let marked: bool = conn
+        .query_row("SELECT EXISTS(SELECT 1 FROM label_store WHERE id = 1)", [], |r| r.get(0))
+        .ok()?;
+    if !marked {
+        return None;
+    }
+    conn.query_row("SELECT COUNT(*) FROM labels", [], |r| r.get(0)).ok()
 }
 
 #[tauri::command]
@@ -1270,10 +1298,12 @@ fn startup_status(app: tauri::AppHandle) -> Result<StartupStatus, String> {
         .get("lastSeenVersion")
         .and_then(|v| v.as_str())
         .map(str::to_owned);
+    let labels = if db_exists && db_error.is_none() { count_labels_read_only(&path) } else { None };
     Ok(StartupStatus {
         db_path: path.to_string_lossy().into_owned(),
         db_exists,
         releases,
+        labels,
         db_error,
         library_root,
         library_root_exists,
@@ -6590,7 +6620,8 @@ pub struct LabelLocalItem {
     /// has never been published. Two names for one label (`Earache` and
     /// `Earache Records`) share an image that IS their master: not this.
     pub published_not_own: bool,
-    /// The published copy is a larger copy of the same shape.
+    /// The published copy is a larger copy of the same shape. Never set when
+    /// `published_not_own`: someone else's image is no copy of this one.
     pub published_larger: bool,
 }
 
@@ -6674,10 +6705,13 @@ fn label_locals(
             published_dims,
             published_shared: pubd.map(|p| p.labels.len()).unwrap_or(0),
             published_not_own: not_own,
-            published_larger: match (dims, published_dims) {
-                (Some(a), Some(b)) => blossom::is_larger_same_shape(a, b),
-                _ => false,
-            },
+            // Only a copy of this master can be "larger": a placeholder
+            // or another label's image is not a copy of it.
+            published_larger: !not_own
+                && match (dims, published_dims) {
+                    (Some(a), Some(b)) => blossom::is_larger_same_shape(a, b),
+                    _ => false,
+                },
         });
     }
     Ok((out, none))
@@ -6914,6 +6948,9 @@ mod label_art_tests {
         }
         for r in c.items.iter().filter(|r| r.unreadable.is_some()).take(5) {
             println!("  unreadable: {:?} {}", r.unreadable, r.url);
+        }
+        if let Ok(out) = std::env::var("NDISC_LABEL_CHECK_OUT") {
+            std::fs::write(out, serde_json::to_string(&c).unwrap()).unwrap();
         }
         let lc = |f: &dyn Fn(&LabelLocalItem) -> bool| c.locals.iter().filter(|r| f(r)).count();
         println!(
