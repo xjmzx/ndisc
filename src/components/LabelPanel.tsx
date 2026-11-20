@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ImageUp, Pause, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
+import { FolderOpen, ImageUp, Pause, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { useReview } from "../lib/review";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -21,6 +23,9 @@ export interface LabelEntry {
   imageUrl: string;
   // Optional label website — shown as a clickable link under the image.
   siteUrl?: string;
+  // A file in the label art folder picked by hand, when the name match is
+  // wrong or finds nothing (a file name, not a path).
+  artFile?: string;
 }
 
 type BrandVariant = "themeA" | "themeB" | "ink";
@@ -433,6 +438,36 @@ export function LabelPanel({
   const [formUploading, setFormUploading] = useState(false);
   const [formUploadErr, setFormUploadErr] = useState<string | null>(null);
 
+  // The form's label in the label art folder: the matched or picked file.
+  const review = useReview();
+  const formKey = formName.trim().toLowerCase();
+  const formEntry = labels.find((l) => l.name.trim().toLowerCase() === formKey) ?? null;
+  const formMatch = formKey ? review.artMatchFor(formName) : null;
+  const [pickErr, setPickErr] = useState<string | null>(null);
+  const setArtFile = (file: string | undefined) => {
+    if (!formEntry) return;
+    setLabels(labels.map((l) => (l === formEntry ? { ...l, artFile: file } : l)));
+  };
+  async function pickArtFile() {
+    setPickErr(null);
+    const folder = review.artFolder;
+    if (!folder || !formEntry) return;
+    const p = await openDialog({
+      multiple: false,
+      defaultPath: folder,
+      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "gif", "avif"] }],
+      title: `Label art for ${formEntry.name}`,
+    });
+    if (typeof p !== "string") return;
+    const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+    const dir = p.slice(0, cut).replace(/[\\/]+$/, "");
+    if (dir !== folder.replace(/[\\/]+$/, "")) {
+      setPickErr("Pick a file directly in the label art folder.");
+      return;
+    }
+    setArtFile(p.slice(cut + 1));
+  }
+
   // Pick a local image, upload it to the primary Blossom server, and put its
   // address in the form. Saving the label (and publishing the manifest) stays
   // a separate, explicit step.
@@ -810,6 +845,67 @@ export function LabelPanel({
                        focus:border-accent/50 placeholder:text-muted"
             spellCheck={false}
           />
+          {review.artFolder && formKey && (
+            <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-surface/40 text-[10px]">
+              {formMatch?.file ? (
+                <img
+                  src={convertFileSrc(`${review.artFolder}/${formMatch.file}`)}
+                  alt=""
+                  className="w-8 h-8 object-contain bg-surface rounded shrink-0"
+                />
+              ) : (
+                <FolderOpen size={14} className="text-muted shrink-0 mx-2" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block font-mono text-fg/80 truncate" title={formMatch?.file ?? undefined}>
+                  {formMatch?.file ?? "no file in the label art folder"}
+                </span>
+                <span
+                  className={cn(
+                    "block",
+                    formMatch?.how === "close" || formMatch?.how === "missing" ? "text-warn" : "text-muted",
+                  )}
+                  title={formMatch && formMatch.others.length > 0 ? formMatch.others.join("\n") : undefined}
+                >
+                  {formMatch?.how === "picked"
+                    ? "picked by hand"
+                    : formMatch?.how === "name"
+                      ? "matched by name"
+                      : formMatch?.how === "close"
+                        ? "a close match: check it is this label"
+                        : formMatch?.how === "missing"
+                          ? `the picked file (${formMatch.others[0]}) is not in the folder`
+                          : formEntry
+                            ? "no file matches the name: pick one"
+                            : "save the label first, then pick its file"}
+                  {formMatch && formMatch.others.length > 0 && formMatch.how !== "missing" &&
+                    ` · ${formMatch.others.length} more file${formMatch.others.length === 1 ? "" : "s"} match`}
+                </span>
+              </span>
+              {formEntry && (
+                <button
+                  type="button"
+                  onClick={pickArtFile}
+                  className="shrink-0 px-2 py-0.5 rounded bg-surface text-muted hover:text-fg"
+                  title="Choose this label's file in the label art folder by hand"
+                >
+                  Pick…
+                </button>
+              )}
+              {formEntry?.artFile && (
+                <button
+                  type="button"
+                  onClick={() => setArtFile(undefined)}
+                  className="shrink-0 text-muted hover:text-fg"
+                  title="Forget the hand pick and match by name again"
+                  aria-label="Clear the picked file"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          )}
+          {pickErr && <p className="text-[10px] text-alert">{pickErr}</p>}
           <p className="text-[10px] text-muted leading-snug">
             Paste an image address from any host, or upload a local file to
             your Blossom server. Publish the labels manifest to send it.

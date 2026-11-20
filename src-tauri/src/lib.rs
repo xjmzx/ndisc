@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS cover_mirrors (
     PRIMARY KEY (sha256, server)
 );
 -- The label library: one row per label, in the order the app keeps them.
--- Until 0.7.8 this lived only in the webview's localStorage (`ndisc.labels`);
+-- Until 0.8.0 this lived only in the webview's localStorage (`ndisc.labels`);
 -- `load_labels` imports that once per database (`label_store`). Names are
 -- not unique here because they were not unique there: the rows are what the
 -- app had, unchanged. The labels.v1 manifest (kind:31238) is built from
@@ -508,6 +508,9 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_column(&conn, "releases", "cover_art_url", "TEXT")?;
     ensure_column(&conn, "releases", "release_type", "TEXT")?;
     ensure_column(&conn, "releases", "category", "TEXT")?;
+    // A label's hand-picked file in the label art folder (a file name, not a
+    // path: the folder is set per machine, the database may travel).
+    ensure_column(&conn, "labels", "art_file", "TEXT")?;
     // Legacy single-slot `genre` column — pre-v2 schema. Kept as a tombstone
     // because SQLite can't DROP COLUMN cleanly, and so the v1→v2 backfill
     // below can find data to copy. New code MUST NOT read or write it.
@@ -6502,6 +6505,9 @@ async fn check_local_covers(
 pub struct LabelArtInput {
     pub name: String,
     pub image_url: String,
+    /// The hand-picked file in the label art folder, if any.
+    #[serde(default)]
+    pub art_file: Option<String>,
 }
 
 /// One published label image, read from its first bytes. Several labels may
@@ -6546,6 +6552,135 @@ pub struct LabelArtCheck {
     pub library_px: u32,
     pub square_tolerance_pct: f64,
     pub primary: Option<String>,
+    /// The label art folder the local files were read from; None when no
+    /// folder is set (then `locals` is empty).
+    pub folder: Option<String>,
+    /// One per label with a file in the folder (stage 3b).
+    pub locals: Vec<LabelLocalItem>,
+    /// Labels with no file in the folder, by name.
+    pub no_local: Vec<String>,
+}
+
+/// A label's own file in the label art folder, read from its first bytes,
+/// beside what is published for it. Flags as `LabelArtItem`'s, of the local
+/// file. Hashes are not compared: none of the masters is byte-identical to
+/// its published copy (re-encoded on the way out), so size and shape it is.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelLocalItem {
+    pub name: String,
+    pub file: String,
+    /// "picked", "name" or "close" (see `LabelArtMatch`).
+    pub how: String,
+    pub bytes: u64,
+    pub dims: Option<(u32, u32)>,
+    pub format: String,
+    pub low_res: bool,
+    pub over_size: bool,
+    pub png: bool,
+    pub off_square_pct: f64,
+    pub not_square: bool,
+    pub other_format: bool,
+    pub published_url: Option<String>,
+    pub published_dims: Option<(u32, u32)>,
+    /// How many labels show the published image.
+    pub published_shared: usize,
+    /// The published image is someone else's: a placeholder several labels
+    /// show, or a label whose own file is a different one. Then this master
+    /// has never been published. Two names for one label (`Earache` and
+    /// `Earache Records`) share an image that IS their master: not this.
+    pub published_not_own: bool,
+    /// The published copy is a larger copy of the same shape.
+    pub published_larger: bool,
+}
+
+/// Low-res, over the publishing size, how far off square, not square — the
+/// cover quality flags, for any image's dimensions.
+fn shape_flags(dims: Option<(u32, u32)>) -> (bool, bool, f64, bool) {
+    match dims {
+        Some((w, h)) => {
+            let long = w.max(h);
+            let short = w.min(h);
+            let off = if long == 0 { 0.0 } else { (long - short) as f64 / long as f64 };
+            (long < COVER_LOW_PX, long > LIBRARY_COVER_PX, off, off > COVER_SQUARE_TOLERANCE)
+        }
+        None => (false, false, 0.0, false),
+    }
+}
+
+/// The first 256 KB of a file: enough for any header the size is read from.
+fn read_file_head(path: &std::path::Path) -> std::io::Result<(Vec<u8>, u64)> {
+    use std::io::Read;
+    let f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let mut head = Vec::with_capacity(256 * 1024);
+    f.take(256 * 1024).read_to_end(&mut head)?;
+    Ok((head, len))
+}
+
+/// Every label's file in `folder`, read and set beside its published image.
+fn label_locals(
+    folder: &str,
+    labels: &[LabelArtInput],
+    items: &[LabelArtItem],
+) -> Result<(Vec<LabelLocalItem>, Vec<String>), String> {
+    let files = label_art_files(folder)?;
+    let picks: Vec<LabelPickInput> = labels
+        .iter()
+        .map(|l| LabelPickInput { name: l.name.clone(), art_file: l.art_file.clone() })
+        .collect();
+    let (matches, _) = match_label_files(&files, &picks);
+    // Which local file each published image's labels resolve to.
+    let mut files_by_url: std::collections::HashMap<&str, Vec<Option<&str>>> = Default::default();
+    for (m, l) in matches.iter().zip(labels) {
+        files_by_url.entry(l.image_url.trim()).or_default().push(m.file.as_deref());
+    }
+    let published: std::collections::HashMap<&str, &LabelArtItem> =
+        items.iter().map(|i| (i.url.as_str(), i)).collect();
+    let mut out = Vec::new();
+    let mut none = Vec::new();
+    for (m, l) in matches.iter().zip(labels) {
+        let Some(file) = m.file.clone() else {
+            none.push(l.name.clone());
+            continue;
+        };
+        let not_own = files_by_url.get(l.image_url.trim()).is_some_and(|fs| {
+            let mine = Some(file.as_str());
+            let differs = fs.iter().any(|f| f.is_some() && *f != mine);
+            differs || (fs.len() >= 3 && fs.iter().any(|f| *f != mine))
+        });
+        let path = std::path::Path::new(folder.trim()).join(&file);
+        let (head, bytes) = read_file_head(&path).unwrap_or_default();
+        let format = image_format_wide(&head);
+        let dims = blossom::image_dims(&head);
+        let (low_res, over_size, off, not_square) = shape_flags(dims);
+        let url = l.image_url.trim();
+        let pubd = published.get(url).copied();
+        let published_dims = pubd.and_then(|p| p.dims);
+        out.push(LabelLocalItem {
+            name: l.name.clone(),
+            file,
+            how: m.how.clone(),
+            bytes,
+            dims,
+            format: format.to_string(),
+            low_res,
+            over_size,
+            png: format == "png",
+            off_square_pct: (off * 1000.0).round() / 10.0,
+            not_square,
+            other_format: !head.is_empty() && !matches!(format, "jpeg" | "png"),
+            published_url: (!url.is_empty()).then(|| url.to_string()),
+            published_dims,
+            published_shared: pubd.map(|p| p.labels.len()).unwrap_or(0),
+            published_not_own: not_own,
+            published_larger: match (dims, published_dims) {
+                (Some(a), Some(b)) => blossom::is_larger_same_shape(a, b),
+                _ => false,
+            },
+        });
+    }
+    Ok((out, none))
 }
 
 /// `image_format` plus the other web formats a label image turns up in.
@@ -6644,9 +6779,10 @@ async fn check_label_art(
     app: tauri::AppHandle,
     labels: Vec<LabelArtInput>,
     servers: Vec<String>,
+    folder: Option<String>,
 ) -> Result<LabelArtCheck, String> {
     let started = app.clone();
-    survey_label_art(labels, &servers, move |done, total, name| {
+    survey_label_art(labels, &servers, folder, move |done, total, name| {
         if done == 0 {
             let _ = started.emit("label-art:started", total);
         } else {
@@ -6664,6 +6800,7 @@ async fn check_label_art(
 async fn survey_label_art(
     labels: Vec<LabelArtInput>,
     servers: &[String],
+    folder: Option<String>,
     progress: impl Fn(usize, usize, &str),
 ) -> Result<LabelArtCheck, String> {
     use futures::stream::{self, StreamExt};
@@ -6696,6 +6833,18 @@ async fn survey_label_art(
         items.push(label_art_item(url, names, head, primary.as_deref()));
     }
     items.sort_by(|a, b| b.labels.len().cmp(&a.labels.len()).then_with(|| a.url.cmp(&b.url)));
+    // The local files: a listing and a header read each, off the runtime.
+    let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    let (labels, items, locals, no_local) = match folder.clone() {
+        Some(f) => tauri::async_runtime::spawn_blocking(move || {
+            let r = label_locals(&f, &labels, &items);
+            (labels, items, r)
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|(labels, items, r)| r.map(|(lo, none)| (labels, items, lo, none)))?,
+        None => (labels, items, Vec::new(), Vec::new()),
+    };
     Ok(LabelArtCheck {
         labels: labels.len(),
         with_image,
@@ -6705,6 +6854,9 @@ async fn survey_label_art(
         library_px: LIBRARY_COVER_PX,
         square_tolerance_pct: COVER_SQUARE_TOLERANCE * 100.0,
         primary,
+        folder,
+        locals,
+        no_local,
     })
 }
 
@@ -6713,7 +6865,7 @@ mod label_art_tests {
     use super::*;
 
     fn label(name: &str, url: &str) -> LabelArtInput {
-        LabelArtInput { name: name.into(), image_url: url.into() }
+        LabelArtInput { name: name.into(), image_url: url.into(), art_file: None }
     }
 
     fn png_head(w: u32, h: u32) -> Vec<u8> {
@@ -6748,7 +6900,8 @@ mod label_art_tests {
         let Ok(path) = std::env::var("NDISC_LABELS_JSON") else { return };
         let labels: Vec<LabelArtInput> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let servers = vec![std::env::var("NDISC_BLOSSOM").unwrap_or_default()];
-        let c = tauri::async_runtime::block_on(survey_label_art(labels, &servers, |_, _, _| {})).unwrap();
+        let folder = std::env::var("NDISC_LABEL_DIR").ok();
+        let c = tauri::async_runtime::block_on(survey_label_art(labels, &servers, folder, |_, _, _| {})).unwrap();
         let count = |f: &dyn Fn(&LabelArtItem) -> bool| c.items.iter().filter(|r| f(r)).count();
         println!(
             "{} labels, {} with an image, {} images · low-res {} · over {} · png {} · not square {} · other format {} · not on primary {} · unreadable {}",
@@ -6762,6 +6915,13 @@ mod label_art_tests {
         for r in c.items.iter().filter(|r| r.unreadable.is_some()).take(5) {
             println!("  unreadable: {:?} {}", r.unreadable, r.url);
         }
+        let lc = |f: &dyn Fn(&LabelLocalItem) -> bool| c.locals.iter().filter(|r| f(r)).count();
+        println!(
+            "local: {} with a file, {} without · low-res {} · over {} · png {} · not square {} · other {} · placeholder published {} · published larger {}",
+            c.locals.len(), c.no_local.len(),
+            lc(&|r| r.low_res), lc(&|r| r.over_size), lc(&|r| r.png), lc(&|r| r.not_square),
+            lc(&|r| r.other_format), lc(&|r| r.published_not_own), lc(&|r| r.published_larger),
+        );
     }
 
     #[test]
@@ -9453,6 +9613,10 @@ pub struct LabelRow {
     pub image_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site_url: Option<String>,
+    /// A file in the label art folder picked by hand for this label, when
+    /// the name match is wrong or finds nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_file: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -9466,11 +9630,11 @@ pub struct LabelLoad {
 
 fn read_labels(conn: &Connection) -> Result<Vec<LabelRow>, String> {
     let mut stmt = conn
-        .prepare("SELECT name, image_url, site_url FROM labels ORDER BY position, rowid")
+        .prepare("SELECT name, image_url, site_url, art_file FROM labels ORDER BY position, rowid")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(LabelRow { name: r.get(0)?, image_url: r.get(1)?, site_url: r.get(2)? })
+            Ok(LabelRow { name: r.get(0)?, image_url: r.get(1)?, site_url: r.get(2)?, art_file: r.get(3)? })
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
@@ -9483,11 +9647,14 @@ fn write_labels(conn: &mut Connection, labels: &[LabelRow]) -> Result<(), String
     tx.execute("DELETE FROM labels", []).map_err(|e| e.to_string())?;
     {
         let mut ins = tx
-            .prepare("INSERT INTO labels (position, name, image_url, site_url) VALUES (?1, ?2, ?3, ?4)")
+            .prepare(
+                "INSERT INTO labels (position, name, image_url, site_url, art_file) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
             .map_err(|e| e.to_string())?;
         for (i, l) in labels.iter().enumerate() {
             let site = l.site_url.as_deref().filter(|s| !s.trim().is_empty());
-            ins.execute(params![i as i64, l.name, l.image_url, site])
+            let art = l.art_file.as_deref().filter(|s| !s.trim().is_empty());
+            ins.execute(params![i as i64, l.name, l.image_url, site, art])
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -9541,10 +9708,11 @@ mod label_store_tests {
     fn db() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(SCHEMA).unwrap();
+        ensure_column(&c, "labels", "art_file", "TEXT").unwrap();
         c
     }
     fn l(name: &str, url: &str, site: Option<&str>) -> LabelRow {
-        LabelRow { name: name.into(), image_url: url.into(), site_url: site.map(Into::into) }
+        LabelRow { name: name.into(), image_url: url.into(), site_url: site.map(Into::into), art_file: None }
     }
 
     #[test]
@@ -9614,6 +9782,291 @@ mod label_store_tests {
         assert_eq!(read_labels(&c).unwrap(), [l("B", "v", Some("https://b"))]);
         write_labels(&mut c, &[l("A", "u", Some(" "))]).unwrap();
         assert_eq!(read_labels(&c).unwrap()[0].site_url, None);
+    }
+}
+
+// ---------- label art folder: which local file is which label's ----------
+//
+// Stage 3 of label art getting the covers' checks (docs/backlog.md, 4b). A
+// label has no folder of its own: its art sits in one folder of masters
+// named loosely after it (`4th.&.Broadway.label.jpg`, `Acido Records.label.jpg`,
+// `Anti.Static.Recordings.label2.jpg`). A label is matched to a file by name,
+// in three tiers, each tried only when the one before finds nothing:
+//
+// 1. the same words (case, dots, dashes and underscores aside);
+// 2. the same words once "Records", "Recordings", "Music" and the like are
+//    dropped from both (and the misspellings the folder actually holds);
+// 3. the same letters with the spaces gone too ("29 Speedway" = 29speedway).
+//
+// Tiers 2 and 3 are reported as "close", for a person to confirm. A file
+// picked by hand (`art_file`) beats any match. On the real folder
+// (2026-11-20) the tiers find 252, 14 and 6 of the 303 labels with their own
+// art; the rest need a pick or have no master.
+
+const LABEL_ART_EXTS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
+const LABEL_NAME_FILLER: [&str; 10] = [
+    "records", "recordings", "music", "rec", "recs", "label", "ltd", "inc", "rcords", "reocrds",
+];
+
+/// Lower case, accents composed, dots / dashes / underscores as spaces, other
+/// punctuation dropped (keeping `&`, `!` and `+`, which tell labels apart).
+fn label_words(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let s: String = s.nfkc().collect::<String>().to_lowercase();
+    let mapped: String = s
+        .chars()
+        .map(|c| match c {
+            '.' | '_' | '-' | '\u{2013}' | '\u{2014}' => ' ',
+            c if c.is_alphanumeric() || c == '&' || c == '!' || c == '+' || c == ' ' => c,
+            _ => ' ',
+        })
+        .collect();
+    mapped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A master's name without its extension and its `label` suffix:
+/// `Ultra.Records.label.jpg`, `Exalt.Records.label2.jpg`, `!K7.label-out.png`,
+/// `30mil.Reocrds.alt.label.jpg`, `Harmönia.label 2.jpg` → the label part.
+fn label_file_stem(file: &str) -> String {
+    let base = match file.rsplit_once('.') {
+        Some((b, _)) => b,
+        None => file,
+    };
+    let lower = base.to_lowercase();
+    // Find the last "label" that is preceded by '.' or ' ' and followed by
+    // nothing, digits, "-out" / " out", or "2"-style suffixes.
+    if let Some(i) = lower.rfind("label") {
+        let before_ok = i > 0 && matches!(lower.as_bytes()[i - 1], b'.' | b' ');
+        let rest = lower[i + 5..].trim_start_matches([' ', '-']);
+        let after_ok = rest.is_empty() || rest == "out" || rest.chars().all(|c| c.is_ascii_digit());
+        if before_ok && after_ok {
+            let mut head = &base[..i - 1];
+            for alt in [".alt", " alt"] {
+                if head.to_lowercase().ends_with(alt) {
+                    head = &head[..head.len() - alt.len()];
+                }
+            }
+            return head.to_string();
+        }
+    }
+    base.to_string()
+}
+
+fn label_core(words: &str) -> String {
+    words
+        .split(' ')
+        .filter(|w| !LABEL_NAME_FILLER.contains(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Of several files for one label, the one to use: a plain `.label` master
+/// before a `label2` / `-out` / `alt` variant, JPEG or PNG before another
+/// format, then by name.
+fn label_file_rank(file: &str) -> (u8, u8, String) {
+    let lower = file.to_lowercase();
+    let base = lower.rsplit_once('.').map(|(b, _)| b).unwrap_or(&lower);
+    let plain = if base.ends_with(".label") || base.ends_with(" label") { 0 } else { 1 };
+    let ext = lower.rsplit('.').next().unwrap_or("");
+    let common = if matches!(ext, "jpg" | "jpeg" | "png") { 0 } else { 1 };
+    (plain, common, lower)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelPickInput {
+    pub name: String,
+    #[serde(default)]
+    pub art_file: Option<String>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtMatch {
+    pub name: String,
+    /// The file in the folder, when there is one.
+    pub file: Option<String>,
+    /// "picked" (by hand), "name" (tier 1), "close" (tiers 2–3, worth a
+    /// look), "missing" (picked, but the file is gone) or "none".
+    pub how: String,
+    /// Other files that matched as well, when there were several.
+    pub others: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtMatches {
+    pub folder: String,
+    /// Image files in the folder.
+    pub files: usize,
+    pub matches: Vec<LabelArtMatch>,
+    /// Image files no label uses, for picking from.
+    pub unused: Vec<String>,
+}
+
+fn match_label_files(files: &[String], labels: &[LabelPickInput]) -> (Vec<LabelArtMatch>, Vec<String>) {
+    type Index = std::collections::HashMap<String, Vec<String>>;
+    let mut tiers: [Index; 3] = Default::default();
+    for f in files {
+        let w = label_words(&label_file_stem(f));
+        let c = label_core(&w);
+        tiers[0].entry(w).or_default().push(f.clone());
+        if !c.is_empty() {
+            tiers[2].entry(c.replace(' ', "")).or_default().push(f.clone());
+            tiers[1].entry(c).or_default().push(f.clone());
+        }
+    }
+    for t in tiers.iter_mut() {
+        for v in t.values_mut() {
+            v.sort_by_key(|f| label_file_rank(f));
+        }
+    }
+    let have: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
+    let mut used = std::collections::HashSet::new();
+    let out = labels
+        .iter()
+        .map(|l| {
+            if let Some(p) = l.art_file.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+                if have.contains(p) {
+                    used.insert(p.to_string());
+                    return LabelArtMatch { name: l.name.clone(), file: Some(p.to_string()), how: "picked".into(), others: vec![] };
+                }
+                return LabelArtMatch { name: l.name.clone(), file: None, how: "missing".into(), others: vec![p.to_string()] };
+            }
+            let w = label_words(&l.name);
+            let c = label_core(&w);
+            let keys = [w.clone(), c.clone(), c.replace(' ', "")];
+            for (tier, key) in keys.iter().enumerate() {
+                if key.is_empty() {
+                    continue;
+                }
+                if let Some(found) = tiers[tier].get(key) {
+                    used.extend(found.iter().cloned());
+                    return LabelArtMatch {
+                        name: l.name.clone(),
+                        file: Some(found[0].clone()),
+                        how: if tier == 0 { "name" } else { "close" }.into(),
+                        others: found[1..].to_vec(),
+                    };
+                }
+            }
+            LabelArtMatch { name: l.name.clone(), file: None, how: "none".into(), others: vec![] }
+        })
+        .collect();
+    let mut unused: Vec<String> = files.iter().filter(|f| !used.contains(*f)).cloned().collect();
+    unused.sort_by_key(|f| f.to_lowercase());
+    (out, unused)
+}
+
+/// The image files directly in `folder` (not its subfolders), by name.
+fn label_art_files(folder: &str) -> Result<Vec<String>, String> {
+    let rd = std::fs::read_dir(folder.trim()).map_err(|e| format!("read {folder}: {e}"))?;
+    let mut files: Vec<String> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.'))
+        .filter(|n| {
+            n.rsplit_once('.')
+                .is_some_and(|(_, x)| LABEL_ART_EXTS.contains(&x.to_lowercase().as_str()))
+        })
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Match every label to a file in the label art folder. Read-only.
+#[tauri::command]
+fn match_label_art(folder: String, labels: Vec<LabelPickInput>) -> Result<LabelArtMatches, String> {
+    let files = label_art_files(&folder)?;
+    let (matches, unused) = match_label_files(&files, &labels);
+    Ok(LabelArtMatches { folder, files: files.len(), matches, unused })
+}
+
+#[cfg(test)]
+mod label_match_tests {
+    use super::*;
+
+    fn pick(name: &str, art: Option<&str>) -> LabelPickInput {
+        LabelPickInput { name: name.into(), art_file: art.map(Into::into) }
+    }
+    fn files(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_file_stem_drops_the_label_suffix_in_its_spellings() {
+        assert_eq!(label_file_stem("Ultra.Records.label.jpg"), "Ultra.Records");
+        assert_eq!(label_file_stem("Exalt.Records.label2.jpg"), "Exalt.Records");
+        assert_eq!(label_file_stem("!K7.label-out.png"), "!K7");
+        assert_eq!(label_file_stem("30mil.Reocrds.alt.label.jpg"), "30mil.Reocrds");
+        assert_eq!(label_file_stem("Harmönia.label 2.jpg"), "Harmönia");
+        assert_eq!(label_file_stem("Die Schachtel.jpg"), "Die Schachtel");
+        assert_eq!(label_file_stem("Labelle.jpg"), "Labelle", "label inside a word is not the suffix");
+    }
+
+    #[test]
+    fn three_tiers_and_a_pick_beats_them() {
+        let f = files(&[
+            "4th.&.Broadway.label.jpg",
+            "Red.Rhino.rcords.label.jpg",
+            "touchinbass.label.jpg",
+            "!K7.label-out.png",
+            "!K7.label.jpg",
+            "Warp.label.jpg",
+            "spare.jpg",
+        ]);
+        let (m, unused) = match_label_files(
+            &f,
+            &[
+                pick("4th & Broadway", None),
+                pick("Red Rhino Records", None),
+                pick("Touchin Bass", None),
+                pick("!K7 Records", None),
+                pick("Warp", Some("spare.jpg")),
+                pick("Gone", Some("not-there.jpg")),
+                pick("Nobody", None),
+            ],
+        );
+        let got: Vec<(&str, Option<&str>, &str)> =
+            m.iter().map(|x| (x.name.as_str(), x.file.as_deref(), x.how.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                ("4th & Broadway", Some("4th.&.Broadway.label.jpg"), "name"),
+                ("Red Rhino Records", Some("Red.Rhino.rcords.label.jpg"), "close"),
+                ("Touchin Bass", Some("touchinbass.label.jpg"), "close"),
+                ("!K7 Records", Some("!K7.label.jpg"), "close"),
+                ("Warp", Some("spare.jpg"), "picked"),
+                ("Gone", None, "missing"),
+                ("Nobody", None, "none"),
+            ]
+        );
+        assert_eq!(m[3].others, ["!K7.label-out.png"], "the plain master first, the variant listed");
+        assert_eq!(unused, ["Warp.label.jpg"], "the pick took Warp off its name match");
+    }
+
+    /// The real folder: `NDISC_LABELS_JSON=<labels> NDISC_LABEL_DIR=<folder>
+    /// cargo test real_label_match -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_label_match() {
+        let (Ok(lj), Ok(dir)) = (std::env::var("NDISC_LABELS_JSON"), std::env::var("NDISC_LABEL_DIR")) else {
+            return;
+        };
+        let rows: Vec<LabelRow> = serde_json::from_str(&std::fs::read_to_string(lj).unwrap()).unwrap();
+        let input: Vec<LabelPickInput> =
+            rows.iter().map(|r| LabelPickInput { name: r.name.clone(), art_file: None }).collect();
+        let f = label_art_files(&dir).unwrap();
+        let (m, unused) = match_label_files(&f, &input);
+        let n = |h: &str| m.iter().filter(|x| x.how == h).count();
+        println!(
+            "{} files, {} labels: {} by name, {} close, {} none; {} files unused",
+            f.len(), m.len(), n("name"), n("close"), n("none"), unused.len()
+        );
+        for x in m.iter().filter(|x| x.how == "close") {
+            println!("  close: {} -> {}", x.name, x.file.as_deref().unwrap_or(""));
+        }
     }
 }
 
@@ -13702,6 +14155,7 @@ pub fn run() {
             check_label_art,
             load_labels,
             save_labels,
+            match_label_art,
             write_cover_list,
             save_published_covers_to_disk,
             upload_local_covers,

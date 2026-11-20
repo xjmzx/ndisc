@@ -71,7 +71,7 @@ import {
 } from "./lib/tauri";
 
 
-// Where the labels lived until 0.7.8. Read once per database, by the first
+// Where the labels lived until 0.8.0. Read once per database, by the first
 // load_labels, and otherwise left alone as a backup; never written now.
 const LABELS_STORAGE_KEY = "ndisc.labels";
 
@@ -223,6 +223,7 @@ export default function App() {
         name: l.name,
         imageUrl: l.imageUrl,
         ...(l.siteUrl ? { siteUrl: l.siteUrl } : {}),
+        ...(l.artFile ? { artFile: l.artFile } : {}),
       }));
       const cleaned = clearStaleBundleUrls(loaded);
       setLabelsState(cleaned);

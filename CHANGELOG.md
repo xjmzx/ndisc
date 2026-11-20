@@ -24,6 +24,28 @@ wave; an app-only change bumps ndisc alone. See
 ## Unreleased
 
 ### Added
+- **A label art folder.** The folder icon in the Labels list header sets
+  where the label images are kept on this computer (per machine; the
+  database does not hold the path). Each label is matched to a file there
+  by name: the same words first, then the same words without "Records",
+  "Recordings", "Music" and the like, then the same letters without spaces
+  ("29 Speedway" finds `29speedway.label.jpg`). The last two are shown as
+  close matches to check. A label's form shows its file, how it was found,
+  and **Pick…** to choose one by hand (kept in the database as a file name)
+  or × to go back to the name match. On the real folder 315 of 583 labels
+  match (287 by name, 28 close); 51 files are unused. Stage 3a of label art
+  getting the covers' checks.
+- **Check label art reads the local files too.** With a label art folder
+  set, Review's Labels tab has **Published images** and **Local files**.
+  Local files sets each label's own file (size, format, dimensions, the
+  covers' flags) beside its published image, with chips for low-res, over
+  600 px, PNG, not square, another format, **Not its own image** (the
+  label publishes an image that is not this file — usually the placeholder
+  — so its master was never published; two names for one label sharing
+  their own image are not counted) and **Published is larger**, plus
+  **No file**, the labels to pick a file for. The inspector shows the two
+  side by side. First run: 315 with a file, 268 without; 43 masters never
+  published. Stage 3b.
 - **Labels live in the database.** The label library (name, image address,
   website) was kept only in the app's webview storage, which has had to be
   restored by hand before. It is now a `labels` table in the catalogue

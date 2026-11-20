@@ -57,6 +57,13 @@ Home is open; off Home, the Covers tab shows its results read-only.
 The other maintenance results (Reconcile, Mirror errors, Relay audit, Tidy
 names) stay where they are; any can move into the overlay later.
 
+## Startup check: count labels too (note, 2026-11-20)
+
+The Startup check's catalogue line reads "2,606 releases". Since labels moved
+into the database (0.8.0) they can be counted the same way: "2,606 releases ·
+583 labels". Small; `startup_status` would return the count from the
+`labels` table.
+
 ## Local covers vs Blossom: report what it cannot compare (planned 2026-11-13)
 
 **Built 2026-11-18, unreleased.** The check now sweeps every published
@@ -190,7 +197,20 @@ hash. The `art_name` recorded in the old `labels.json` export has drifted
    a backup and no longer written. The 31238 manifest is unchanged. Labels
    now follow the open database. Checked: the real 583 round-trip
    identical.
-3. **A label art folder** (medium). A setting, matched by normalised name,
+3. **A label art folder** (medium). **3a built 2026-11-20:** the folder
+   setting (localStorage `ndisc.labelArtFolder`, per machine), name matching
+   in three tiers (`match_label_art`; exact words, then without
+   Records/Recordings/Music and the folder's misspellings, then without
+   spaces), and a hand pick per label (`labels.art_file`, a file name).
+   Real folder: 315 of 583 match, 28 of them close, 51 files unused.
+   **3b built 2026-11-20:** `check_label_art` takes the folder and returns
+   `locals` (one per label with a file: header-read size, format, flags,
+   beside its published dims and how many labels share that published
+   image) and `noLocal`. Real run: 15 low-res, 14 over 600, 6 PNG, 7 not
+   square, 1 other format; 43 masters never published (`publishedNotOwn`: the
+   label publishes someone else's image; two names for one label sharing
+   their own image don't count); 43 where the published copy is larger. Still to build: **3c** label lines
+   in the Export list, **3d** upload a label's local file. Original note: A setting, matched by normalised name,
    with a per-label file pick for the misses. Then labels join the quality
    survey and Export list (the `cover file` column lets ncover work on
    single files in a shared folder: several lines in one folder since GTK

@@ -3,7 +3,13 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { ExternalLink, Pencil, Play, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { useReview, type ReviewTab } from "../lib/review";
-import { labelArtKinds, type LabelArtCheck, type LabelArtItem } from "../lib/tauri";
+import {
+  labelArtKinds,
+  labelLocalKinds,
+  type LabelArtCheck,
+  type LabelArtItem,
+  type LabelLocalItem,
+} from "../lib/tauri";
 import { LocalCoverDetails, type CoverInspect } from "./ReleaseList";
 import type { LabelEntry } from "./LabelPanel";
 
@@ -134,6 +140,156 @@ function LabelArtDetails({
           <li className="px-2 py-1 text-muted">nothing here: every label image is in shape</li>
         )}
       </ul>
+    </div>
+  );
+}
+
+type LocalFilter = "all" | "low" | "over" | "png" | "shape" | "other" | "shared" | "larger" | "none";
+
+function localPasses(f: LocalFilter, r: LabelLocalItem): boolean {
+  switch (f) {
+    case "low":
+      return r.lowRes;
+    case "over":
+      return r.overSize;
+    case "png":
+      return r.png;
+    case "shape":
+      return r.notSquare;
+    case "other":
+      return r.otherFormat;
+    case "shared":
+      return r.publishedNotOwn;
+    case "larger":
+      return r.publishedLarger;
+    default:
+      return true;
+  }
+}
+
+const joinPath = (folder: string, file: string) => `${folder.replace(/[\\/]+$/, "")}/${file}`;
+
+function LabelLocalDetails({
+  check,
+  onInspect,
+  inspected,
+  onNoFile,
+}: {
+  check: LabelArtCheck;
+  onInspect: (item: LabelLocalItem) => void;
+  // The inspected row's label name (a local file or a "No file" name).
+  inspected: string | null;
+  onNoFile: (name: string) => void;
+}) {
+  const [filter, setFilter] = useState<LocalFilter>("all");
+  const folder = check.folder ?? "";
+  const shown = filter === "none" ? [] : check.locals.filter((r) => localPasses(filter, r));
+  return (
+    <div className="text-xs">
+      <p className="text-muted">
+        Each label’s own file in <span className="font-mono">{folder}</span>, beside what is
+        published for it. Not its own image: the label publishes an image that is not this file
+        (usually the placeholder many labels show), so its own master has never been published.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
+        {(
+          [
+            ["all", "With a file", check.locals.length],
+            ["low", "Low-res", check.locals.filter((r) => r.lowRes).length],
+            ["over", `Over ${check.libraryPx}`, check.locals.filter((r) => r.overSize).length],
+            ["png", "PNG", check.locals.filter((r) => r.png).length],
+            ["shape", "Not square", check.locals.filter((r) => r.notSquare).length],
+            ["other", "Other format", check.locals.filter((r) => r.otherFormat).length],
+            ["shared", "Not its own image", check.locals.filter((r) => r.publishedNotOwn).length],
+            ["larger", "Published is larger", check.locals.filter((r) => r.publishedLarger).length],
+            ["none", "No file", check.noLocal.length],
+          ] as const
+        )
+          .filter(([k, , n]) => k === "all" || n > 0)
+          .map(([k, label, n]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setFilter(k)}
+              aria-pressed={filter === k}
+              className={cn(
+                "px-2 py-0.5 rounded",
+                filter === k ? "bg-accent/15 text-accent" : "bg-surface text-muted hover:text-fg",
+              )}
+            >
+              {label} <span className="font-mono">{n}</span>
+            </button>
+          ))}
+      </div>
+      {filter === "none" ? (
+        <>
+          <p className="mt-2 text-muted">
+            No file in the folder matches these names. Click one to see what it publishes; Edit
+            label opens its form to pick its file.
+          </p>
+          <ul className="mt-1 grid grid-cols-2 xl:grid-cols-3 gap-x-4 gap-y-0.5">
+            {check.noLocal.map((name) => (
+              <li key={name}>
+                <button
+                  type="button"
+                  onClick={() => onNoFile(name)}
+                  className={cn(
+                    "w-full text-left px-2 py-0.5 rounded hover:bg-surface truncate",
+                    inspected === name && "ring-1 ring-accent/70",
+                  )}
+                >
+                  {name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <ul className="mt-2 grid grid-cols-1 xl:grid-cols-2 gap-1">
+          {shown.map((r) => (
+            <li
+              key={r.name}
+              onClick={() => onInspect(r)}
+              className={cn(
+                "flex items-center gap-2 px-2 py-1.5 rounded bg-bg/50 cursor-pointer hover:bg-bg/80",
+                inspected === r.name && "ring-1 ring-accent/70",
+              )}
+            >
+              <img
+                src={convertFileSrc(joinPath(folder, r.file))}
+                loading="lazy"
+                alt=""
+                className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                title="Local file"
+              />
+              {r.publishedUrl ? (
+                <img
+                  src={r.publishedUrl}
+                  loading="lazy"
+                  alt=""
+                  className="w-12 h-12 object-contain bg-surface rounded shrink-0"
+                  title="Published"
+                />
+              ) : (
+                <span className="w-12 h-12 bg-surface/50 rounded shrink-0" />
+              )}
+              <span className="min-w-0">
+                <span className="block truncate text-fg">{r.name}</span>
+                <span className="block text-[10px] text-muted font-mono truncate" title={r.file}>
+                  {r.dims ? `${r.dims[0]}×${r.dims[1]}` : "size ?"} · {r.format} ·{" "}
+                  {(r.bytes / 1024).toFixed(0)} KB
+                  {r.how === "close" ? " · close match" : ""}
+                  {labelLocalKinds(r, check)
+                    .filter((k) => k !== r.format)
+                    .map((k) => ` · ${k}`)
+                    .join("")}
+                </span>
+              </span>
+            </li>
+          ))}
+          {shown.length === 0 && <li className="px-2 py-1 text-muted">none</li>}
+        </ul>
+      )}
     </div>
   );
 }
@@ -296,6 +452,73 @@ function LabelInspector({
   );
 }
 
+function LocalLabelInspector({
+  item,
+  check,
+  onEdit,
+}: {
+  item: LabelLocalItem;
+  check: LabelArtCheck;
+  onEdit: () => void;
+}) {
+  const kinds = labelLocalKinds(item, check);
+  const folder = check.folder ?? "";
+  return (
+    <div className="flex flex-col gap-3 text-xs">
+      <div>
+        <div className="text-sm text-fg">{item.name}</div>
+        <p className="mt-1 text-muted">
+          {item.how === "picked"
+            ? "File picked by hand."
+            : item.how === "close"
+              ? "A close match by name: check it is this label's."
+              : "Matched by name."}
+          {item.publishedNotOwn
+            ? ` It publishes an image that is not this file${
+                item.publishedShared > 2 ? `, shared with ${item.publishedShared - 1} other labels (a placeholder)` : ""
+              }, so this master has never been published.`
+            : item.publishedShared > 1
+              ? ` Its published image is shared with ${item.publishedShared - 1} other name${
+                  item.publishedShared === 2 ? "" : "s"
+                } for the same label.`
+              : ""}
+          {item.publishedLarger && " The published copy is larger than this file."}
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Pane title="Local file">
+          <BigImage src={convertFileSrc(joinPath(folder, item.file))} alt="Local file" />
+          <span className="font-mono text-[10px] text-muted">
+            {dimsText(item.dims)} · {item.format} · {(item.bytes / 1024).toFixed(0)} KB
+          </span>
+          <span className="font-mono text-[10px] text-muted break-all">{item.file}</span>
+        </Pane>
+        <Pane title="Published">
+          <BigImage src={item.publishedUrl} alt="Published" />
+          <span className="font-mono text-[10px] text-muted">
+            {item.publishedUrl ? dimsText(item.publishedDims) : "nothing published"}
+          </span>
+          {item.publishedUrl && (
+            <span className="font-mono text-[10px] text-muted break-all">{item.publishedUrl}</span>
+          )}
+        </Pane>
+      </div>
+      {kinds.length > 0 && <div className="font-mono text-[10px] text-warn">{kinds.join(" · ")}</div>}
+      <div>
+        <button
+          type="button"
+          onClick={onEdit}
+          className={cn(actionCls, "bg-surface text-muted hover:text-fg flex items-center gap-1")}
+          title="Close Review and open this label's form"
+        >
+          <Pencil size={12} />
+          Edit label
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ReviewOverlay({
   labels,
   onPickLabel,
@@ -312,8 +535,17 @@ export function ReviewOverlay({
   // What the inspector shows, per tab. A fresh check clears it.
   const [coverPick, setCoverPick] = useState<CoverInspect | null>(null);
   const [labelPick, setLabelPick] = useState<LabelArtItem | null>(null);
+  const [localPick, setLocalPick] = useState<LabelLocalItem | null>(null);
+  // A "No file" label being inspected, by name.
+  const [noFilePick, setNoFilePick] = useState<string | null>(null);
+  // The Labels tab shows the published images or the label art folder's files.
+  const [labelSide, setLabelSide] = useState<"published" | "local">("published");
   useEffect(() => setCoverPick(null), [cover?.run]);
-  useEffect(() => setLabelPick(null), [label]);
+  useEffect(() => {
+    setLabelPick(null);
+    setLocalPick(null);
+    setNoFilePick(null);
+  }, [label]);
   const pickLabel = (n: string, u: string, site: string) => {
     close();
     onPickLabel(n, u, site);
@@ -464,11 +696,57 @@ export function ReviewOverlay({
               <p className="mb-2 text-xs text-warn">{review.labelError}</p>
             )}
             {label ? (
-              <LabelArtDetails
-                check={label}
-                onInspect={setLabelPick}
-                inspected={labelPick?.url ?? null}
-              />
+              <>
+                {label.folder && (
+                  <div className="mb-3 flex items-center gap-1 text-[11px]">
+                    {(
+                      [
+                        ["published", `Published images ${label.images}`],
+                        ["local", `Local files ${label.locals.length}`],
+                      ] as const
+                    ).map(([k, name]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setLabelSide(k)}
+                        aria-pressed={labelSide === k}
+                        className={cn(
+                          "px-2.5 py-0.5 rounded-md",
+                          labelSide === k ? "bg-surface text-fg" : "text-muted hover:text-fg",
+                        )}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {label.folder && labelSide === "local" ? (
+                  <LabelLocalDetails
+                    check={label}
+                    onInspect={(item) => {
+                      setNoFilePick(null);
+                      setLocalPick(item);
+                    }}
+                    inspected={noFilePick ?? localPick?.name ?? null}
+                    onNoFile={(name) => {
+                      setLocalPick(null);
+                      setNoFilePick(name);
+                    }}
+                  />
+                ) : (
+                  <LabelArtDetails
+                    check={label}
+                    onInspect={setLabelPick}
+                    inspected={labelPick?.url ?? null}
+                  />
+                )}
+                {!label.folder && (
+                  <p className="mt-3 text-[11px] text-muted">
+                    Set a label art folder (the folder icon in the Labels list) to check each
+                    label’s own file as well.
+                  </p>
+                )}
+              </>
             ) : (
               !review.labelRunning && (
                 <p className="text-xs text-muted">
@@ -494,6 +772,51 @@ export function ReviewOverlay({
               />
             ) : (
               <p className="text-xs text-muted">Select a cover to see it large.</p>
+            )
+          ) : label && label.folder && labelSide === "local" ? (
+            noFilePick ? (
+              (() => {
+                const e = labels.find((l) => normaliseName(l.name) === normaliseName(noFilePick));
+                return (
+                  <div className="flex flex-col gap-3 text-xs">
+                    <div>
+                      <div className="text-sm text-fg">{noFilePick}</div>
+                      <p className="mt-1 text-muted">
+                        No file in the label art folder matches this name. Edit label opens its
+                        form, where Pick… chooses its file by hand.
+                      </p>
+                    </div>
+                    <Pane title="Published">
+                      <BigImage src={e?.imageUrl || null} alt="Published" />
+                      {e?.imageUrl && (
+                        <span className="font-mono text-[10px] text-muted break-all">{e.imageUrl}</span>
+                      )}
+                    </Pane>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => pickLabel(noFilePick, e?.imageUrl ?? "", e?.siteUrl ?? "")}
+                        className={cn(actionCls, "bg-surface text-muted hover:text-fg flex items-center gap-1")}
+                        title="Close Review and open this label's form"
+                      >
+                        <Pencil size={12} />
+                        Edit label
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : localPick ? (
+              <LocalLabelInspector
+                item={localPick}
+                check={label}
+                onEdit={() => {
+                  const e = labels.find((l) => normaliseName(l.name) === normaliseName(localPick.name));
+                  pickLabel(localPick.name, e?.imageUrl ?? localPick.publishedUrl ?? "", e?.siteUrl ?? "");
+                }}
+              />
+            ) : (
+              <p className="text-xs text-muted">Select a label to see its file large.</p>
             )
           ) : labelPick && label ? (
             <LabelInspector item={labelPick} check={label} labels={labels} onPick={pickLabel} />

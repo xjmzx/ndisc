@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownAZ, ArrowDownWideNarrow, Check, ImageOff, ImageUp, Link2Off, List, ScanSearch, Search, X } from "lucide-react";
+import { ArrowDownAZ, ArrowDownWideNarrow, Check, FolderOpen, ImageOff, ImageUp, Link2Off, List, ScanSearch, Search, X } from "lucide-react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
 import { Section } from "./Section";
@@ -307,6 +307,41 @@ export function LabelviewPanel({
     else void review.runLabelCheck();
   }
 
+  // The label art folder: where the label masters live on this computer.
+  // Each label is matched to a file in it by name (or a hand pick).
+  async function pickArtFolder() {
+    const p = await openDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: review.artFolder ?? undefined,
+      title: "Label art folder",
+    });
+    if (typeof p === "string") review.setArtFolder(p);
+  }
+  const artFound = review.artMatches?.matches.filter((m) => m.file).length ?? 0;
+  const artClose = review.artMatches?.matches.filter((m) => m.how === "close").length ?? 0;
+  const artFolderButton = (
+    <button
+      type="button"
+      onClick={pickArtFolder}
+      title={
+        !review.artFolder
+          ? "Set the label art folder: where your label images are kept on this computer. Each label is matched to a file in it by name."
+          : review.artError
+            ? `Label art folder: ${review.artFolder}\n${review.artError}`
+            : `Label art folder: ${review.artFolder}\n${artFound} of ${labels.length} labels have a file there (${artClose} by a close match, worth a look); ${review.artMatches?.unused.length ?? 0} files unused. Click to choose another folder.`
+      }
+      aria-label="Label art folder"
+      className={cn(
+        "flex items-center gap-1 px-1 py-0.5 rounded-md transition-colors text-[10px] tabular-nums hover:bg-surface",
+        review.artError ? "text-alert" : review.artFolder ? "text-fg/80" : "text-muted hover:text-accent",
+      )}
+    >
+      <FolderOpen size={12} />
+      {review.artFolder && !review.artError && artFound}
+    </button>
+  );
+
   const artCheckButton = (
     <button
       type="button"
@@ -416,6 +451,7 @@ export function LabelviewPanel({
       {sortToggle}
       {orphansToggle}
       {noArtToggle}
+      {artFolderButton}
       {artCheckButton}
     </div>
   );

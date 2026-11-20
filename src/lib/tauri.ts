@@ -1208,13 +1208,15 @@ export async function checkLocalCovers(servers: string[]): Promise<LocalCoverChe
   return invoke<LocalCoverCheck>("check_local_covers", { servers });
 }
 
-// The label library, in the database since 0.7.8 (it was localStorage only).
+// The label library, in the database since 0.8.0 (it was localStorage only).
 // The first load of each database takes `fromStorage` (the old localStorage
 // list) if the table is empty, and never again.
 export interface LabelRow {
   name: string;
   imageUrl: string;
   siteUrl?: string;
+  // A file in the label art folder picked by hand (a file name).
+  artFile?: string;
 }
 
 export async function loadLabelsDb(
@@ -1226,7 +1228,38 @@ export async function loadLabelsDb(
 // Replace every label with `labels` (the whole list, as the app holds it).
 export async function saveLabelsDb(labels: LabelRow[]): Promise<void> {
   return invoke("save_labels", {
-    labels: labels.map((l) => ({ name: l.name, imageUrl: l.imageUrl, siteUrl: l.siteUrl })),
+    labels: labels.map((l) => ({
+      name: l.name,
+      imageUrl: l.imageUrl,
+      siteUrl: l.siteUrl,
+      artFile: l.artFile,
+    })),
+  });
+}
+
+// Which file in the label art folder is each label's (backlog 4b, stage 3).
+export interface LabelArtMatch {
+  name: string;
+  file: string | null;
+  // "picked" | "name" | "close" | "missing" | "none"
+  how: string;
+  others: string[];
+}
+
+export interface LabelArtMatches {
+  folder: string;
+  files: number;
+  matches: LabelArtMatch[];
+  unused: string[];
+}
+
+export async function matchLabelArt(
+  folder: string,
+  labels: { name: string; artFile?: string }[],
+): Promise<LabelArtMatches> {
+  return invoke("match_label_art", {
+    folder,
+    labels: labels.map((l) => ({ name: l.name, artFile: l.artFile ?? null })),
   });
 }
 
@@ -1248,6 +1281,29 @@ export interface LabelArtItem {
   unreadable: string | null;
 }
 
+// A label's own file in the label art folder beside its published image.
+export interface LabelLocalItem {
+  name: string;
+  file: string;
+  how: string;
+  bytes: number;
+  dims: [number, number] | null;
+  format: string;
+  lowRes: boolean;
+  overSize: boolean;
+  png: boolean;
+  offSquarePct: number;
+  notSquare: boolean;
+  otherFormat: boolean;
+  publishedUrl: string | null;
+  publishedDims: [number, number] | null;
+  publishedShared: number;
+  // The published image is someone else's (a placeholder, or another
+  // label's own file): this master has never been published.
+  publishedNotOwn: boolean;
+  publishedLarger: boolean;
+}
+
 export interface LabelArtCheck {
   labels: number;
   withImage: number;
@@ -1257,19 +1313,37 @@ export interface LabelArtCheck {
   libraryPx: number;
   squareTolerancePct: number;
   primary: string | null;
+  folder: string | null;
+  locals: LabelLocalItem[];
+  noLocal: string[];
 }
 
 // Read-only survey of every published label image (backlog 4b, stage 1):
 // one header read per distinct address, flagged as the cover quality group
 // is. Emits `label-art:started` / `label-art:progress`.
 export async function checkLabelArt(
-  labels: { name: string; imageUrl: string }[],
+  labels: { name: string; imageUrl: string; artFile?: string }[],
   servers: string[],
+  folder: string | null,
 ): Promise<LabelArtCheck> {
   return invoke<LabelArtCheck>("check_label_art", {
-    labels: labels.map((l) => ({ name: l.name, imageUrl: l.imageUrl })),
+    labels: labels.map((l) => ({ name: l.name, imageUrl: l.imageUrl, artFile: l.artFile ?? null })),
     servers,
+    folder,
   });
+}
+
+// The flags of one local label file, in the same words.
+export function labelLocalKinds(r: LabelLocalItem, check: LabelArtCheck): string[] {
+  const k: string[] = [];
+  if (r.lowRes) k.push(`low-res<${check.lowPx}`);
+  if (r.overSize) k.push(`over-${check.libraryPx}`);
+  if (r.png) k.push("png");
+  if (r.otherFormat) k.push(r.format);
+  if (r.notSquare) k.push(`off-square-${Math.round(r.offSquarePct)}%`);
+  if (r.publishedNotOwn) k.push("not-its-own-image");
+  if (r.publishedLarger) k.push("published-larger");
+  return k;
 }
 
 // The flags of one label image, in the cover quality group's words.
