@@ -32,6 +32,7 @@ import { Section } from "./Section";
 import { ViewToggle, type ReleaseLayout } from "./ViewToggle";
 import { CoverGrid } from "./CoverGrid";
 import { CountBadge, LeafDots } from "./LeafIcon";
+import { useReview } from "../lib/review";
 import {
   auditRelays,
   deleteRelease,
@@ -325,6 +326,7 @@ export function ReleaseList({
     | "artworkNames"
     | "folders";
   const [activeOp, setActiveOp] = useState<OpKind | null>(null);
+  const review = useReview();
   // "localCovers" runs twice — the check, then the upload — and the progress
   // line says which.
   const [localUploading, setLocalUploading] = useState(false);
@@ -355,12 +357,6 @@ export function ReleaseList({
     | { kind: "coverMirror"; data: CoverMirroring }
     | { kind: "artworkNames"; data: ArtworkTidy }
     | { kind: "folders"; data: FolderAssignments }
-    | {
-        kind: "localCovers";
-        data: LocalCoverCheck;
-        uploads: LocalCoverUploads | null;
-        saves: SavePublishedCovers | null;
-      }
     | null
   >(null);
 
@@ -627,7 +623,10 @@ export function ReleaseList({
         }),
       );
       const data = await checkLocalCovers(blossomServers);
-      setOpSummary({ kind: "localCovers", data, uploads: null, saves: null });
+      // The results live in the review store; the overlay opens on them as
+      // soon as the check finishes, with the summary line left in place.
+      review.setCover({ data, uploads: null, saves: null, run: (review.cover?.run ?? 0) + 1 });
+      review.show("covers");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -664,6 +663,9 @@ export function ReleaseList({
     );
     if (!yes) return;
 
+    // The progress line is the list's, under the overlay: close it while the
+    // upload runs, and open it again on the result.
+    review.close();
     setActiveOp("localCovers");
     setLocalUploading(true);
     setOpProgress({ current: 0, total: n, currentDir: "" });
@@ -676,8 +678,9 @@ export function ReleaseList({
         }),
       );
       const uploads = await uploadLocalCovers(ids, blossomServers);
-      setOpSummary({ kind: "localCovers", data: check, uploads, saves });
+      review.setCover({ data: check, uploads, saves, run: review.cover?.run ?? 0 });
       await reload();
+      review.show("covers");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -709,6 +712,7 @@ export function ReleaseList({
     );
     if (!yes) return;
 
+    review.close();
     setActiveOp("localCovers");
     setLocalSaving(true);
     setOpProgress({ current: 0, total: n, currentDir: "" });
@@ -721,8 +725,9 @@ export function ReleaseList({
         }),
       );
       const saves = await savePublishedCoversToDisk(ids);
-      setOpSummary({ kind: "localCovers", data: check, uploads, saves });
+      review.setCover({ data: check, uploads, saves, run: review.cover?.run ?? 0 });
       await reload();
+      review.show("covers");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -822,10 +827,47 @@ export function ReleaseList({
     }
   }
 
+  // The Review overlay acts through these while Home is open. A ref keeps
+  // them pointing at this render's functions and the latest results.
+  const coverActRef = useRef({
+    check: () => {},
+    upload: (_ids: number[]) => {},
+    save: (_ids: number[]) => {},
+  });
+  coverActRef.current = {
+    check: () => {
+      if (activeOp === null) void runLocalCoverCheck();
+    },
+    upload: (ids) => {
+      const c = review.cover;
+      if (c) void runLocalCoverUpload(c.data, ids, c.saves);
+    },
+    save: (ids) => {
+      const c = review.cover;
+      if (c) void runSavePublishedCovers(c.data, ids, c.uploads);
+    },
+  };
+  const { setCoverActions } = review;
+  useEffect(() => {
+    setCoverActions({
+      check: () => coverActRef.current.check(),
+      upload: (ids) => coverActRef.current.upload(ids),
+      save: (ids) => coverActRef.current.save(ids),
+      busy: activeOp !== null,
+    });
+  }, [activeOp, setCoverActions]);
+  useEffect(() => () => setCoverActions(null), [setCoverActions]);
+
   async function runBackgroundOp(kind: OpKind) {
     if (activeOp !== null) return;
 
     if (kind === "localCovers") {
+      // With results held, the menu opens them; Review's Run again is the
+      // new check, so looking again never costs a rescan.
+      if (review.cover) {
+        review.show("covers");
+        return;
+      }
       await runLocalCoverCheck();
       return;
     }
@@ -1994,6 +2036,91 @@ export function ReleaseList({
         />
       )}
 
+      {!activeOp && !opSummary && review.cover && (() => {
+        const c = review.cover;
+        return (
+          <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs
+                          flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => review.show("covers")}
+              title="Open the results in Review"
+              className="flex flex-wrap gap-x-3 gap-y-0.5 text-left hover:opacity-80"
+            >
+                {c.uploads && (
+                  <span className="text-ok">
+                    uploaded{" "}
+                    <span className="font-mono">{c.uploads.uploaded}</span>
+                  </span>
+                )}
+                <span
+                  className={
+                    c.data.differing.length > 0 ? "text-warn" : "text-muted"
+                  }
+                >
+                  differ{" "}
+                  <span className="font-mono">{c.data.differing.length}</span>
+                </span>
+                <span className="text-muted">
+                  same as published{" "}
+                  <span className="font-mono">{c.data.same}</span>
+                </span>
+                {c.data.elsewhere.length > 0 && (
+                  <span className="text-warn">
+                    elsewhere{" "}
+                    <span className="font-mono">{c.data.elsewhere.length}</span>
+                  </span>
+                )}
+                {c.data.noLocal.length > 0 && (
+                  <span className="text-warn">
+                    no local file{" "}
+                    <span className="font-mono">{c.data.noLocal.length}</span>
+                  </span>
+                )}
+                {c.data.quality.length > 0 && (
+                  <span className="text-warn">
+                    quality{" "}
+                    <span className="font-mono">{c.data.quality.length}</span>
+                  </span>
+                )}
+                {c.data.noCover.length > 0 && (
+                  <span className="text-alert">
+                    no cover{" "}
+                    <span className="font-mono">{c.data.noCover.length}</span>
+                  </span>
+                )}
+                {c.data.warnings.length > 0 && (
+                  <span className="text-warn">
+                    warnings{" "}
+                    <span className="font-mono">{c.data.warnings.length}</span>
+                  </span>
+                )}
+            </button>
+            <span className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => review.show("covers")}
+                className="px-2 py-0.5 rounded bg-accent/15 text-accent font-medium hover:bg-accent/25 transition-colors"
+              >
+                Review
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  review.close();
+                  review.setCover(null);
+                }}
+                className="text-muted hover:text-fg text-[10px] px-1"
+                aria-label="Dismiss"
+                title="Dismiss these results"
+              >
+                ✕
+              </button>
+            </span>
+          </div>
+        );
+      })()}
+
       {!activeOp && opSummary && opSummary.kind !== "audit" && (
         <div className="mt-2 px-3 py-2 rounded-md bg-surface/40 text-xs
                         flex items-center justify-between gap-2">
@@ -2394,58 +2521,6 @@ export function ReleaseList({
                 )}
               </>
             )}
-            {opSummary.kind === "localCovers" && (
-              <>
-                {opSummary.uploads && (
-                  <span className="text-ok">
-                    uploaded{" "}
-                    <span className="font-mono">{opSummary.uploads.uploaded}</span>
-                  </span>
-                )}
-                <span
-                  className={
-                    opSummary.data.differing.length > 0 ? "text-warn" : "text-muted"
-                  }
-                >
-                  differ{" "}
-                  <span className="font-mono">{opSummary.data.differing.length}</span>
-                </span>
-                <span className="text-muted">
-                  same as published{" "}
-                  <span className="font-mono">{opSummary.data.same}</span>
-                </span>
-                {opSummary.data.elsewhere.length > 0 && (
-                  <span className="text-warn">
-                    elsewhere{" "}
-                    <span className="font-mono">{opSummary.data.elsewhere.length}</span>
-                  </span>
-                )}
-                {opSummary.data.noLocal.length > 0 && (
-                  <span className="text-warn">
-                    no local file{" "}
-                    <span className="font-mono">{opSummary.data.noLocal.length}</span>
-                  </span>
-                )}
-                {opSummary.data.quality.length > 0 && (
-                  <span className="text-warn">
-                    quality{" "}
-                    <span className="font-mono">{opSummary.data.quality.length}</span>
-                  </span>
-                )}
-                {opSummary.data.noCover.length > 0 && (
-                  <span className="text-alert">
-                    no cover{" "}
-                    <span className="font-mono">{opSummary.data.noCover.length}</span>
-                  </span>
-                )}
-                {opSummary.data.warnings.length > 0 && (
-                  <span className="text-warn">
-                    warnings{" "}
-                    <span className="font-mono">{opSummary.data.warnings.length}</span>
-                  </span>
-                )}
-              </>
-            )}
             {opSummary.kind === "coverMirror" && (
               <>
                 {opSummary.data.mirrored > 0 && (
@@ -2559,7 +2634,6 @@ export function ReleaseList({
             )}
             {opSummary.kind !== "reconcile" &&
               opSummary.kind !== "manifest" &&
-              opSummary.kind !== "localCovers" &&
               opSummary.kind !== "artworkNames" &&
               opSummary.kind !== "folders" &&
               opSummary.data.errors.length > 0 && (
@@ -2681,17 +2755,6 @@ export function ReleaseList({
         <ArtworkTidyDetails tidy={opSummary.data} />
       )}
 
-      {!activeOp && opSummary?.kind === "localCovers" && (
-        <LocalCoverDetails
-          check={opSummary.data}
-          uploads={opSummary.uploads}
-          saves={opSummary.saves}
-          onUpload={(ids) => runLocalCoverUpload(opSummary.data, ids, opSummary.saves)}
-          onSaveFromBlossom={(ids) =>
-            runSavePublishedCovers(opSummary.data, ids, opSummary.uploads)
-          }
-        />
-      )}
 
       {!activeOp &&
         opSummary?.kind === "coverMirror" &&
@@ -3825,7 +3888,7 @@ function sizeClass(r: LocalCoverItem): Exclude<SizeFilter, "all"> | null {
   return "close";
 }
 
-function LocalCoverDetails({
+export function LocalCoverDetails({
   check,
   uploads,
   saves,

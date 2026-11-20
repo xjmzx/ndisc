@@ -6,6 +6,55 @@ CHANGELOG takes over from there). Suite-level direction stays in
 [`SUITE.md` § Direction / roadmap](../SUITE.md); known blind spots of the
 existing checks are in [`open-issues-2026-09-22.md`](open-issues-2026-09-22.md).
 
+## Review overlay for the cover and label checks (agreed 2026-11-20)
+
+**Why.** *Local covers vs Blossom* grew from a summary line into groups,
+filters, before/after thumbnails, ticks and Export list, all inside the
+release list's column (about 40% of the window), while the right column sat
+on an empty Add release form. The label check copied the same spot. Nobody
+chose that; it accreted.
+
+**What (agreed).** An **overlay**, the same kind as *Relays & servers* and the
+maintenance dialogs (drawn inside ndisc's window over a blurred app; Esc, ×
+or a click outside closes it), but nearly window-sized. Not a separate view,
+and not an OS window (ndisc opens none).
+
+- **The progress line keeps its place** in the release list while a check
+  runs. When it finishes, the summary line ("differ 10 · same as published
+  1999 · quality 370 · no cover 1") stays there **and the overlay opens at
+  once** with the results.
+- Closing the overlay loses nothing: results, ticks and filters stay, and
+  the summary line reopens it where it was. Only running the check again
+  replaces them.
+- Tabs **Covers** and **Labels**, each with its own Run; Export list in the
+  overlay's header.
+- "Open release" / "Edit label" close it and go to that release or label;
+  the summary line brings you back.
+
+**Stages.**
+
+R1 and R2 built 2026-11-20 (`src/lib/review.tsx`, `ReviewOverlay.tsx`).
+As built, R1 lifts the **results** and the label check into the store, but
+the cover check, upload and save still run in `ReleaseList` (they share its
+guard and progress line) and register themselves as `coverActions` while
+Home is open; off Home, the Covers tab shows its results read-only.
+
+1. **R1 — lift the state, no visible change.** The cover check, upload and
+   save-to-disk move out of `ReleaseList` into a hook `App` owns, with the
+   label check. The one-operation-at-a-time guard covers both sides.
+2. **R2 — the overlay.** Opens on completion; the current results component
+   (`LocalCoverDetails`) moves into it unchanged; the big block leaves the
+   release list; the Labels page keeps only its summary line.
+3. **R3 — an inspector.** List on the left, the selected item large on the
+   right: disk and published image side by side for a cover, with sizes,
+   path and flags, and per-item keep-disk / keep-Blossom / Open release.
+4. **R4 — the Labels tab's inspector:** the image, every label using it,
+   Edit label.
+5. **R5 — docs.**
+
+The other maintenance results (Reconcile, Mirror errors, Relay audit, Tidy
+names) stay where they are; any can move into the overlay later.
+
 ## Local covers vs Blossom: report what it cannot compare (planned 2026-11-13)
 
 **Built 2026-11-18, unreleased.** The check now sweeps every published

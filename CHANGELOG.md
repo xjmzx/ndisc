@@ -24,6 +24,18 @@ wave; an app-only change bumps ndisc alone. See
 ## Unreleased
 
 ### Added
+- **Review**, an overlay for the results of *Local covers vs Blossom* and
+  *Check label art*, over the app like *Relays & servers* but nearly
+  window-sized, with a Covers and a Labels tab and a Run button for each.
+  A check's progress line stays where it was; when the check finishes, its
+  summary line stays there too and Review opens on the results. Closing it
+  loses nothing: the summary line (or its Review button) opens it again
+  with ticks and filters as they were. An upload or a save to disk closes
+  it while the list shows the progress, then opens it again. The results
+  no longer fill the release list's column, and survive switching pages.
+  While results are held, the Labels scan icon and the *Local covers vs
+  Blossom* maintenance item open them rather than checking again; Review's
+  *Run again* is the new check.
 - **Check label art** (the scan icon in the Labels list header): the size,
   format and shape of every published label image, read from each image's
   first 128 KB, flagged as the covers' quality group is — low-res, over the

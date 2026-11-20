@@ -27,6 +27,8 @@ import { LabelviewPanel } from "./components/LabelviewPanel";
 import { StatsView } from "./components/StatsView";
 import { BatchEditView } from "./components/BatchEditView";
 import { CurrentView } from "./components/CurrentView";
+import { ReviewOverlay } from "./components/ReviewOverlay";
+import { ReviewProvider } from "./lib/review";
 import { UndoToast, type UndoToastState } from "./components/UndoToast";
 import { clearStaleBundleUrls } from "./lib/labelSeed";
 import {
@@ -503,6 +505,7 @@ export default function App() {
 
   return (
     <ReactionsProvider npub={npub}>
+    <ReviewProvider labels={labels} blossomServers={blossomServers}>
     <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col
                     pt-6 px-6 pb-2 max-w-[1500px] mx-auto">
       {/* Suite top-bar grammar (SUITE.md § Top-bar grammar): rounded panel
@@ -877,7 +880,15 @@ export default function App() {
       </footer>
 
       <UndoToast toast={toast} onDismiss={() => setToast(null)} />
+      <ReviewOverlay
+        labels={labels}
+        onPickLabel={(name, url, site) => {
+          setView("labels");
+          promptAddLabel(name, url, site);
+        }}
+      />
     </div>
+    </ReviewProvider>
     </ReactionsProvider>
   );
 }
