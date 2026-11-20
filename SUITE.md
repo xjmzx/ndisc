@@ -170,7 +170,9 @@ reads as missing files.
 Worth knowing before either app grows a "change library location" feature: for
 `nplay` that is a settings field, for `ndisc` it is a migration.
 
-**`_labels` under the library root is reserved (2026-11-20, planned).** ndisc
+**`_labels` under the library root is reserved (2026-11-20).** ndisc
+skips it in its scans and fills it (unreleased after 0.8.1); ncover 0.5.0
+skips it in folder walks and has a Label art scope over it. ndisc
 will keep its label art in `<library root>/_labels` — record-label images,
 one file per label, named after the label, written by ndisc (see ndisc's
 `docs/backlog.md`, label art 3e). It is not a release and holds no audio.

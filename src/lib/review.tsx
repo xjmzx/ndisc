@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   checkLabelArt,
+  labelArtDefault,
   matchLabelArt,
   type LabelArtMatch,
   type LabelArtMatches,
@@ -62,10 +63,15 @@ interface Review {
   runLabelCheck: (opts?: { thenShow?: boolean }) => Promise<void>;
   clearLabel: () => void;
 
-  // The label art folder (set per machine) and which file in it is each
-  // label's, kept current as labels change. Null without a folder.
+  // The label art folder and which file in it is each label's, kept current
+  // as labels change. The folder is the override picked by hand (per
+  // machine), else `<library root>/_labels` once it exists; null without
+  // either. `setArtFolder(null)` drops the override, back to `_labels`.
   artFolder: string | null;
   setArtFolder: (folder: string | null) => void;
+  // `<library root>/_labels`, and whether it exists yet.
+  artDefault: { path: string; exists: boolean } | null;
+  refreshArtDefault: () => void;
   artMatches: LabelArtMatches | null;
   artMatchFor: (name: string) => LabelArtMatch | null;
   artError: string | null;
@@ -95,7 +101,14 @@ export function ReviewProvider({
   const [labelProgress, setLabelProgress] = useState<ImportProgress | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
 
-  const [artFolder, setArtFolderState] = useState<string | null>(() => {
+  const [artDefault, setArtDefault] = useState<{ path: string; exists: boolean } | null>(null);
+  const refreshArtDefault = useCallback(() => {
+    labelArtDefault()
+      .then(setArtDefault)
+      .catch(() => setArtDefault(null));
+  }, []);
+  useEffect(() => refreshArtDefault(), [refreshArtDefault]);
+  const [artOverride, setArtFolderState] = useState<string | null>(() => {
     try {
       return localStorage.getItem(ART_FOLDER_KEY);
     } catch {
@@ -111,6 +124,7 @@ export function ReviewProvider({
       /* ignore */
     }
   }, []);
+  const artFolder = artOverride ?? (artDefault?.exists ? artDefault.path : null);
   const [artMatches, setArtMatches] = useState<LabelArtMatches | null>(null);
   const [artError, setArtError] = useState<string | null>(null);
   // Re-match when the folder or the labels change, a moment after the last
@@ -202,13 +216,15 @@ export function ReviewProvider({
       },
       artFolder,
       setArtFolder,
+      artDefault,
+      refreshArtDefault,
       artMatches,
       artMatchFor,
       artError,
     }),
     [
       open, tab, show, close, cover, coverActions, label, labelRunning, labelProgress, labelError,
-      runLabelCheck, artFolder, setArtFolder, artMatches, artMatchFor, artError,
+      runLabelCheck, artFolder, setArtFolder, artDefault, refreshArtDefault, artMatches, artMatchFor, artError,
     ],
   );
   return <ReviewContext.Provider value={value}>{children}</ReviewContext.Provider>;

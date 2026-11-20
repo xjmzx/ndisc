@@ -1255,6 +1255,52 @@ export interface LabelArtMatches {
   unused: string[];
 }
 
+// `<library root>/_labels`, the default label art folder (backlog 4b, 3e).
+export async function labelArtDefault(): Promise<{ path: string; exists: boolean }> {
+  return invoke("label_art_default");
+}
+
+export interface LabelFillItem {
+  labels: string[];
+  // "copy" | "download" | "exists"
+  action: string;
+  source: string;
+  file: string;
+}
+
+export interface LabelFillPlan {
+  target: string;
+  targetExists: boolean;
+  source: string | null;
+  items: LabelFillItem[];
+  nothing: string[];
+}
+
+export interface LabelFillRun {
+  target: string;
+  written: number;
+  results: { file: string; labels: string[]; status: string }[];
+  log: string;
+}
+
+// Read-only: what filling `_labels` would copy from `source` (the old label
+// art folder, or null) and download from Blossom.
+export async function planLabelsFill(
+  source: string | null,
+  labels: { name: string; imageUrl: string; artFile?: string }[],
+): Promise<LabelFillPlan> {
+  return invoke("plan_labels_fill", {
+    source,
+    labels: labels.map((l) => ({ name: l.name, imageUrl: l.imageUrl, artFile: l.artFile ?? null })),
+  });
+}
+
+// Write the plan into `_labels`: never overwrites, logs every file.
+// Emits `label-fill:progress`.
+export async function runLabelsFill(items: LabelFillItem[]): Promise<LabelFillRun> {
+  return invoke("run_labels_fill", { items });
+}
+
 export async function matchLabelArt(
   folder: string,
   labels: { name: string; artFile?: string }[],

@@ -3,12 +3,18 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { ExternalLink, Pencil, Play, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { useReview, type ReviewTab } from "../lib/review";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ask, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   labelArtKinds,
   labelListText,
   labelLocalKinds,
+  planLabelsFill,
+  runLabelsFill,
   writeCoverList,
+  type ImportProgress,
+  type LabelFillPlan,
+  type LabelFillRun,
   type LabelArtCheck,
   type LabelArtItem,
   type LabelLocalItem,
@@ -491,6 +497,188 @@ function LabelInspector({
   );
 }
 
+// Filling `<library root>/_labels` (backlog 4b, 3e): plan (read-only), then
+// a confirmed run that copies masters from the folder in use and downloads
+// labels' own published images, then "Use _labels", which points every
+// label at its new file and makes `_labels` the label art folder.
+function LabelsFillBar({
+  labels,
+  setLabels,
+}: {
+  labels: LabelEntry[];
+  setLabels: (next: LabelEntry[]) => void;
+}) {
+  const review = useReview();
+  const def = review.artDefault;
+  const onDefault = !!def && review.artFolder === def.path;
+  const [plan, setPlan] = useState<LabelFillPlan | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [run, setRun] = useState<LabelFillRun | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  if (!def) return null;
+  const count = (a: string) => plan?.items.filter((i) => i.action === a) ?? [];
+  const labelsIn = (a: string) => count(a).reduce((n, i) => n + i.labels.length, 0);
+
+  async function makePlan() {
+    setErr(null);
+    setRun(null);
+    try {
+      setPlan(await planLabelsFill(onDefault ? null : review.artFolder, labels));
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  async function fill() {
+    if (!plan) return;
+    const todo = plan.items.filter((i) => i.action !== "exists").length;
+    const yes = await ask(
+      `Fill ${plan.target}?\n\n` +
+        `${count("copy").length} masters are copied from ${plan.source ?? "—"} (that folder is not changed), and ` +
+        `${count("download").length} published images are downloaded and checked against their hash. ` +
+        `${todo} new files in all; nothing is overwritten, and every file is logged.`,
+      { title: "Fill _labels", kind: "info" },
+    );
+    if (!yes) return;
+    setBusy(true);
+    setErr(null);
+    let un: UnlistenFn | null = null;
+    try {
+      un = await listen<ImportProgress>("label-fill:progress", (e) => setProgress(e.payload));
+      setRun(await runLabelsFill(plan.items));
+      review.refreshArtDefault();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      un?.();
+      setBusy(false);
+      setProgress(null);
+    }
+  }
+
+  function useLabelsFolder() {
+    if (!run) return;
+    const fileOf = new Map<string, string>();
+    for (const r of run.results)
+      if (r.status === "ok" || r.status === "exists")
+        for (const n of r.labels) fileOf.set(n.trim().toLowerCase(), r.file);
+    // Every label is pointed at its file in `_labels`; picks made for the
+    // old folder go, since they named files there.
+    setLabels(
+      labels.map((l) => {
+        const f = fileOf.get(l.name.trim().toLowerCase());
+        const { artFile: _old, ...rest } = l;
+        return f ? { ...rest, artFile: f } : rest;
+      }),
+    );
+    setPlan(null);
+    setRun(null);
+    review.setArtFolder(null);
+    review.refreshArtDefault();
+    setTimeout(() => void review.runLabelCheck(), 400);
+  }
+
+  const failed = run?.results.filter((r) => r.status !== "ok" && r.status !== "exists") ?? [];
+  return (
+    <div className="mb-3 px-3 py-2 rounded-md bg-surface/40 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted flex-1 min-w-0">
+          {onDefault ? (
+            <>
+              Label art: <span className="font-mono text-fg/80">{def.path}</span>
+            </>
+          ) : (
+            <>
+              <span className="font-mono text-fg/80">_labels</span> ({def.path}
+              {def.exists ? "" : ", not created yet"}) is where label art belongs: one file per
+              label, named after it.{" "}
+              {review.artFolder
+                ? "Fill it from the folder in use and Blossom."
+                : "Set the old label folder first to copy from it, or fill from Blossom alone."}
+            </>
+          )}
+        </span>
+        {!run && (
+          <button
+            type="button"
+            onClick={makePlan}
+            disabled={busy}
+            className="px-2 py-0.5 rounded bg-surface text-muted hover:text-fg disabled:opacity-40"
+            title="Work out what filling _labels would copy and download. Nothing is written."
+          >
+            {onDefault ? "Fill from Blossom…" : "Plan fill…"}
+          </button>
+        )}
+      </div>
+      {err && <p className="mt-1 text-warn">{err}</p>}
+      {plan && !run && (
+        <div className="mt-2">
+          <p className="text-fg/90">
+            Copy {count("copy").length} masters ({labelsIn("copy")} labels) · download{" "}
+            {count("download").length} own images ({labelsIn("download")} labels)
+            {count("exists").length > 0 && ` · ${count("exists").length} already there`} · nothing for{" "}
+            {plan.nothing.length} (placeholder or no image)
+          </p>
+          <details className="mt-1">
+            <summary className="cursor-pointer text-muted">Each file it would write</summary>
+            <ul className="mt-1 max-h-48 overflow-auto font-mono text-[10px] text-muted space-y-0.5">
+              {plan.items.map((i) => (
+                <li key={i.file}>
+                  {i.action} · {i.labels.join(" + ")} → {i.file}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={fill}
+              disabled={busy || plan.items.every((i) => i.action === "exists")}
+              className="px-2.5 py-1 rounded-md bg-accent/15 text-accent hover:bg-accent/25 font-medium disabled:opacity-40"
+            >
+              {busy
+                ? progress
+                  ? `filling ${progress.current} / ${progress.total}…`
+                  : "filling…"
+                : "Fill _labels"}
+            </button>
+            <button type="button" onClick={() => setPlan(null)} className="text-muted hover:text-fg">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {run && (
+        <div className="mt-2">
+          <p className="text-fg/90">
+            {run.written} file{run.written === 1 ? "" : "s"} written to {run.target}
+            {failed.length > 0 && <span className="text-warn"> · {failed.length} not written</span>} · log:{" "}
+            <span className="font-mono">{run.log}</span>
+          </p>
+          {failed.length > 0 && (
+            <ul className="mt-1 max-h-32 overflow-auto text-[10px] text-warn space-y-0.5">
+              {failed.map((f) => (
+                <li key={f.file}>
+                  {f.labels.join(" + ")} → {f.file}: {f.status}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            onClick={useLabelsFolder}
+            className="mt-2 px-2.5 py-1 rounded-md bg-accent/15 text-accent hover:bg-accent/25 font-medium"
+            title="Point every label at its file in _labels and read label art from there from now on; the old folder stays as it is."
+          >
+            Use _labels
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LocalLabelInspector({
   item,
   check,
@@ -560,10 +748,12 @@ function LocalLabelInspector({
 
 export function ReviewOverlay({
   labels,
+  setLabels,
   onPickLabel,
   onOpenRelease,
 }: {
   labels: LabelEntry[];
+  setLabels: (next: LabelEntry[]) => void;
   // Close the overlay and open this label in the Labels page's form.
   onPickLabel: (name: string, url: string, site: string) => void;
   // Show this release on Home.
@@ -736,6 +926,7 @@ export function ReviewOverlay({
             )}
             {label ? (
               <>
+                <LabelsFillBar labels={labels} setLabels={setLabels} />
                 {label.folder && (
                   <div className="mb-3 flex items-center gap-1 text-[11px]">
                     {(

@@ -326,7 +326,7 @@ export function LabelviewPanel({
       onClick={pickArtFolder}
       title={
         !review.artFolder
-          ? "Set the label art folder: where your label images are kept on this computer. Each label is matched to a file in it by name."
+          ? `Set the label art folder: where your label images are kept on this computer. Each label is matched to a file in it by name. Without one, label art is read from ${review.artDefault?.path ?? "<library root>/_labels"} once it exists (Review → Labels → Fill _labels).`
           : review.artError
             ? `Label art folder: ${review.artFolder}\n${review.artError}`
             : `Label art folder: ${review.artFolder}\n${artFound} of ${labels.length} labels have a file there (${artClose} by a close match, worth a look); ${review.artMatches?.unused.length ?? 0} files unused. Click to choose another folder.`

@@ -5036,7 +5036,7 @@ fn assign_release_folders(app: tauri::AppHandle, apply: bool) -> Result<FolderAs
     let artist_dirs: HashMap<String, String> = std::fs::read_dir(&root)
         .map_err(|e| format!("read {}: {e}", root.display()))?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().is_dir() && e.file_name() != LABELS_DIR)
         .filter_map(|e| e.file_name().to_str().map(str::to_string))
         .map(|n| (n.to_lowercase(), n))
         .collect();
@@ -10107,6 +10107,507 @@ mod label_match_tests {
     }
 }
 
+// ---------- `_labels`: the label art folder under the library root ----------
+//
+// Stage 3e (docs/backlog.md, agreed 2026-11-20). `<library root>/_labels`
+// holds one image per label, named after the label, written by ndisc. The
+// name is reserved suite-wide (SUITE.md): every library walk skips it, so it
+// is never a release. It is the default label art folder; the folder picker
+// stays an override. Filling it COPIES masters from the old working folder
+// and DOWNLOADS labels' own published images; it never overwrites a file and
+// logs every one.
+
+/// The reserved folder name.
+pub(crate) const LABELS_DIR: &str = "_labels";
+
+/// For WalkDir's `filter_entry`: false for a `_labels` directory below the
+/// walk's root, so neither it nor anything in it is visited.
+fn not_label_art_dir(e: &walkdir::DirEntry) -> bool {
+    !(e.depth() > 0 && e.file_type().is_dir() && e.file_name() == LABELS_DIR)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelArtDefault {
+    pub path: String,
+    pub exists: bool,
+}
+
+/// `<library root>/_labels`, and whether it is there yet.
+#[tauri::command]
+fn label_art_default(app: tauri::AppHandle) -> Result<LabelArtDefault, String> {
+    let root = library_root(&app)?;
+    let path = std::path::Path::new(root.trim()).join(LABELS_DIR);
+    Ok(LabelArtDefault { exists: path.is_dir(), path: path.to_string_lossy().into_owned() })
+}
+
+/// A label name as a file name on every OS: the characters Windows forbids
+/// become "-" ("Planet μ / Matador" → "Planet μ - Matador"), spaces collapse,
+/// and trailing dots and spaces go (Windows drops them silently).
+fn label_file_name(name: &str) -> String {
+    let mapped: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let joined = mapped.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = joined.trim_end_matches(['.', ' ']).to_string();
+    let reserved = ["con", "prn", "aux", "nul"]
+        .contains(&trimmed.to_lowercase().as_str())
+        || (trimmed.len() == 4
+            && (trimmed.to_lowercase().starts_with("com") || trimmed.to_lowercase().starts_with("lpt"))
+            && trimmed.chars().last().is_some_and(|c| c.is_ascii_digit()));
+    if trimmed.is_empty() {
+        "label".into()
+    } else if reserved {
+        format!("{trimmed} label")
+    } else {
+        trimmed
+    }
+}
+
+/// jpg, png, webp, gif or avif, from a file's own extension.
+fn label_ext_of(file: &str) -> String {
+    let e = file.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+    match e.as_str() {
+        "jpeg" => "jpg".into(),
+        "" => "jpg".into(),
+        x => x.into(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelFillInput {
+    pub name: String,
+    pub image_url: String,
+    #[serde(default)]
+    pub art_file: Option<String>,
+}
+
+/// One file `_labels` would gain.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelFillItem {
+    /// Every label this file is for (two names of one label share it).
+    pub labels: Vec<String>,
+    /// "copy" (from the old folder), "download" (the label's own published
+    /// image) or "exists" (already in `_labels` under this name: only the
+    /// labels are pointed at it).
+    pub action: String,
+    /// The old folder's file (full path) or the published address.
+    pub source: String,
+    /// The file name in `_labels`.
+    pub file: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelFillPlan {
+    pub target: String,
+    pub target_exists: bool,
+    /// The old folder copied from, if one was given.
+    pub source: Option<String>,
+    pub items: Vec<LabelFillItem>,
+    /// Labels with nothing to fill from: no master in the old folder and no
+    /// image of their own (the placeholder, or none at all).
+    pub nothing: Vec<String>,
+}
+
+fn plan_label_fill(
+    target: &std::path::Path,
+    source: Option<&str>,
+    labels: &[LabelFillInput],
+) -> Result<LabelFillPlan, String> {
+    let existing: std::collections::HashSet<String> = if target.is_dir() {
+        label_art_files(&target.to_string_lossy())?.into_iter().map(|f| f.to_lowercase()).collect()
+    } else {
+        Default::default()
+    };
+    // The old folder's matches (name, close, hand pick), as 3a finds them.
+    let src_matches: Vec<Option<String>> = match source.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(src) if std::path::Path::new(src) != target => {
+            let files = label_art_files(src)?;
+            let picks: Vec<LabelPickInput> = labels
+                .iter()
+                .map(|l| LabelPickInput { name: l.name.clone(), art_file: l.art_file.clone() })
+                .collect();
+            match_label_files(&files, &picks).0.into_iter().map(|m| m.file).collect()
+        }
+        _ => vec![None; labels.len()],
+    };
+    let mut used_names: std::collections::HashSet<String> = existing.clone();
+    let mut claim = |base: &str, ext: &str, exists_ok: bool| -> (String, bool) {
+        let first = format!("{base}.{ext}");
+        if exists_ok && existing.contains(&first.to_lowercase()) {
+            return (first, true);
+        }
+        let mut name = first;
+        let mut n = 2;
+        while used_names.contains(&name.to_lowercase()) {
+            name = format!("{base} ({n}).{ext}");
+            n += 1;
+        }
+        used_names.insert(name.to_lowercase());
+        (name, false)
+    };
+    let mut items: Vec<LabelFillItem> = Vec::new();
+    let mut covered = vec![false; labels.len()];
+
+    // 1. Copies, one per source file, for every label that resolves to it.
+    let mut by_file: Vec<(String, Vec<usize>)> = Vec::new();
+    for (i, m) in src_matches.iter().enumerate() {
+        if let Some(f) = m {
+            match by_file.iter_mut().find(|(g, _)| g == f) {
+                Some((_, v)) => v.push(i),
+                None => by_file.push((f.clone(), vec![i])),
+            }
+        }
+    }
+    for (file, idx) in by_file {
+        // Named after the label whose words ARE the file's, else the first.
+        let stem = label_words(&label_file_stem(&file));
+        let lead = idx.iter().copied().find(|&i| label_words(&labels[i].name) == stem).unwrap_or(idx[0]);
+        let base = label_file_name(&labels[lead].name);
+        let (name, exists) = claim(&base, &label_ext_of(&file), true);
+        let src = std::path::Path::new(source.unwrap_or("").trim()).join(&file);
+        items.push(LabelFillItem {
+            labels: idx.iter().map(|&i| labels[i].name.clone()).collect(),
+            action: if exists { "exists" } else { "copy" }.into(),
+            source: src.to_string_lossy().into_owned(),
+            file: name,
+        });
+        for i in idx {
+            covered[i] = true;
+        }
+    }
+
+    // 2. Downloads: a label's OWN published image (an address fewer than
+    // three labels share — three or more is a placeholder), for labels the
+    // old folder had nothing for. One download per address; a second name
+    // of one label shares it.
+    let mut by_url: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (i, l) in labels.iter().enumerate() {
+        let u = l.image_url.trim();
+        if u.starts_with("http") {
+            by_url.entry(u).or_default().push(i);
+        }
+    }
+    let mut urls: Vec<(&str, Vec<usize>)> = by_url.into_iter().collect();
+    urls.sort_by_key(|(_, v)| v[0]);
+    for (url, idx) in urls {
+        if idx.len() >= 3 || idx.iter().any(|&i| covered[i]) {
+            continue;
+        }
+        let lead = idx[0];
+        let ext = url.rsplit('/').next().map(label_ext_of).filter(|e| e.len() <= 4).unwrap_or_else(|| "jpg".into());
+        let (name, exists) = claim(&label_file_name(&labels[lead].name), &ext, true);
+        items.push(LabelFillItem {
+            labels: idx.iter().map(|&i| labels[i].name.clone()).collect(),
+            action: if exists { "exists" } else { "download" }.into(),
+            source: url.to_string(),
+            file: name,
+        });
+        for i in idx {
+            covered[i] = true;
+        }
+    }
+    let nothing = labels.iter().zip(&covered).filter(|(_, c)| !**c).map(|(l, _)| l.name.clone()).collect();
+    Ok(LabelFillPlan {
+        target: target.to_string_lossy().into_owned(),
+        target_exists: target.is_dir(),
+        source: source.map(str::to_string),
+        items,
+        nothing,
+    })
+}
+
+/// What filling `_labels` would do, read-only: copies from `source` (the
+/// old label art folder, if given) and downloads of labels' own published
+/// images, each with the file name it would get.
+#[tauri::command]
+fn plan_labels_fill(
+    app: tauri::AppHandle,
+    source: Option<String>,
+    labels: Vec<LabelFillInput>,
+) -> Result<LabelFillPlan, String> {
+    let root = library_root(&app)?;
+    let target = std::path::Path::new(root.trim()).join(LABELS_DIR);
+    plan_label_fill(&target, source.as_deref(), &labels)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelFillResult {
+    pub file: String,
+    pub labels: Vec<String>,
+    /// "ok", "exists", or the error.
+    pub status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelFillRun {
+    pub target: String,
+    pub written: usize,
+    pub results: Vec<LabelFillResult>,
+    pub log: String,
+}
+
+/// Write `bytes` as `target/file` unless a file is there: a temp name, then
+/// a rename, so a half-written file never has the real name.
+fn write_new_file(dir: &std::path::Path, file: &str, bytes: &[u8]) -> Result<(), String> {
+    let dest = dir.join(file);
+    if dest.exists() {
+        return Err("a file of that name is already there; not overwritten".into());
+    }
+    let tmp = dir.join(format!(".{file}.ndisc-tmp"));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    if dest.exists() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err("a file of that name appeared meanwhile; not overwritten".into());
+    }
+    std::fs::rename(&tmp, &dest).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename into {}: {e}", dest.display())
+    })
+}
+
+/// Fill `_labels` from a plan: create the folder, copy, download (checked
+/// against the SHA-256 in the address when it carries one), never overwrite,
+/// and log every file to `<app data>/label-art-fill.tsv`.
+/// Emits `label-fill:progress` (ImportProgress).
+#[tauri::command]
+async fn run_labels_fill(app: tauri::AppHandle, items: Vec<LabelFillItem>) -> Result<LabelFillRun, String> {
+    let root = library_root(&app)?;
+    let target = std::path::Path::new(root.trim()).join(LABELS_DIR);
+    std::fs::create_dir_all(&target).map_err(|e| format!("create {}: {e}", target.display()))?;
+    let log_path = app_data_dir(&app)?.join(if cfg!(debug_assertions) {
+        "label-art-fill-dev.tsv"
+    } else {
+        "label-art-fill.tsv"
+    });
+    let http = cover_http_client()?;
+    let n = items.len();
+    let mut results = Vec::with_capacity(n);
+    let mut written = 0;
+    let mut log = String::new();
+    let now = chrono_like_now();
+    for (i, it) in items.into_iter().enumerate() {
+        let _ = app.emit(
+            "label-fill:progress",
+            ImportProgress { current: i + 1, total: n, current_dir: it.labels.join(", ") },
+        );
+        let status = match it.action.as_str() {
+            "exists" => "exists".to_string(),
+            "copy" => match std::fs::read(&it.source) {
+                Ok(b) => write_new_file(&target, &it.file, &b).map(|_| "ok".to_string()).unwrap_or_else(|e| e),
+                Err(e) => format!("read {}: {e}", it.source),
+            },
+            "download" => match fetch_bytes(&http, &it.source).await {
+                Ok(b) => match blossom::sha256_in_url(&it.source) {
+                    Some(want) if blossom::sha256_hex(&b) != want => {
+                        "the download does not match the hash in its address; not written".to_string()
+                    }
+                    _ => write_new_file(&target, &it.file, &b).map(|_| "ok".to_string()).unwrap_or_else(|e| e),
+                },
+                Err(e) => e,
+            },
+            other => format!("unknown action {other}"),
+        };
+        if status == "ok" {
+            written += 1;
+        }
+        log.push_str(&format!(
+            "{now}\t{}\t{}\t{}\t{}\t{}\n",
+            it.action,
+            it.labels.join("; ").replace(['\t', '\n'], " "),
+            it.source.replace(['\t', '\n'], " "),
+            it.file,
+            status.replace(['\t', '\n'], " ")
+        ));
+        results.push(LabelFillResult { file: it.file, labels: it.labels, status });
+    }
+    {
+        use std::io::Write;
+        let fresh = !log_path.exists();
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| format!("open {}: {e}", log_path.display()))?;
+        if fresh {
+            let _ = f.write_all(b"# time\taction\tlabels\tsource\tfile written\tstatus\n");
+        }
+        f.write_all(log.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    Ok(LabelFillRun {
+        target: target.to_string_lossy().into_owned(),
+        written,
+        results,
+        log: log_path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Seconds since the epoch, for the fill log (UTC; the log is for reading
+/// back, not for display).
+fn chrono_like_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod label_fill_tests {
+    use super::*;
+
+    fn input(name: &str, url: &str) -> LabelFillInput {
+        LabelFillInput { name: name.into(), image_url: url.into(), art_file: None }
+    }
+
+    /// The real plan: `NDISC_LABELS_JSON=<labels> NDISC_LABEL_DIR=<old folder>
+    /// cargo test real_label_fill -- --ignored --nocapture`. Read-only.
+    #[test]
+    #[ignore]
+    fn real_label_fill() {
+        let (Ok(lj), Ok(dir)) = (std::env::var("NDISC_LABELS_JSON"), std::env::var("NDISC_LABEL_DIR")) else {
+            return;
+        };
+        let labels: Vec<LabelFillInput> = serde_json::from_str(&std::fs::read_to_string(lj).unwrap()).unwrap();
+        let target = std::env::temp_dir().join("ndisc-real-fill-target").join(LABELS_DIR);
+        let plan = plan_label_fill(&target, Some(&dir), &labels).unwrap();
+        let n = |a: &str| plan.items.iter().filter(|i| i.action == a).count();
+        let labels_in = |a: &str| plan.items.iter().filter(|i| i.action == a).map(|i| i.labels.len()).sum::<usize>();
+        println!(
+            "{} labels: copy {} files for {} labels, download {} for {}, nothing for {}",
+            labels.len(), n("copy"), labels_in("copy"), n("download"), labels_in("download"), plan.nothing.len()
+        );
+        for i in plan.items.iter().filter(|i| i.action == "download") {
+            println!("  download {} -> {}", i.labels.join(" + "), i.file);
+        }
+        for i in plan.items.iter().filter(|i| i.labels.len() > 1).take(8) {
+            println!("  shared: {} -> {}", i.labels.join(" + "), i.file);
+        }
+    }
+
+    /// One real download of the plan, hash-checked, into a temp folder:
+    /// the same two steps `run_labels_fill` takes. Network; writes only temp.
+    #[test]
+    #[ignore]
+    fn real_label_download() {
+        let (Ok(lj), Ok(dir)) = (std::env::var("NDISC_LABELS_JSON"), std::env::var("NDISC_LABEL_DIR")) else {
+            return;
+        };
+        let labels: Vec<LabelFillInput> = serde_json::from_str(&std::fs::read_to_string(lj).unwrap()).unwrap();
+        let target = std::env::temp_dir().join("ndisc-real-download").join(LABELS_DIR);
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir_all(&target).unwrap();
+        let plan = plan_label_fill(&target, Some(&dir), &labels).unwrap();
+        let it = plan.items.iter().find(|i| i.action == "download").expect("a download");
+        let http = cover_http_client().unwrap();
+        let bytes = tauri::async_runtime::block_on(fetch_bytes(&http, &it.source)).unwrap();
+        let want = blossom::sha256_in_url(&it.source).expect("a hash in the address");
+        assert_eq!(blossom::sha256_hex(&bytes), want, "the download is what the address names");
+        write_new_file(&target, &it.file, &bytes).unwrap();
+        let back = std::fs::read(target.join(&it.file)).unwrap();
+        println!("{} -> {} ({} bytes, {:?})", it.labels.join(" + "), it.file, back.len(), blossom::image_dims(&back));
+        assert!(write_new_file(&target, &it.file, b"x").is_err(), "a second write is refused");
+    }
+
+    #[test]
+    fn a_label_name_is_a_file_name_on_every_os() {
+        assert_eq!(label_file_name("Planet μ / Matador"), "Planet μ - Matador");
+        assert_eq!(label_file_name("What?  Records."), "What- Records");
+        assert_eq!(label_file_name("CON"), "CON label");
+        assert_eq!(label_file_name("COM1"), "COM1 label");
+        assert_eq!(label_file_name("Dear Boss."), "Dear Boss");
+        assert_eq!(label_file_name("  "), "label");
+    }
+
+    #[test]
+    fn copies_downloads_and_the_rest() {
+        let base = std::env::temp_dir().join("ndisc-label-fill-plan");
+        let _ = std::fs::remove_dir_all(&base);
+        let old = base.join("old");
+        let target = base.join("music").join(LABELS_DIR);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        for f in ["Red.Rhino.rcords.label.jpg", "rephlex.label.jpg", "Warp.label.png"] {
+            std::fs::write(old.join(f), b"x").unwrap();
+        }
+        std::fs::write(target.join("Warp.png"), b"x").unwrap(); // already filled once
+        let ph = "https://b.example/placeholder.png";
+        let labels = vec![
+            input("Red Rhino Records", ph),
+            input("Rephlex Records", "https://b.example/r.jpg"),
+            input("Rephlex", "https://b.example/r.jpg"),
+            input("Warp", "https://b.example/w.png"),
+            input("Metalheadz", "https://b.example/aa11.jpg"),
+            input("EMI", "https://b.example/emi.jpg"),
+            input("EMI America", "https://b.example/emi.jpg"),
+            input("Nobody", ph),
+            input("Nobody Else", ph),
+            input("No Image", ""),
+        ];
+        let plan = plan_label_fill(&target, Some(old.to_str().unwrap()), &labels).unwrap();
+        let got: Vec<(String, &str, String)> =
+            plan.items.iter().map(|i| (i.labels.join("+"), i.action.as_str(), i.file.clone())).collect();
+        assert_eq!(
+            got,
+            [
+                ("Red Rhino Records".into(), "copy", "Red Rhino Records.jpg".into()),
+                ("Rephlex Records+Rephlex".into(), "copy", "Rephlex.jpg".into()),
+                ("Warp".into(), "exists", "Warp.png".into()),
+                ("Metalheadz".into(), "download", "Metalheadz.jpg".into()),
+                ("EMI+EMI America".into(), "download", "EMI.jpg".into()),
+            ],
+            "one copy per master, named after the label whose words it is; own images downloaded once; the placeholder never"
+        );
+        assert_eq!(plan.nothing, ["Nobody", "Nobody Else", "No Image"]);
+    }
+
+    #[test]
+    fn a_name_two_labels_would_share_gets_a_number_and_nothing_is_overwritten() {
+        let base = std::env::temp_dir().join("ndisc-label-fill-clash");
+        let _ = std::fs::remove_dir_all(&base);
+        let target = base.join(LABELS_DIR);
+        std::fs::create_dir_all(&target).unwrap();
+        let labels = vec![input("A/B", "https://x/1.jpg"), input("A:B", "https://x/2.jpg")];
+        let plan = plan_label_fill(&target, None, &labels).unwrap();
+        let files: Vec<&str> = plan.items.iter().map(|i| i.file.as_str()).collect();
+        assert_eq!(files, ["A-B.jpg", "A-B (2).jpg"]);
+
+        std::fs::write(target.join("Keep.jpg"), b"original").unwrap();
+        assert!(write_new_file(&target, "Keep.jpg", b"new").is_err());
+        assert_eq!(std::fs::read(target.join("Keep.jpg")).unwrap(), b"original");
+        write_new_file(&target, "New.jpg", b"n").unwrap();
+        assert!(!target.join(".New.jpg.ndisc-tmp").exists());
+    }
+
+    #[test]
+    fn a_library_walk_never_enters_labels() {
+        let base = std::env::temp_dir().join("ndisc-label-walk");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("A/One")).unwrap();
+        std::fs::create_dir_all(base.join(LABELS_DIR)).unwrap();
+        std::fs::write(base.join("A/One/01.flac"), b"x").unwrap();
+        std::fs::write(base.join(LABELS_DIR).join("Warp.jpg"), b"x").unwrap();
+        std::fs::write(base.join(LABELS_DIR).join("odd.flac"), b"x").unwrap();
+        let seen: Vec<PathBuf> = WalkDir::new(&base)
+            .into_iter()
+            .filter_entry(not_label_art_dir)
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.into_path())
+            .collect();
+        assert_eq!(seen, [base.join("A/One/01.flac")], "even audio in _labels is not a release");
+    }
+}
+
 /// Inbound shape for `publish_labels`. Carries the per-label image URL
 /// the frontend already has (from the `labels` table, via load_labels).
 /// Entries with an empty `name` or `image_url` are dropped at the Rust
@@ -11890,6 +12391,7 @@ fn scan_directory_blocking(root: String) -> Result<ScanReport, String> {
     for entry in WalkDir::new(&root)
         .follow_links(false)
         .into_iter()
+        .filter_entry(not_label_art_dir)
         .filter_map(|e| e.ok())
     {
         if entry.file_type().is_file() && is_audio(entry.path()) {
@@ -12092,6 +12594,7 @@ fn import_directory_blocking(app: tauri::AppHandle, root: String) -> Result<Impo
     for entry in WalkDir::new(&root)
         .follow_links(false)
         .into_iter()
+        .filter_entry(not_label_art_dir)
         .filter_map(|e| e.ok())
     {
         if entry.file_type().is_file() && is_audio(entry.path()) {
@@ -14193,6 +14696,9 @@ pub fn run() {
             load_labels,
             save_labels,
             match_label_art,
+            label_art_default,
+            plan_labels_fill,
+            run_labels_fill,
             write_cover_list,
             save_published_covers_to_disk,
             upload_local_covers,

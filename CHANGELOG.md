@@ -21,6 +21,26 @@ ndisc uses two version axes — this app's semver (below) and the shared
 wave; an app-only change bumps ndisc alone. See
 [`schema/README.md`](schema/README.md) → "Versioning & release cycle".
 
+## Unreleased
+
+### Added
+- **`_labels`, one clean label art folder under the library root.** Label
+  art now has a home: `<library root>/_labels` (`/data/music/_labels`),
+  one image per label named after it, written by ndisc. It is the default
+  label art folder — the folder picker stays as an override — so it follows
+  each machine's library root with no new setting. Review → Labels has
+  **Plan fill…**: what filling it would copy from the folder in use (each
+  matched master once, two names of one label sharing it) and download from
+  Blossom (each label's own published image, never the placeholder, checked
+  against the hash in its address), then **Fill _labels** (nothing is
+  overwritten, every file is logged to `label-art-fill.tsv` in ndisc's data
+  folder) and **Use _labels**, which points every label at its new file and
+  reads label art from there. The old folder is not changed. Real plan: 305
+  masters copied for 315 labels, 17 images downloaded for 19, nothing for
+  249 (the placeholder). Stage 3e.
+- **Library scans skip `_labels`.** The import and the scan never enter a
+  folder of that name, even if it held audio: label art is not a release.
+
 ## 0.8.1 — 2026-11-20
 
 ### Added

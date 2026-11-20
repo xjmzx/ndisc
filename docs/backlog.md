@@ -211,7 +211,12 @@ hash. The `art_name` recorded in the old `labels.json` export has drifted
    local file, and **3e** filling `_labels` (below).
 
    **`_labels`: one clean label art folder under the library root (agreed
-   2026-11-20).** Supersedes the 3e first written the same day.
+   2026-11-20; built the same day, unreleased:** `label_art_default`,
+   `plan_labels_fill`, `run_labels_fill`, the WalkDir skip
+   `not_label_art_dir`, and Review → Labels' fill bar. Real plan: 305 copies
+   for 315 labels, 17 downloads for 19, nothing for 249. Note for the run:
+   metalheadz and Razors Edge publish one image, so both get
+   `metalheadz.jpg` — likely a wrong image on Razors Edge.**) Supersedes the 3e first written the same day.
 
    *Why.* The masters folder in use (`~/Documents/Discogs/…/tjmzx-labels`)
    is a working directory: misspellings (`rcords`, `Reocrds`), variants

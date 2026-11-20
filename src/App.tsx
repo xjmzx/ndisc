@@ -906,6 +906,7 @@ export default function App() {
       <UndoToast toast={toast} onDismiss={() => setToast(null)} />
       <ReviewOverlay
         labels={labels}
+        setLabels={setLabels}
         onPickLabel={(name, url, site) => {
           setView("labels");
           promptAddLabel(name, url, site);
