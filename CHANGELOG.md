@@ -36,6 +36,14 @@ wave; an app-only change bumps ndisc alone. See
   While results are held, the Labels scan icon and the *Local covers vs
   Blossom* maintenance item open them rather than checking again; Review's
   *Run again* is the new check.
+- **Review's inspector.** Click a row (a cover, or a label image) and it
+  shows large on the right. A cover shows the file on disk and the
+  published image side by side, each with its size, dimensions and path or
+  address, why it is listed, and its own *Keep Blossom · save to disk* /
+  *Keep disk · upload* where they apply, and *Open release*, which closes
+  Review and shows the release on Home. A label image shows its size,
+  format, host and flags, and every label that uses it, each one click
+  from its edit form. Tick boxes still tick; the row around them inspects.
 - **Check label art** (the scan icon in the Labels list header): the size,
   format and shape of every published label image, read from each image's
   first 128 KB, flagged as the covers' quality group is — low-res, over the

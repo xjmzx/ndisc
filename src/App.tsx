@@ -60,6 +60,7 @@ import type { FeedbackTone } from "./components/FeedbackArea";
 import {
   clearKeypair,
   getNpub,
+  getRelease,
   keyringBackend,
   initDb,
   recountTracks,
@@ -885,6 +886,13 @@ export default function App() {
         onPickLabel={(name, url, site) => {
           setView("labels");
           promptAddLabel(name, url, site);
+        }}
+        onOpenRelease={async (id) => {
+          const r = await getRelease(id);
+          if (!r) return;
+          setView("library");
+          setSelected(r);
+          setLabelFormOpen(false);
         }}
       />
     </div>

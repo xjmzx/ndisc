@@ -33,6 +33,8 @@ and not an OS window (ndisc opens none).
 
 **Stages.**
 
+R1–R4 built 2026-11-20 (R3–R4: the inspector column in `ReviewOverlay.tsx`;
+cover rows are `CoverInspect`, built where each group's row is drawn).
 R1 and R2 built 2026-11-20 (`src/lib/review.tsx`, `ReviewOverlay.tsx`).
 As built, R1 lifts the **results** and the label check into the store, but
 the cover check, upload and save still run in `ReleaseList` (they share its

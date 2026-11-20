@@ -3888,19 +3888,48 @@ function sizeClass(r: LocalCoverItem): Exclude<SizeFilter, "all"> | null {
   return "close";
 }
 
+// One row of the cover check, as Review's inspector shows it.
+export interface CoverInspect {
+  key: string;
+  group: "differing" | "elsewhere" | "noLocal" | "noCover" | "quality";
+  id: number;
+  artist: string;
+  title: string;
+  localPath: string | null;
+  publishedUrl: string | null;
+  localDims: [number, number] | null;
+  publishedDims: [number, number] | null;
+  localBytes: number | null;
+  // Why it is listed, in the row's own words.
+  note: string;
+  canUpload: boolean;
+  canSave: boolean;
+}
+
 export function LocalCoverDetails({
   check,
   uploads,
   saves,
   onUpload,
   onSaveFromBlossom,
+  onInspect,
+  inspected = null,
 }: {
   check: LocalCoverCheck;
   uploads: LocalCoverUploads | null;
   saves: SavePublishedCovers | null;
   onUpload: (ids: number[]) => void;
   onSaveFromBlossom: (ids: number[]) => void;
+  // Review: clicking a row (not its tick box) shows it in the inspector.
+  onInspect?: (item: CoverInspect) => void;
+  inspected?: string | null;
 }) {
+  const rowCls = (key: string) =>
+    cn(
+      "flex items-center gap-2 px-2 py-1 rounded bg-bg/50",
+      onInspect && "cursor-pointer hover:bg-bg/80",
+      inspected === key && "ring-1 ring-accent/70",
+    );
   // Rows an upload or a save has settled leave the lists.
   const done = useMemo(() => {
     const m = new Map<number, string>();
@@ -4161,11 +4190,35 @@ export function LocalCoverDetails({
           <ul className="mt-2 max-h-[28rem] overflow-auto space-y-1 text-[10px]">
             {shown.map((r) => (
               <li key={r.id}>
-                <label className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50 cursor-pointer">
+                <div
+                  className={rowCls(`differing:${r.id}`)}
+                  onClick={() =>
+                    onInspect?.({
+                      key: `differing:${r.id}`,
+                      group: "differing",
+                      id: r.id,
+                      artist: r.artist,
+                      title: r.title,
+                      localPath: r.localPath,
+                      publishedUrl: r.publishedUrl,
+                      localDims: r.localDims,
+                      publishedDims: r.publishedDims,
+                      localBytes: r.localBytes,
+                      note: r.shrunk
+                        ? "Shrunk since publishing: the file on disk is a smaller copy of the published image."
+                        : r.publishedLarger
+                          ? "The published copy is larger. The file on disk may be the poorer one."
+                          : "A different picture on disk from the one readers see?",
+                      canUpload: true,
+                      canSave: true,
+                    })
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={picked.has(r.id)}
                     onChange={() => toggle(r.id)}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <img
                     src={convertFileSrc(r.localPath)}
@@ -4195,7 +4248,7 @@ export function LocalCoverDetails({
                       {done.has(r.id) ? " · failed" : ""}
                     </span>
                   </span>
-                </label>
+                </div>
               </li>
             ))}
           </ul>
@@ -4248,11 +4301,33 @@ export function LocalCoverDetails({
           <ul className="mt-2 max-h-[28rem] overflow-auto space-y-1 text-[10px]">
             {elsewhere.map((r) => (
               <li key={r.id}>
-                <label className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50 cursor-pointer">
+                <div
+                  className={rowCls(`elsewhere:${r.id}`)}
+                  onClick={() =>
+                    onInspect?.({
+                      key: `elsewhere:${r.id}`,
+                      group: "elsewhere",
+                      id: r.id,
+                      artist: r.artist,
+                      title: r.title,
+                      localPath: r.localPath,
+                      publishedUrl: r.publishedUrl,
+                      localDims: r.localDims,
+                      publishedDims: r.publishedDims,
+                      localBytes: r.localBytes,
+                      note: `Published from ${r.host}, not the primary Blossom server${
+                        r.samePicture === true ? ", as the same file that is on disk" : ""
+                      }. Uploading the file on disk moves it there.`,
+                      canUpload: true,
+                      canSave: false,
+                    })
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={picked.has(r.id)}
                     onChange={() => toggle(r.id)}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <img
                     src={convertFileSrc(r.localPath)}
@@ -4279,7 +4354,7 @@ export function LocalCoverDetails({
                       {done.has(r.id) ? " · failed" : ""}
                     </span>
                   </span>
-                </label>
+                </div>
               </li>
             ))}
           </ul>
@@ -4297,7 +4372,29 @@ export function LocalCoverDetails({
           </p>
           <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
             {check.noLocal.map((r) => (
-              <li key={r.id} className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50">
+              <li
+                key={r.id}
+                className={rowCls(`noLocal:${r.id}`)}
+                onClick={() =>
+                  onInspect?.({
+                    key: `noLocal:${r.id}`,
+                    group: "noLocal",
+                    id: r.id,
+                    artist: r.artist,
+                    title: r.title,
+                    localPath: null,
+                    publishedUrl: r.publishedUrl,
+                    localDims: null,
+                    publishedDims: r.publishedDims,
+                    localBytes: null,
+                    note: r.missingPath
+                      ? `Published, but the cover file is not at ${r.missingPath}. Reconcile published covers downloads it.`
+                      : "Published, with no cover file recorded. Reconcile published covers downloads it.",
+                    canUpload: false,
+                    canSave: false,
+                  })
+                }
+              >
                 <img
                   src={r.publishedUrl}
                   loading="lazy"
@@ -4346,7 +4443,29 @@ export function LocalCoverDetails({
           )}
           <ul className="mt-2 max-h-64 overflow-auto space-y-1 text-[10px]">
             {check.noCover.map((r) => (
-              <li key={r.id} className="px-2 py-1 rounded bg-bg/50">
+              <li
+                key={r.id}
+                className={cn(rowCls(`noCover:${r.id}`), "block")}
+                onClick={() =>
+                  onInspect?.({
+                    key: `noCover:${r.id}`,
+                    group: "noCover",
+                    id: r.id,
+                    artist: r.artist,
+                    title: r.title,
+                    localPath: r.localPath,
+                    publishedUrl: null,
+                    localDims: null,
+                    publishedDims: null,
+                    localBytes: null,
+                    note: r.localPath
+                      ? "Published with no cover, though a file is on disk: uploading it is the fix."
+                      : "Published with no cover, and no file on disk either.",
+                    canUpload: !!r.localPath && done.get(r.id) !== "ok",
+                    canSave: false,
+                  })
+                }
+              >
                 <span className="block text-fg truncate">
                   {r.artist} <span className="text-muted">·</span> {r.title}
                 </span>
@@ -4412,7 +4531,27 @@ export function LocalCoverDetails({
                         : true,
               )
               .map((r) => (
-                <li key={r.id} className="flex items-center gap-2 px-2 py-1 rounded bg-bg/50">
+                <li
+                  key={r.id}
+                  className={rowCls(`quality:${r.id}`)}
+                  onClick={() =>
+                    onInspect?.({
+                      key: `quality:${r.id}`,
+                      group: "quality",
+                      id: r.id,
+                      artist: r.artist,
+                      title: r.title,
+                      localPath: r.localPath,
+                      publishedUrl: null,
+                      localDims: r.dims,
+                      publishedDims: null,
+                      localBytes: r.localBytes,
+                      note: `Outside the library's shape: ${qualityKinds(r, check).join(" · ")}. Resizing, converting and cropping are ncover's job; Export list includes it.`,
+                      canUpload: false,
+                      canSave: false,
+                    })
+                  }
+                >
                   <img
                     src={convertFileSrc(r.localPath)}
                     loading="lazy"
