@@ -131,8 +131,9 @@ hash. The `art_name` recorded in the old `labels.json` export has drifted
    footing stage 3 needs. Keep the 31238 manifest unchanged.
 3. **A label art folder** (medium). A setting, matched by normalised name,
    with a per-label file pick for the misses. Then labels join the quality
-   survey and Export list (the `cover file` column already lets ncover work
-   on single files in a shared folder) and gain an *upload local file* fix.
+   survey and Export list (the `cover file` column lets ncover work on
+   single files in a shared folder: several lines in one folder since GTK
+   ncover's fix of 2026-11-20; the macOS app has it as Phase F7) and gain an *upload local file* fix.
 
 ## Discogs collection through the API (idea, 2026-11-17)
 
