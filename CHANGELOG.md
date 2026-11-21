@@ -23,6 +23,8 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.9.0 — 2026-11-21
+
 ### Added
 - **`_labels`, one clean label art folder under the library root.** Label
   art now has a home: `<library root>/_labels` (`/data/music/_labels`),
