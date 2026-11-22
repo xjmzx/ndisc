@@ -181,6 +181,17 @@ folder scope) must skip it by name rather than rely on it holding no audio.
 Underscore, not a dot, so Finder and Explorer show it. It travels and is
 backed up with the library.
 
+**A label's file is its file whatever its extension (2026-11-22).** The
+naming rule is `<Label name>.<ext>`, and the *name* is what identifies it —
+not the name with the extension. ncover's Convert (its 0.7.0, n.cover 1.2.0)
+turns `Peak Oil.png` into `Peak Oil.jpg` **in place** and removes the PNG,
+which is a thing the loop is meant to do, so anything that remembers a
+label's file by its full file name goes stale the moment it runs. Found the
+hard way on the first real convert: ndisc had the label's file recorded as a
+hand pick, read it as missing, and its fill would have copied the PNG back
+in beside the JPEG. ndisc 0.9.1 answers by matching the stem; any app that
+records a label's art file should do the same, or record the stem.
+
 - **Desktop = Tauri 2** (React + Vite + TypeScript front end, Rust backend over
   IPC). **Mobile = Capacitor** (`nview` only).
 - **SQLite** (`rusqlite`, bundled) where a local library index is needed

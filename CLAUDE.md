@@ -40,6 +40,18 @@ The release path is `tauri build`, which runs Vite. **Never `cargo build
   "Open existing database" at it rather than trusting the default path.
 - **Use a distinct keypair per discography/pseudonym** when publishing, or
   `disco-vault:<id>` coordinates collide between them.
+- **A label's art file is identified by its STEM, not its full name.** The
+  rule is `<Label name>.<ext>`, and ncover's Convert rewrites `X.png` as
+  `X.jpg` in the library and removes the PNG — so anything keyed on the
+  whole file name goes stale the first time the loop runs. Two places were,
+  and both are fixed in 0.9.1: `match_label_files` (a hand pick whose file is
+  gone falls back to a file whose name IS the label's, reported as
+  `fallback` with the lost pick in `lost`; a *close* match deliberately does
+  not stand in, because a pick is not something to re-guess) and
+  `plan_label_fill`'s `claim` (a label counts as filled when any image for
+  its stem is there, and the plan names the file that IS there). Keep that
+  rule in mind for stage 3d and anything else that reads `art_file`:
+  **the extension is not part of the identity.**
 
 ## Not here
 

@@ -23,6 +23,8 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.9.1 — 2026-11-22
+
 ### Fixed
 - **A label's own file is its file whatever its extension.** n.cover's
   Convert turns `Peak Oil.png` into `Peak Oil.jpg` beside it, and both
