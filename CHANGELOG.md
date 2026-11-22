@@ -23,6 +23,21 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+### Fixed
+- **A label's own file is its file whatever its extension.** n.cover's
+  Convert turns `Peak Oil.png` into `Peak Oil.jpg` beside it, and both
+  places ndisc records a label's art name an extension — so after a convert
+  the label read as having **no local file**, and *Fill `_labels`* would have
+  copied the PNG straight back in beside the JPEG.
+  - A hand pick whose file is gone now falls back to a file whose name **is**
+    the label's (`<Label name>.<ext>`, the name this app writes), and says so:
+    "the picked file (Peak Oil.png) is gone — this one matches the name". A
+    *close* match does not stand in: a pick is not something to re-guess from
+    a near miss, so that stays "missing" and waits for a person.
+  - *Plan fill* counts a label as already filled when any image for it is
+    there, and names the file that **is** there rather than the one it was
+    about to write.
+
 ## 0.9.0 — 2026-11-21
 
 ### Added

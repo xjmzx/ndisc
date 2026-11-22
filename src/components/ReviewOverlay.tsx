@@ -699,7 +699,9 @@ function LocalLabelInspector({
             ? "File picked by hand."
             : item.how === "close"
               ? "A close match by name: check it is this label's."
-              : "Matched by name."}
+              : item.how === "fallback"
+                ? `The file picked by hand (${item.lost}) is gone; this one matches the name.`
+                : "Matched by name."}
           {item.publishedNotOwn
             ? ` It publishes an image that is not this file${
                 item.publishedShared > 2 ? `, shared with ${item.publishedShared - 1} other labels (a placeholder)` : ""

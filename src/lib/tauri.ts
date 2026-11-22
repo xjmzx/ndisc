@@ -1243,9 +1243,13 @@ export async function saveLabelsDb(labels: LabelRow[]): Promise<void> {
 export interface LabelArtMatch {
   name: string;
   file: string | null;
-  // "picked" | "name" | "close" | "missing" | "none"
+  // "picked" | "name" | "close" | "fallback" | "missing" | "none"
+  // "fallback": the picked file is gone and a file whose name IS the
+  // label's stood in for it — ncover's Convert renames `X.png` to `X.jpg`.
   how: string;
   others: string[];
+  // The pick that is no longer in the folder ("fallback" and "missing").
+  lost?: string;
 }
 
 export interface LabelArtMatches {
@@ -1334,6 +1338,8 @@ export interface LabelLocalItem {
   name: string;
   file: string;
   how: string;
+  // The pick that is gone, when `how` is "fallback".
+  lost?: string;
   bytes: number;
   dims: [number, number] | null;
   format: string;

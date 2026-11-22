@@ -863,7 +863,10 @@ export function LabelPanel({
                 <span
                   className={cn(
                     "block",
-                    formMatch?.how === "close" || formMatch?.how === "missing" ? "text-warn" : "text-muted",
+                    formMatch?.how === "close" || formMatch?.how === "missing" ||
+                      formMatch?.how === "fallback"
+                      ? "text-warn"
+                      : "text-muted",
                   )}
                   title={formMatch && formMatch.others.length > 0 ? formMatch.others.join("\n") : undefined}
                 >
@@ -873,8 +876,10 @@ export function LabelPanel({
                       ? "matched by name"
                       : formMatch?.how === "close"
                         ? "a close match: check it is this label"
-                        : formMatch?.how === "missing"
-                          ? `the picked file (${formMatch.others[0]}) is not in the folder`
+                        : formMatch?.how === "fallback"
+                          ? `the picked file (${formMatch.lost}) is gone — this one matches the name`
+                          : formMatch?.how === "missing"
+                            ? `the picked file (${formMatch.lost}) is not in the folder`
                           : formEntry
                             ? "no file matches the name: pick one"
                             : "save the label first, then pick its file"}

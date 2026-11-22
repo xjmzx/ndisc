@@ -6600,8 +6600,11 @@ pub struct LabelArtCheck {
 pub struct LabelLocalItem {
     pub name: String,
     pub file: String,
-    /// "picked", "name" or "close" (see `LabelArtMatch`).
+    /// "picked", "name", "close" or "fallback" (see `LabelArtMatch`).
     pub how: String,
+    /// The hand pick that is gone, when `how` is "fallback".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lost: Option<String>,
     pub bytes: u64,
     pub dims: Option<(u32, u32)>,
     pub format: String,
@@ -6692,6 +6695,7 @@ fn label_locals(
             name: l.name.clone(),
             file,
             how: m.how.clone(),
+            lost: m.lost.clone(),
             bytes,
             dims,
             format: format.to_string(),
@@ -9924,10 +9928,17 @@ pub struct LabelArtMatch {
     /// The file in the folder, when there is one.
     pub file: Option<String>,
     /// "picked" (by hand), "name" (tier 1), "close" (tiers 2–3, worth a
-    /// look), "missing" (picked, but the file is gone) or "none".
+    /// look), "fallback" (picked, the file is gone, and a file whose name IS
+    /// the label's stood in), "missing" (picked and gone, with nothing exact
+    /// to stand in) or "none".
     pub how: String,
     /// Other files that matched as well, when there were several.
     pub others: Vec<String>,
+    /// The hand pick that is no longer in the folder, for "fallback" and
+    /// "missing". Its own field rather than `others`, which means "more
+    /// files that match" and is counted as such.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lost: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -9966,9 +9977,28 @@ fn match_label_files(files: &[String], labels: &[LabelPickInput]) -> (Vec<LabelA
             if let Some(p) = l.art_file.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
                 if have.contains(p) {
                     used.insert(p.to_string());
-                    return LabelArtMatch { name: l.name.clone(), file: Some(p.to_string()), how: "picked".into(), others: vec![] };
+                    return LabelArtMatch { name: l.name.clone(), file: Some(p.to_string()), how: "picked".into(), others: vec![], lost: None };
                 }
-                return LabelArtMatch { name: l.name.clone(), file: None, how: "missing".into(), others: vec![p.to_string()] };
+                // The picked file is gone. A file whose name IS the label's —
+                // `<Label name>.<ext>`, which is what this app writes into
+                // `_labels` — stands in for it, because that is not a guess:
+                // ncover's Convert turns `Peak Oil.png` into `Peak Oil.jpg`
+                // beside it, and the pick names an extension. A *close* match
+                // does not stand in: a hand pick is not something to re-guess.
+                let exact = label_words(&l.name);
+                if !exact.is_empty() {
+                    if let Some(found) = tiers[0].get(&exact) {
+                        used.extend(found.iter().cloned());
+                        return LabelArtMatch {
+                            name: l.name.clone(),
+                            file: Some(found[0].clone()),
+                            how: "fallback".into(),
+                            others: found[1..].to_vec(),
+                            lost: Some(p.to_string()),
+                        };
+                    }
+                }
+                return LabelArtMatch { name: l.name.clone(), file: None, how: "missing".into(), others: vec![], lost: Some(p.to_string()) };
             }
             let w = label_words(&l.name);
             let c = label_core(&w);
@@ -9984,10 +10014,11 @@ fn match_label_files(files: &[String], labels: &[LabelPickInput]) -> (Vec<LabelA
                         file: Some(found[0].clone()),
                         how: if tier == 0 { "name" } else { "close" }.into(),
                         others: found[1..].to_vec(),
+                        lost: None,
                     };
                 }
             }
-            LabelArtMatch { name: l.name.clone(), file: None, how: "none".into(), others: vec![] }
+            LabelArtMatch { name: l.name.clone(), file: None, how: "none".into(), others: vec![], lost: None }
         })
         .collect();
     let mut unused: Vec<String> = files.iter().filter(|f| !used.contains(*f)).cloned().collect();
@@ -10081,6 +10112,63 @@ mod label_match_tests {
         );
         assert_eq!(m[3].others, ["!K7.label-out.png"], "the plain master first, the variant listed");
         assert_eq!(unused, ["Warp.label.jpg"], "the pick took Warp off its name match");
+    }
+
+    #[test]
+    fn a_pick_that_is_gone_falls_back_to_the_label_s_own_name() {
+        // ncover's Convert turns `Peak Oil.png` into `Peak Oil.jpg` beside
+        // it, and a pick names an extension. The label's own file is still
+        // its file; a stored pick going stale must not read as "no file".
+        let files: Vec<String> = ["Peak Oil.jpg", "ultra.jpg", "unrelated.png"]
+            .iter().map(|s| s.to_string()).collect();
+        let labels = vec![
+            LabelPickInput { name: "Peak Oil".into(), art_file: Some("Peak Oil.png".into()) },
+            // A pick that is gone with nothing EXACT to stand in stays
+            // missing: `ultra.jpg` is a close match for "Ultra Records"
+            // (the filler word dropped), and a hand pick is not something to
+            // re-guess from a near miss.
+            LabelPickInput { name: "Ultra Records".into(), art_file: Some("Ultra.png".into()) },
+        ];
+        let (m, unused) = match_label_files(&files, &labels);
+        assert_eq!(
+            m.iter().map(|x| (x.name.as_str(), x.file.as_deref(), x.how.as_str(), x.lost.as_deref())).collect::<Vec<_>>(),
+            [
+                ("Peak Oil", Some("Peak Oil.jpg"), "fallback", Some("Peak Oil.png")),
+                ("Ultra Records", None, "missing", Some("Ultra.png")),
+            ]
+        );
+        assert_eq!(unused, ["ultra.jpg", "unrelated.png"], "the close one did not stand in");
+
+        // Without a pick at all, that same close match is used as before.
+        let no_pick = vec![LabelPickInput { name: "Ultra Records".into(), art_file: None }];
+        let (m2, _) = match_label_files(&files, &no_pick);
+        assert_eq!((m2[0].file.as_deref(), m2[0].how.as_str()), (Some("ultra.jpg"), "close"));
+    }
+
+    #[test]
+    fn a_fill_sees_a_label_s_file_whatever_its_extension() {
+        // The same question in the fill's words: with `Peak Oil.jpg` already
+        // there, filling must not copy the master back as `Peak Oil.png` and
+        // leave the label with two files.
+        let base = std::env::temp_dir().join("ndisc-fill-ext");
+        let (src, target) = (base.join("masters"), base.join("_labels"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(src.join("peakoil.label.png"), b"x").unwrap();
+        std::fs::write(target.join("Peak Oil.jpg"), b"x").unwrap();
+
+        let labels = vec![LabelFillInput {
+            name: "Peak Oil".into(),
+            image_url: String::new(),
+            art_file: None,
+        }];
+        let plan = plan_label_fill(&target, Some(src.to_str().unwrap()), &labels).unwrap();
+        assert_eq!(
+            plan.items.iter().map(|i| (i.action.as_str(), i.file.as_str())).collect::<Vec<_>>(),
+            [("exists", "Peak Oil.jpg")],
+            "the file that IS there, not the one it was about to write"
+        );
     }
 
     /// The real folder: `NDISC_LABELS_JSON=<labels> NDISC_LABEL_DIR=<folder>
@@ -10222,11 +10310,19 @@ fn plan_label_fill(
     source: Option<&str>,
     labels: &[LabelFillInput],
 ) -> Result<LabelFillPlan, String> {
-    let existing: std::collections::HashSet<String> = if target.is_dir() {
-        label_art_files(&target.to_string_lossy())?.into_iter().map(|f| f.to_lowercase()).collect()
-    } else {
-        Default::default()
-    };
+    // What is already in `_labels`, by lower-cased name, and by lower-cased
+    // STEM as well: a label's file is its file whatever its extension, and
+    // ncover's Convert turns `Peak Oil.png` into `Peak Oil.jpg` beside it. A
+    // fill that looked only for the extension it was about to write would
+    // copy the PNG straight back in and leave the label with two files.
+    let present: Vec<String> =
+        if target.is_dir() { label_art_files(&target.to_string_lossy())? } else { Vec::new() };
+    let existing: std::collections::HashSet<String> =
+        present.iter().map(|f| f.to_lowercase()).collect();
+    let by_stem: std::collections::HashMap<String, String> = present
+        .iter()
+        .map(|f| (label_file_stem(f).to_lowercase(), f.clone()))
+        .collect();
     // The old folder's matches (name, close, hand pick), as 3a finds them.
     let src_matches: Vec<Option<String>> = match source.map(str::trim).filter(|s| !s.is_empty()) {
         Some(src) if std::path::Path::new(src) != target => {
@@ -10242,8 +10338,15 @@ fn plan_label_fill(
     let mut used_names: std::collections::HashSet<String> = existing.clone();
     let mut claim = |base: &str, ext: &str, exists_ok: bool| -> (String, bool) {
         let first = format!("{base}.{ext}");
-        if exists_ok && existing.contains(&first.to_lowercase()) {
-            return (first, true);
+        if exists_ok {
+            if existing.contains(&first.to_lowercase()) {
+                return (first, true);
+            }
+            // The same label's file under another extension is still that
+            // label's file — and the plan names the file that IS there.
+            if let Some(found) = by_stem.get(&base.to_lowercase()) {
+                return (found.clone(), true);
+            }
         }
         let mut name = first;
         let mut n = 2;
