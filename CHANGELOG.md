@@ -23,6 +23,17 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.9.2 — 2026-11-24
+
+### Added
+- **Update check on the version chip.** Once a day the chip asks GitHub for
+  the latest published release (`/releases/latest`, so pre-release tags never
+  count). When one is newer, a dot appears on the chip's corner; clicking the
+  chip opens a popover with the status, a link to the release page, **Check
+  now**, and a **Check daily** switch to turn it off. Notify-only: nothing is
+  downloaded or installed. The same three files are vendored into ntree,
+  nplay and nsmpl; see SUITE.md § Version format → Update check.
+
 ## 0.9.1 — 2026-11-22
 
 ### Fixed

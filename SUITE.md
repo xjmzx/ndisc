@@ -724,9 +724,26 @@ footer; the footer carries stack + machine values only.
 (`v0.1.2`) — any pre-release/build suffix (`-beta.2`, `+build`) is dropped to
 the chip's `title` tooltip. This keeps the chip a fixed, predictable width as
 releases move from `0.2.0-beta.2` toward `1.3.1`, so the header layout stays
-consistent across the suite. Each app vendors a `shortVersion(v)` helper
-(`v.split(/[-+]/)[0]`) and renders `v{shortVersion(appVersion)}` with
-`title={`v${appVersion}`}`.
+consistent across the suite. The chip is the vendored
+`src/components/VersionChip.tsx`, which shortens with `v.split(/[-+]/)[0]` and
+carries the full version in its `title`.
+
+**Update check (2026-11-24).** The chip is also where an app says a newer
+release exists. Notify-only — nothing is downloaded or installed (Tauri's
+updater can't update a `.deb`). `src/lib/updateCheck.ts` asks
+`api.github.com/repos/<APP_REPO>/releases/latest` from the webview (GitHub
+allows cross-origin; no Rust, no new crate), which skips drafts and the
+release workflow's hyphenated pre-release tags. It checks ~10 s after launch
+unless a cached answer is under a day old, then daily; dev builds don't check
+unless started with `VITE_UPDATE_TEST_VERSION=0.0.1`. A newer release puts an
+absolutely-positioned `bg-ok` dot on the chip's corner (no width change);
+clicking the chip opens a popover with the status, **Open the vX release**
+(opener `openUrl`, covered by `opener:default`), **Check now** and a **Check
+daily** switch — each check shows GitHub this machine's address, so it can be
+turned off. Vendored as three files — `updateCheck.ts`, `VersionChip.tsx`,
+`TickBox.tsx` — and **only `APP_REPO` differs between apps**. Shipped in ndisc
+0.9.2, ntree 0.4.8, nsmpl 0.6.3, nplay 0.3.7. A build can only announce
+releases newer than itself, so the dot first appears for real one release on.
 
 **CENTRE — the one focal module.** Exactly one, and it is the app's primary
 live thing: **master transport** for players (`nplay`, `nsmpl`), the **primary
