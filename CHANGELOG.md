@@ -23,6 +23,15 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.2 — 2026-11-26
+
+### Added
+- **The rename field says what Rename will do before you click it.** A line
+  under the field reads `→ merges into "X" (N releases)` as soon as the name
+  typed is another existing label, or says it is a rename to a new name, a
+  case change, or a spelling tidy. A merge no longer shows itself only in the
+  confirm dialog.
+
 ## 0.10.1 — 2026-11-26
 
 ### Fixed

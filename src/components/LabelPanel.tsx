@@ -541,6 +541,29 @@ export function LabelPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownName]);
 
+  // What Rename will do, said before the dialog: a merge is easy to miss when
+  // it is just a name that happens to exist already.
+  const renameTarget = useMemo(() => {
+    const to = renameTo.trim().toLowerCase();
+    const from = renameFrom?.trim().toLowerCase();
+    if (!to || !from || to === from) return null;
+    return labels.find((l) => l.name.trim().toLowerCase() === to) ?? null;
+  }, [renameTo, renameFrom, labels]);
+  const [targetReleases, setTargetReleases] = useState<number | null>(null);
+  useEffect(() => {
+    setTargetReleases(null);
+    if (!renameTarget) return;
+    let cancelled = false;
+    getLabelOverview(renameTarget.name)
+      .then((o) => {
+        if (!cancelled) setTargetReleases(o.releases);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [renameTarget]);
+
   function openRename() {
     if (!display) return;
     setRenameFrom(display.name);
@@ -927,6 +950,26 @@ export function LabelPanel({
               Cancel
             </button>
           </div>
+          {renameTo.trim() && (
+            <div
+              className={cn(
+                "text-[10px]",
+                renameTarget ? "text-mauve" : "text-muted",
+              )}
+            >
+              {renameTarget
+                ? `→ merges into "${renameTarget.name}"${
+                    targetReleases == null
+                      ? ""
+                      : ` (${targetReleases.toLocaleString()} release${targetReleases === 1 ? "" : "s"})`
+                  }: the two become one; it keeps its own image unless that is empty or the placeholder`
+                : renameTo.trim() === renameFrom
+                  ? `→ makes every release's spelling exactly "${renameFrom}"`
+                  : renameTo.trim().toLowerCase() === renameFrom.trim().toLowerCase()
+                    ? `→ changes the case: "${renameFrom}" becomes "${renameTo.trim()}"`
+                    : `→ renames "${renameFrom}" to "${renameTo.trim()}" (a new name)`}
+            </div>
+          )}
         </div>
       )}
       {renameMsg && (
