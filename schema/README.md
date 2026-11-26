@@ -14,6 +14,8 @@ Living documents:
   need it.
 - **`labels.v1.json`** — wire contract for the record-label image
   library event (kind 31238). Unfrozen until ndisc ships publishing.
+  Amended 2026-11-26 (additive): an entry may name its `parent` label
+  (sublabels, one level), and an entry with a `parent` may omit `image`.
 - **`visualisations.md`** — sidecar to the JSON contracts. Documents
   the *semantic* layer of each chart (which field, which aggregation,
   which palette) shared between ndisc, glmps, and sister suite apps.
@@ -405,7 +407,7 @@ itself.
 - `release.v2.json` — frozen-with-amendments canonical wire spec
 - `release.v1.json` — frozen historic; v2 readers don't need it
 - `labels.v1.json` — record-label image library wire spec (unfrozen
-  until ndisc ships publishing)
+  until ndisc ships publishing; optional `parent` since 2026-11-26)
 - `visualisations.md` — chart semantics sidecar
 - `fixtures/` — reference events:
   - `release-31237.full.json` — v1 maximal

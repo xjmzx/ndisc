@@ -1,7 +1,9 @@
 # Sublabels — parent/child labels (design, 2026-11-26)
 
-**Status:** local part built on branch `sublabels`; the wire part (below,
-§ 5) is a proposal waiting on the user's decision. Nothing here is published.
+**Status:** built on branch `sublabels`. The user chose **option A** (§ 5)
+on 2026-11-26: the labels.v1 amendment and ndisc's `publish_labels` are done
+(steps 1–2). Not yet published (step 3, the user's), and glmps / nview do
+not read `parent` yet (step 4, a later wave).
 
 A label can name another label as its **parent**. Viewing a label in the label
 panel shows its sublabels; viewing a sublabel shows its parent; each is one
@@ -108,11 +110,11 @@ name must do the same.
   name and its parent in the tooltip; a parent's row tooltip lists its
   sublabels. The list stays flat and keeps its sort — grouping it into a tree
   would fight the A–Z strip and the count filter.
-- The publish-dirty fingerprint does **not** include `parent` yet, because the
-  manifest does not carry it yet (§ 5). It joins the fingerprint in the same
-  change that puts it on the wire.
+- The publish-dirty fingerprint includes `parent` where one is set (an entry
+  without a parent fingerprints exactly as before, so a catalogue with no
+  sublabels does not light the publish dot after the upgrade).
 
-## 5. Reaching glmps and nview — the wire question (DECISION NEEDED)
+## 5. Reaching glmps and nview — the wire question (decided: A)
 
 Labels publish as **one** kind **31238** event (`d = disco-vault:labels`) whose
 content is
@@ -176,12 +178,13 @@ Not proposed: a separate event or a new kind (the families belong with the
 label registry), or a top-level `families` object beside `labels` (readers
 ignore it today too, but it splits one fact across two places in one event).
 
-### Steps if A is chosen
+### Steps (A chosen 2026-11-26)
 
-1. Amend `schema/labels.v1.json` + a line in `schema/README.md` and SUITE.md
+1. ✅ Amend `schema/labels.v1.json` + a line in `schema/README.md` and SUITE.md
    § wire contract.
-2. ndisc: `publish_labels` takes `parent`; publishable = has image **or** has
-   parent; fingerprint includes parent; test the content shape.
+2. ✅ ndisc: `publish_labels` takes `parent` (`labels_manifest_content`, with
+   tests); publishable = has image **or** has parent; fingerprint includes
+   parent; the label-art move still only looks at entries with art.
 3. Publish the manifest (the user's call, from the panel as now).
 4. glmps ×3 + nview: `parseLabelLibrary` keeps `parent`, accepts image-less
    entries that have one, and the release page shows "part of Clone" / the

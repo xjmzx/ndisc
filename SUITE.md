@@ -347,7 +347,7 @@ The shared data spine. `ndisc` publishes it; the others read and/or react.
 | Kind | Name | What it is | Publisher(s) | Reader(s) |
 |------|------|-----------|--------------|-----------|
 | **31237** | `release.v2` | A release (parameterized-replaceable; `d`-tag identity; genre / `tracks` / `discs` / `video` tags) | ndisc | nview, glmps, feed refs |
-| **31238** | `labels.v1` | Record-label registry / metadata | ndisc | nview, glmps |
+| **31238** | `labels.v1` | Record-label registry / metadata (image, optional `parent` for sublabels) | ndisc | nview, glmps |
 | **31239** | `feed.v1` | Feed-note channel (frozen contract; optional release `a`-ref) | owner (ndisc) | nplay (Current), nview, ntree, nsmpl |
 | **30000** | NIP-51 list | Contributor registry (`d=glmps:contributors`) | ndisc | all |
 | **4550** | NIP-72 | Per-note sign-off / approval | ndisc | — |
@@ -397,7 +397,11 @@ wave**: the publisher bumps the SHA and every consumer re-vendors it in the same
 release. Two version axes apply everywhere — each app's own semver *and* the
 shared `contract.vN` SHA (see `schema/README.md`). `labels.v1` and `clip.v1` are
 **unfrozen** (no SHA pin yet) — each is promoted to frozen once its publisher
-emits it. `clip.v1` is the clip↔release provenance link; design +
+emits it. `labels.v1` gained an optional per-label `parent` on 2026-11-26
+(sublabels, one level; an entry with a parent may have no `image`) — additive,
+`schemaVersion` unchanged, and invisible to readers that only keep entries with
+an `image`; glmps and nview learn to show families in their own later wave
+([`docs/sublabels-design-2026-11-26.md`](docs/sublabels-design-2026-11-26.md)). `clip.v1` is the clip↔release provenance link; design +
 reconcile/manifest spec in
 [`schema/clip-mapping-design-2026-07-17.md`](schema/clip-mapping-design-2026-07-17.md).
 The contract is **internal** — the only consumers are the suite's own readers

@@ -136,11 +136,14 @@ export function LabelPanel({
   // fetched only while `roomy` — the strip is the sole consumer.
   const [overview, setOverview] = useState<LabelOverview | null>(null);
 
-  // Labels.v1 manifest publish state. Counts only entries with a real
-  // imageUrl since those are the only ones that benefit the consumer.
+  // Labels.v1 manifest publish state. An entry goes out when it has a real
+  // image address or a parent (a sublabel with no art still belongs to its
+  // family — labels.v1 amendment 2026-11-26). `withArt` is the image part.
   const [publishingLabels, setPublishingLabels] = useState(false);
+  const hasArt = (l: LabelEntry) => !!l.imageUrl && l.imageUrl.startsWith("http");
+  const withArt = useMemo(() => labels.filter(hasArt), [labels]);
   const publishable = useMemo(
-    () => labels.filter((l) => l.imageUrl && l.imageUrl.startsWith("http")),
+    () => labels.filter((l) => hasArt(l) || !!l.parent?.trim()),
     [labels],
   );
 
@@ -154,7 +157,13 @@ export function LabelPanel({
   const currentFingerprint = useMemo(
     () =>
       publishable
-        .map((l) => `${l.name}\u0000${l.imageUrl}`)
+        // The parent joins only when set, so a catalogue without sublabels
+        // keeps the fingerprint it was published under.
+        .map(
+          (l) =>
+            `${l.name}\u0000${hasArt(l) ? l.imageUrl : ""}` +
+            (l.parent?.trim() ? `\u0000${l.parent.trim()}` : ""),
+        )
         .sort()
         .join("\n"),
     [publishable],
@@ -169,9 +178,11 @@ export function LabelPanel({
     if (publishingLabels || publishable.length === 0 || relays.length === 0) return;
     const verb = publishedFingerprint ? "Republish" : "Publish";
     const ok = await ask(
-      `${verb} ${publishable.length} record-label image${
+      `${verb} ${publishable.length} record label${
         publishable.length === 1 ? "" : "s"
-      } as a labels.v1 manifest (kind:31238) to ${relays.length} relay${
+      } (${withArt.length} with art, ${
+        publishable.filter((l) => l.parent?.trim()).length
+      } sublabel${publishable.filter((l) => l.parent?.trim()).length === 1 ? "" : "s"}) as a labels.v1 manifest (kind:31238) to ${relays.length} relay${
         relays.length === 1 ? "" : "s"
       }?\n\n` +
         `Glmps web viewers will render these on matching release pages. Republishing replaces the previous manifest.`,
@@ -181,7 +192,11 @@ export function LabelPanel({
     setPublishingLabels(true);
     try {
       const result = await publishLabels(
-        publishable.map((l) => ({ name: l.name, imageUrl: l.imageUrl })),
+        publishable.map((l) => ({
+          name: l.name,
+          imageUrl: hasArt(l) ? l.imageUrl : "",
+          ...(l.parent?.trim() ? { parent: l.parent.trim() } : {}),
+        })),
         relays,
       );
       const accepted = result.acceptedBy.length;
@@ -214,11 +229,11 @@ export function LabelPanel({
   const artElsewhere = useMemo(
     () =>
       primaryBlossom
-        ? publishable.filter(
+        ? withArt.filter(
             (l) => !l.imageUrl.startsWith(`${primaryBlossom}/`),
           )
         : [],
-    [publishable, primaryBlossom],
+    [withArt, primaryBlossom],
   );
   // Labels can share one image (the bulk placeholder, an imprint and its
   // parent); the move fetches and uploads each address once.
@@ -816,10 +831,10 @@ export function LabelPanel({
                   ? "Publishing…"
                   : hasPendingChanges
                     ? publishedFingerprint
-                      ? `Unpublished changes — republish ${publishable.length} label image${
+                      ? `Unpublished changes — republish ${publishable.length} label${
                           publishable.length === 1 ? "" : "s"
                         } (kind:31238)`
-                      : `Publish ${publishable.length} label image${
+                      : `Publish ${publishable.length} label${
                           publishable.length === 1 ? "" : "s"
                         } as a labels.v1 manifest (kind:31238)`
                     : `Labels manifest is up to date (${publishable.length} entries published)`

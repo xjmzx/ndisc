@@ -1856,8 +1856,10 @@ export async function deleteReaction(
 /** Publish the labels.v1 manifest (kind:31238). Only entries with a
  *  non-empty name + imageUrl are included; the Rust side drops empties
  *  too. Republishing replaces (d-tag is fixed at `disco-vault:labels`). */
+// labels.v1 (kind:31238). `parent` names the label's parent (sublabels,
+// amendment 2026-11-26); an entry may have a parent and an empty imageUrl.
 export async function publishLabels(
-  labels: Array<{ name: string; imageUrl: string }>,
+  labels: Array<{ name: string; imageUrl: string; parent?: string }>,
   relays: string[],
 ): Promise<PublishResult> {
   return invoke<PublishResult>("publish_labels", { labels, relays });

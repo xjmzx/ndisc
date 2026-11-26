@@ -28,11 +28,20 @@
           "type": "object",
           "keys": "Label name string. Matched verbatim (case-sensitive, whitespace-significant) against the `label` tag value on release events (kind:31237).",
           "values": {
-            "image": { "required": true, "type": "string", "format": "https URL (typically nostr.build)" }
+            "image": { "required": "unless `parent` is present", "type": "string", "format": "https URL (typically a Blossom server)" },
+            "parent": {
+              "required": false,
+              "type": "string",
+              "addedIn": "2026-11-26 amendment (additive)",
+              "note": "Sublabels. The parent label's name: another key of this map, or a label that only appears as the `label` tag on release events. Matched like `label` (verbatim; ndisc emits the parent's stored spelling). One level only: a label that is some entry's parent never has a `parent` of its own, and no entry is its own parent. Children are derived by inverting the map — nothing lists them. An entry may carry `parent` with no `image` (a sublabel without art)."
+            }
           }
         }
       },
-      "rule": "Consumers MUST tolerate missing entries — fall back to a generic glyph. Consumers MUST tolerate extra fields inside each value object — forward-compatible (e.g. `country`, `founded`, `website` may be added in labels.v2)."
+      "rule": "Consumers MUST tolerate missing entries — fall back to a generic glyph. Consumers MUST tolerate extra fields inside each value object — forward-compatible (e.g. `country`, `founded`, `website` may be added in labels.v2). Consumers MUST tolerate an entry without `image` (one that carries only `parent`): show no art for it. A consumer that ignores `parent` sees exactly what it saw before the amendment — readers that keep only entries with a string `image` (glmps, nview as of 2026-11-26) silently skip image-less entries.",
+      "amendments": [
+        "2026-11-26 — optional `parent` (sublabels); `image` optional when `parent` is present. Additive: schemaVersion stays labels.v1. Design: docs/sublabels-design-2026-11-26.md."
+      ]
     }
   }
 }

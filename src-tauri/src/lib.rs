@@ -10102,6 +10102,60 @@ mod label_rename_tests {
 }
 
 #[cfg(test)]
+mod labels_manifest_tests {
+    use super::*;
+
+    fn input(name: &str, url: &str, parent: Option<&str>) -> LabelInput {
+        LabelInput { name: name.into(), image_url: url.into(), parent: parent.map(Into::into) }
+    }
+
+    #[test]
+    fn the_manifest_carries_parents_and_image_less_sublabels() {
+        let content = labels_manifest_content(&[
+            input("Clone", "https://b/clone.jpg", None),
+            input("Clone Aqualung Series", "https://b/aqualung.jpg", Some("Clone")),
+            input("Clone Basement Series", "", Some("Clone")),
+            input("No Art", "", None),          // neither: left out
+            input("  ", "https://b/x.jpg", None), // no name: left out
+            input("Self", "https://b/s.jpg", Some("self")), // own parent: dropped
+        ]);
+        assert_eq!(
+            content,
+            serde_json::json!({
+                "schemaVersion": "labels.v1",
+                "labels": {
+                    "Clone": { "image": "https://b/clone.jpg" },
+                    "Clone Aqualung Series": { "image": "https://b/aqualung.jpg", "parent": "Clone" },
+                    "Clone Basement Series": { "parent": "Clone" },
+                    "Self": { "image": "https://b/s.jpg" }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn without_parents_the_manifest_is_what_it_was() {
+        // The pre-amendment shape, byte for byte: only `image`, nothing else.
+        let content = labels_manifest_content(&[input("Warp", "https://b/w.jpg", None)]);
+        assert_eq!(
+            serde_json::to_string(&content).unwrap(),
+            r#"{"labels":{"Warp":{"image":"https://b/w.jpg"}},"schemaVersion":"labels.v1"}"#
+        );
+    }
+
+    #[test]
+    fn a_parent_in_the_manifest_stays_one_level_deep() {
+        let content = labels_manifest_content(&[
+            input("Top", "https://b/t.jpg", None),
+            input("Mid", "https://b/m.jpg", Some("Top")),
+            input("Leaf", "", Some("Mid")),
+        ]);
+        assert_eq!(content["labels"]["Mid"], serde_json::json!({ "image": "https://b/m.jpg" }));
+        assert_eq!(content["labels"]["Leaf"], serde_json::json!({ "parent": "Mid" }));
+    }
+}
+
+#[cfg(test)]
 mod label_store_tests {
     use super::*;
 
@@ -11189,13 +11243,55 @@ mod label_fill_tests {
 
 /// Inbound shape for `publish_labels`. Carries the per-label image URL
 /// the frontend already has (from the `labels` table, via load_labels).
-/// Entries with an empty `name` or `image_url` are dropped at the Rust
-/// boundary so the published manifest only contains real entries.
+/// Entries with an empty `name`, or with neither an image nor a parent, are
+/// dropped at the Rust boundary so the published manifest only contains
+/// real entries.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LabelInput {
     name: String,
     image_url: String,
+    /// The parent label's name (sublabels). Not sent by the label-art move.
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+/// The labels.v1 manifest content (kind:31238), per `schema/labels.v1.json`:
+/// `image` when there is one, `parent` when there is one (amendment
+/// 2026-11-26), and an entry with neither is left out. Parents are kept one
+/// level deep, as they are stored (`normalise_label_parents`).
+fn labels_manifest_content(labels: &[LabelInput]) -> serde_json::Value {
+    let rows: Vec<LabelRow> = labels
+        .iter()
+        .map(|l| LabelRow {
+            name: l.name.clone(),
+            image_url: l.image_url.clone(),
+            site_url: None,
+            art_file: None,
+            parent: l.parent.clone(),
+        })
+        .collect();
+    let parents = normalise_label_parents(&rows);
+    let mut labels_obj = serde_json::Map::new();
+    for (entry, parent) in labels.iter().zip(parents) {
+        let name = entry.name.trim();
+        let url = entry.image_url.trim();
+        if name.is_empty() || (url.is_empty() && parent.is_none()) {
+            continue;
+        }
+        let mut value = serde_json::Map::new();
+        if !url.is_empty() {
+            value.insert("image".to_string(), serde_json::Value::String(url.to_string()));
+        }
+        if let Some(p) = parent {
+            value.insert("parent".to_string(), serde_json::Value::String(p));
+        }
+        labels_obj.insert(name.to_string(), serde_json::Value::Object(value));
+    }
+    serde_json::json!({
+        "schemaVersion": "labels.v1",
+        "labels": labels_obj,
+    })
 }
 
 /// Publish the labels.v1 manifest (kind:31238) so consumers (glmps web
@@ -11214,22 +11310,7 @@ async fn publish_labels(
     let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity stored".to_string())?;
     let keys = keys_from_nsec(&nsec)?;
 
-    let mut labels_obj = serde_json::Map::new();
-    for entry in labels {
-        let name = entry.name.trim();
-        let url = entry.image_url.trim();
-        if name.is_empty() || url.is_empty() {
-            continue;
-        }
-        let mut value = serde_json::Map::new();
-        value.insert("image".to_string(), serde_json::Value::String(url.to_string()));
-        labels_obj.insert(name.to_string(), serde_json::Value::Object(value));
-    }
-
-    let content = serde_json::json!({
-        "schemaVersion": "labels.v1",
-        "labels": labels_obj,
-    });
+    let content = labels_manifest_content(&labels);
     let content_str = serde_json::to_string(&content).map_err(|e| e.to_string())?;
 
     let tags = vec![
