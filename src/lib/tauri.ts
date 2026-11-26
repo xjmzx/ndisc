@@ -1219,6 +1219,8 @@ export interface LabelRow {
   siteUrl?: string;
   // A file in the label art folder picked by hand (a file name).
   artFile?: string;
+  // The parent label's name, when this is a sublabel (one level only).
+  parent?: string;
 }
 
 export async function loadLabelsDb(
@@ -1253,6 +1255,7 @@ export async function saveLabelsDb(labels: LabelRow[]): Promise<void> {
       imageUrl: l.imageUrl,
       siteUrl: l.siteUrl,
       artFile: l.artFile,
+      parent: l.parent,
     })),
   });
 }

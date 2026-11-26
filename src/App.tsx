@@ -217,6 +217,7 @@ export default function App() {
         imageUrl: l.imageUrl,
         ...(l.siteUrl ? { siteUrl: l.siteUrl } : {}),
         ...(l.artFile ? { artFile: l.artFile } : {}),
+        ...(l.parent ? { parent: l.parent } : {}),
       }));
       const cleaned = clearStaleBundleUrls(loaded);
       setLabelsState(cleaned);

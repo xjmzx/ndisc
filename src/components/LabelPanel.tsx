@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FolderOpen, ImageUp, Pause, PencilLine, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
+import { CornerDownRight, CornerLeftUp, FolderOpen, ImageUp, Pause, PencilLine, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useReview } from "../lib/review";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -10,8 +10,17 @@ import { NoArt } from "./NoArt";
 import { cn } from "../lib/cn";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import {
+  canHaveParent,
+  childrenOf,
+  labelKey,
+  parentCandidates,
+  parentOf,
+  setParent,
+} from "../lib/labelFamily";
+import {
   getLabelOverview,
   labelArtFileHash,
+  listDistinctLabels,
   migrateLabelArtToBlossom,
   publishLabels,
   renameLabel,
@@ -29,6 +38,9 @@ export interface LabelEntry {
   // A file in the label art folder picked by hand, when the name match is
   // wrong or finds nothing (a file name, not a path).
   artFile?: string;
+  // The parent label's name when this is a sublabel (an imprint or series).
+  // One level only; see lib/labelFamily and docs/sublabels-design-2026-11-26.md.
+  parent?: string;
 }
 
 type BrandVariant = "themeA" | "themeB" | "ink";
@@ -412,6 +424,47 @@ export function LabelPanel({
   // Website link shown under the image for whichever label is on screen.
   const siteUrl = display?.siteUrl?.trim() || null;
 
+  // The label on screen's family: its parent, or its sublabels.
+  const familyName = display?.name?.trim() || "";
+  const familyParent = familyName ? parentOf(labels, familyName) : null;
+  const familyChildren = familyName ? childrenOf(labels, familyName) : [];
+
+  // Every label the catalogue knows (stored entries + release labels), for
+  // the parent picker and for marking a parent that no longer exists. Fetched
+  // only while the form is open or a parent is on screen.
+  const [releaseLabels, setReleaseLabels] = useState<string[] | null>(null);
+  const needKnown = formOpen || familyParent != null;
+  useEffect(() => {
+    if (!needKnown) return;
+    let cancelled = false;
+    listDistinctLabels()
+      .then((d) => !cancelled && setReleaseLabels(d.map((x) => x.name)))
+      .catch(() => !cancelled && setReleaseLabels(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [needKnown]);
+  const knownKeys = useMemo(
+    () =>
+      new Set([
+        ...labels.map((l) => labelKey(l.name)),
+        ...(releaseLabels ?? []).map(labelKey),
+      ]),
+    [labels, releaseLabels],
+  );
+  const parentMissing =
+    familyParent != null && releaseLabels != null && !knownKeys.has(labelKey(familyParent));
+
+  // Open another label in the form (parent ↔ sublabel navigation).
+  function openLabel(name: string) {
+    const k = labelKey(name);
+    const entry = labels.find((l) => labelKey(l.name) === k);
+    setFormName(entry?.name ?? name);
+    setFormUrl(entry?.imageUrl ?? "");
+    setFormSite(entry?.siteUrl ?? "");
+    setFormOpen(true);
+  }
+
   // Stats follow whatever is on screen — including the idle carousel — so the
   // strip always describes the label you are actually looking at.
   const overviewName = display?.name?.trim() || null;
@@ -505,6 +558,12 @@ export function LabelPanel({
     }
   }
   const [pickErr, setPickErr] = useState<string | null>(null);
+  const formParent = formKey ? parentOf(labels, formName) : null;
+  const formHeadsFamily = formKey ? !canHaveParent(labels, formName) : false;
+  const formParentOptions = useMemo(
+    () => (formKey ? parentCandidates(labels, releaseLabels ?? [], formName) : []),
+    [formKey, formName, labels, releaseLabels],
+  );
   const setArtFile = (file: string | undefined) => {
     if (!formEntry) return;
     setLabels(labels.map((l) => (l === formEntry ? { ...l, artFile: file } : l)));
@@ -657,6 +716,7 @@ export function LabelPanel({
           imageUrl: l.imageUrl,
           ...(l.siteUrl ? { siteUrl: l.siteUrl } : {}),
           ...(l.artFile ? { artFile: l.artFile } : {}),
+          ...(l.parent ? { parent: l.parent } : {}),
         })),
       );
       setRenameMsg(
@@ -905,6 +965,53 @@ export function LabelPanel({
           </button>
         )}
       </div>
+
+      {/* The label's family: up to its parent, or down to its sublabels.
+          Each name opens that label in the form. */}
+      {display && !brandVariant && (familyParent || familyChildren.length > 0) && (
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 text-[10px]">
+          {familyParent ? (
+            <>
+              <CornerLeftUp size={10} className="text-muted shrink-0" aria-hidden="true" />
+              <span className="text-muted">part of</span>
+              <button
+                type="button"
+                onClick={() => openLabel(familyParent)}
+                title={
+                  parentMissing
+                    ? `${familyParent} — no label of that name in the catalogue`
+                    : `Open ${familyParent}`
+                }
+                className={cn(
+                  "truncate max-w-full hover:underline",
+                  parentMissing ? "text-warn" : "text-accent",
+                )}
+              >
+                {familyParent}
+                {parentMissing && " (not found)"}
+              </button>
+            </>
+          ) : (
+            <>
+              <CornerDownRight size={10} className="text-muted shrink-0" aria-hidden="true" />
+              <span className="text-muted">
+                {familyChildren.length} sublabel{familyChildren.length === 1 ? "" : "s"}
+              </span>
+              {familyChildren.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => openLabel(c)}
+                  title={`Open ${c}`}
+                  className="truncate max-w-full text-accent hover:underline"
+                >
+                  {c}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
       </div>{/* close top-aligned wrapper */}
 
       {/* At-a-glance strip — only when the detail card is collapsed and this
@@ -1066,6 +1173,41 @@ export function LabelPanel({
                        focus:border-accent/50 placeholder:text-muted"
             spellCheck={false}
           />
+          {formKey && (
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <span className="text-muted shrink-0 w-14">parent</span>
+              {formHeadsFamily ? (
+                <span
+                  className="flex-1 min-w-0 truncate text-muted"
+                  title={childrenOf(labels, formName).join("\n")}
+                >
+                  heads {childrenOf(labels, formName).length} sublabel
+                  {childrenOf(labels, formName).length === 1 ? "" : "s"} — stays top-level
+                </span>
+              ) : (
+                <select
+                  value={formParent ?? ""}
+                  onChange={(e) =>
+                    setLabels(setParent(labels, formName, e.target.value || null))
+                  }
+                  title="Make this label a sublabel (an imprint or series) of another"
+                  className="flex-1 min-w-0 px-1.5 py-1 rounded-md bg-surface text-fg text-xs
+                             outline-none border border-transparent focus:border-accent/50"
+                >
+                  <option value="">— none (top-level label)</option>
+                  {formParent &&
+                    !formParentOptions.some((o) => labelKey(o) === labelKey(formParent)) && (
+                      <option value={formParent}>{formParent} (not found)</option>
+                    )}
+                  {formParentOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           {review.artFolder && formKey && (
             <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-surface/40 text-[10px]">
               {formMatch?.file ? (

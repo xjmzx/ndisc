@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownAZ, ArrowDownWideNarrow, Check, FolderOpen, ImageOff, ImageUp, Link2Off, List, ScanSearch, Search, X } from "lucide-react";
+import { ArrowDownAZ, ArrowDownWideNarrow, Check, CornerDownRight, FolderOpen, ImageOff, ImageUp, Link2Off, List, ScanSearch, Search, X } from "lucide-react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
 import { Section } from "./Section";
@@ -129,6 +129,20 @@ export function LabelviewPanel({
   const byName = new Map(
     labels.map((l) => [normaliseName(l.name), l] as const),
   );
+
+  // Sublabels by their parent's normalised name, for the parent rows' tooltip.
+  const childrenByParent = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const l of labels) {
+      const p = l.parent?.trim();
+      if (!p) continue;
+      const k = normaliseName(p);
+      const list = m.get(k) ?? [];
+      if (!list.some((n) => normaliseName(n) === normaliseName(l.name))) list.push(l.name);
+      m.set(k, list);
+    }
+    return m;
+  }, [labels]);
 
   const distinctSet = useMemo(
     () => new Set(distinct.map((d) => normaliseName(d.name))),
@@ -524,6 +538,13 @@ export function LabelviewPanel({
           const genreTitle = genreLabels.length
             ? ` · genres: ${genreLabels.join(" / ")}`
             : "";
+          const parent = entry?.parent?.trim() || null;
+          const subs = childrenByParent.get(normaliseName(name)) ?? [];
+          const familyTitle = parent
+            ? `\npart of ${parent}`
+            : subs.length
+              ? `\nsublabels: ${[...subs].sort((a, b) => a.localeCompare(b)).join(", ")}`
+              : "";
           return (
             <li key={name}>
               <button
@@ -533,8 +554,8 @@ export function LabelviewPanel({
                 }
                 title={
                   hasImage
-                    ? `Edit image for ${name} — ${count} release${count === 1 ? "" : "s"}${genreTitle}`
-                    : `Supply image for ${name} — ${count} release${count === 1 ? "" : "s"}${genreTitle}`
+                    ? `Edit image for ${name} — ${count} release${count === 1 ? "" : "s"}${genreTitle}${familyTitle}`
+                    : `Supply image for ${name} — ${count} release${count === 1 ? "" : "s"}${genreTitle}${familyTitle}`
                 }
                 className="w-full flex items-center gap-2 px-2 py-1
                            rounded hover:bg-surface text-left text-xs"
@@ -570,9 +591,24 @@ export function LabelviewPanel({
                 </span>
                 {/* The full name; CSS cuts it only when the row itself is too
                     narrow, and the tooltip always has all of it. */}
-                <span className="truncate flex-1" title={name}>
+                {parent && (
+                  <CornerDownRight
+                    size={10}
+                    aria-label={`sublabel of ${parent}`}
+                    className="shrink-0 -mr-1 text-muted"
+                  />
+                )}
+                <span className="truncate flex-1" title={`${name}${familyTitle}`}>
                   {name}
                 </span>
+                {subs.length > 0 && (
+                  <span
+                    aria-label={`${subs.length} sublabel${subs.length === 1 ? "" : "s"}`}
+                    className="shrink-0 text-[9px] text-muted/80"
+                  >
+                    +{subs.length}
+                  </span>
+                )}
                 {count > 0 && (
                   <span
                     aria-label={`${count} release${count === 1 ? "" : "s"}`}

@@ -511,6 +511,8 @@ fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     // A label's hand-picked file in the label art folder (a file name, not a
     // path: the folder is set per machine, the database may travel).
     ensure_column(&conn, "labels", "art_file", "TEXT")?;
+    // A label's parent label, by name (sublabels, docs/sublabels-design-2026-11-26.md).
+    ensure_column(&conn, "labels", "parent", "TEXT")?;
     // Legacy single-slot `genre` column — pre-v2 schema. Kept as a tombstone
     // because SQLite can't DROP COLUMN cleanly, and so the v1→v2 backfill
     // below can find data to copy. New code MUST NOT read or write it.
@@ -9658,6 +9660,39 @@ pub struct LabelRow {
     /// the name match is wrong or finds nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub art_file: Option<String>,
+    /// The parent label's name, when this label is a sublabel (an imprint or
+    /// series). One level only: see `normalise_label_parents`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+fn label_key(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// Keep label families one level deep, whatever list arrives
+/// (docs/sublabels-design-2026-11-26.md § 2): a blank parent or one naming
+/// the label itself is dropped, and a label that another label names as its
+/// parent stays top-level (its own parent is dropped, so the family it heads
+/// stays together). With one level a cycle cannot exist.
+fn normalise_label_parents(labels: &[LabelRow]) -> Vec<Option<String>> {
+    let own: Vec<Option<String>> = labels
+        .iter()
+        .map(|l| {
+            l.parent
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty() && label_key(p) != label_key(&l.name))
+                .map(str::to_string)
+        })
+        .collect();
+    let heads: std::collections::HashSet<String> =
+        own.iter().flatten().map(|p| label_key(p)).collect();
+    labels
+        .iter()
+        .zip(own)
+        .map(|(l, p)| if heads.contains(&label_key(&l.name)) { None } else { p })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -9671,11 +9706,17 @@ pub struct LabelLoad {
 
 fn read_labels(conn: &Connection) -> Result<Vec<LabelRow>, String> {
     let mut stmt = conn
-        .prepare("SELECT name, image_url, site_url, art_file FROM labels ORDER BY position, rowid")
+        .prepare("SELECT name, image_url, site_url, art_file, parent FROM labels ORDER BY position, rowid")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(LabelRow { name: r.get(0)?, image_url: r.get(1)?, site_url: r.get(2)?, art_file: r.get(3)? })
+            Ok(LabelRow {
+                name: r.get(0)?,
+                image_url: r.get(1)?,
+                site_url: r.get(2)?,
+                art_file: r.get(3)?,
+                parent: r.get(4)?,
+            })
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
@@ -9692,12 +9733,15 @@ fn write_labels(conn: &mut Connection, labels: &[LabelRow]) -> Result<(), String
 fn replace_labels(conn: &Connection, labels: &[LabelRow]) -> Result<(), String> {
     conn.execute("DELETE FROM labels", []).map_err(|e| e.to_string())?;
     let mut ins = conn
-        .prepare("INSERT INTO labels (position, name, image_url, site_url, art_file) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .prepare(
+            "INSERT INTO labels (position, name, image_url, site_url, art_file, parent) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
         .map_err(|e| e.to_string())?;
-    for (i, l) in labels.iter().enumerate() {
+    let parents = normalise_label_parents(labels);
+    for ((i, l), parent) in labels.iter().enumerate().zip(parents) {
         let site = l.site_url.as_deref().filter(|s| !s.trim().is_empty());
         let art = l.art_file.as_deref().filter(|s| !s.trim().is_empty());
-        ins.execute(params![i as i64, l.name, l.image_url, site, art])
+        ins.execute(params![i as i64, l.name, l.image_url, site, art, parent])
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -9731,7 +9775,27 @@ pub struct LabelRenameResult {
 /// shared by three or more labels is the placeholder and counts as empty, so
 /// a merge never trades real art for it. Returns the list and whether
 /// entries were merged.
+///
+/// Sublabels follow (docs/sublabels-design-2026-11-26.md § 3): every
+/// entry whose parent names `from` now names `to`, the survivor's empty
+/// parent is filled from a merged entry, and the result is kept one level
+/// deep (`normalise_label_parents`) — so the list returned is the one stored.
 fn rename_in_label_list(list: &[LabelRow], from: &str, to: &str) -> (Vec<LabelRow>, bool) {
+    let (mut out, merged) = rename_entries_in_label_list(list, from, to);
+    let fk = label_key(from);
+    for l in out.iter_mut() {
+        if l.parent.as_deref().is_some_and(|p| label_key(p) == fk) {
+            l.parent = Some(to.trim().to_string());
+        }
+    }
+    let parents = normalise_label_parents(&out);
+    for (l, p) in out.iter_mut().zip(parents) {
+        l.parent = p;
+    }
+    (out, merged)
+}
+
+fn rename_entries_in_label_list(list: &[LabelRow], from: &str, to: &str) -> (Vec<LabelRow>, bool) {
     let fk = from.trim().to_lowercase();
     let tk = to.trim().to_lowercase();
     let is = |l: &LabelRow, k: &str| l.name.trim().to_lowercase() == k;
@@ -9760,6 +9824,9 @@ fn rename_in_label_list(list: &[LabelRow], from: &str, to: &str) -> (Vec<LabelRo
         }
         if blank(&entry.art_file) && !blank(&other.art_file) {
             entry.art_file = other.art_file.clone();
+        }
+        if blank(&entry.parent) && !blank(&other.parent) {
+            entry.parent = other.parent.clone();
         }
     }
     let out = list
@@ -9872,13 +9939,17 @@ mod label_rename_tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(SCHEMA).unwrap();
         ensure_column(&c, "labels", "art_file", "TEXT").unwrap();
+        ensure_column(&c, "labels", "parent", "TEXT").unwrap();
         for (col, ty) in [("last_published_at", "INTEGER"), ("last_published_naddr", "TEXT"), ("publish_state", "TEXT")] {
             ensure_column(&c, "releases", col, ty).unwrap();
         }
         c
     }
     fn l(name: &str, url: &str) -> LabelRow {
-        LabelRow { name: name.into(), image_url: url.into(), site_url: None, art_file: None }
+        LabelRow { name: name.into(), image_url: url.into(), site_url: None, art_file: None, parent: None }
+    }
+    fn sub(name: &str, parent: &str) -> LabelRow {
+        LabelRow { parent: Some(parent.into()), ..l(name, "") }
     }
     fn release(c: &Connection, label: &str, state: &str) -> i64 {
         c.execute(
@@ -9931,7 +10002,7 @@ mod label_rename_tests {
     #[test]
     fn a_merge_never_trades_the_target_s_own_art_and_fills_what_is_empty() {
         let list = vec![
-            LabelRow { name: "Challeger Deep".into(), image_url: "https://b/old.jpg".into(), site_url: Some("https://cd".into()), art_file: Some("x.jpg".into()) },
+            LabelRow { name: "Challeger Deep".into(), image_url: "https://b/old.jpg".into(), site_url: Some("https://cd".into()), art_file: Some("x.jpg".into()), parent: None },
             l("Challenger deep", "https://b/new.jpg"),
         ];
         let (out, merged) = rename_in_label_list(&list, "Challeger Deep", "Challenger Deep");
@@ -9939,8 +10010,80 @@ mod label_rename_tests {
         // "Challenger deep" is the target (same name, other case): its art stays.
         assert_eq!(
             out,
-            [LabelRow { name: "Challenger Deep".into(), image_url: "https://b/new.jpg".into(), site_url: Some("https://cd".into()), art_file: Some("x.jpg".into()) }]
+            [LabelRow { name: "Challenger Deep".into(), image_url: "https://b/new.jpg".into(), site_url: Some("https://cd".into()), art_file: Some("x.jpg".into()), parent: None }]
         );
+    }
+
+    #[test]
+    fn renaming_a_parent_moves_its_sublabels_with_it() {
+        let mut c = db();
+        release(&c, "Clone", "never");
+        replace_labels(
+            &c,
+            &[l("Clone", "c"), sub("Clone Aqualung Series", "clone"), sub("Clone Basement Series", "Clone"), l("Warp", "w")],
+        )
+        .unwrap();
+        let r = rename_label_conn(&mut c, "Clone", "Clone Records").unwrap();
+        let want = [
+            l("Clone Records", "c"),
+            sub("Clone Aqualung Series", "Clone Records"),
+            sub("Clone Basement Series", "Clone Records"),
+            l("Warp", "w"),
+        ];
+        assert_eq!(r.labels, want);
+        assert_eq!(read_labels(&c).unwrap(), want, "stored in the same transaction");
+
+        // A parent known only from releases (no entry of its own) still moves its sublabels.
+        replace_labels(&c, &[sub("Imprint", "Ghost")]).unwrap();
+        let r = rename_label_conn(&mut c, "ghost", "Ghost Records").unwrap();
+        assert_eq!(r.labels, [sub("Imprint", "Ghost Records")]);
+    }
+
+    #[test]
+    fn merging_two_parents_joins_their_families() {
+        let mut c = db();
+        release(&c, "Warp", "never");
+        replace_labels(
+            &c,
+            &[
+                l("Warp Records", "https://b/warp.jpg"),
+                sub("Warp Artificial Intelligence Series", "Warp Records"),
+                l("Warp", ""),
+                sub("Warp Singles", "warp"),
+            ],
+        )
+        .unwrap();
+        let r = rename_label_conn(&mut c, "Warp", "Warp Records").unwrap();
+        assert!(r.merged);
+        assert_eq!(
+            r.labels,
+            [
+                l("Warp Records", "https://b/warp.jpg"),
+                sub("Warp Artificial Intelligence Series", "Warp Records"),
+                sub("Warp Singles", "Warp Records"),
+            ]
+        );
+        assert_eq!(read_labels(&c).unwrap(), r.labels);
+    }
+
+    #[test]
+    fn a_merge_keeps_the_target_s_parent_fills_an_empty_one_and_stays_one_level() {
+        // The target keeps its own parent.
+        let list = vec![sub("Basement", "Clone"), sub("Basement Series", "Other")];
+        let (out, _) = rename_in_label_list(&list, "Basement Series", "Basement");
+        assert_eq!(out, [sub("Basement", "Clone")]);
+        // An empty one is filled from the merged entry.
+        let list = vec![l("Basement", ""), sub("Basement Series", "Clone")];
+        let (out, _) = rename_in_label_list(&list, "Basement Series", "Basement");
+        assert_eq!(out, [sub("Basement", "Clone")]);
+        // A merged parent that heads a family drops its own parent (one level).
+        let list = vec![sub("A", "Top"), l("B", ""), sub("Child", "B")];
+        let (out, _) = rename_in_label_list(&list, "B", "A");
+        assert_eq!(out, [l("A", ""), sub("Child", "A")]);
+        // Merging a sublabel into its own parent leaves no self-parent.
+        let list = vec![l("Clone", "c"), sub("Clone Series", "Clone")];
+        let (out, _) = rename_in_label_list(&list, "Clone Series", "Clone");
+        assert_eq!(out, [l("Clone", "c")]);
     }
 
     #[test]
@@ -9966,10 +10109,58 @@ mod label_store_tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(SCHEMA).unwrap();
         ensure_column(&c, "labels", "art_file", "TEXT").unwrap();
+        ensure_column(&c, "labels", "parent", "TEXT").unwrap();
         c
     }
     fn l(name: &str, url: &str, site: Option<&str>) -> LabelRow {
-        LabelRow { name: name.into(), image_url: url.into(), site_url: site.map(Into::into), art_file: None }
+        LabelRow { name: name.into(), image_url: url.into(), site_url: site.map(Into::into), art_file: None, parent: None }
+    }
+    fn sub(name: &str, parent: &str) -> LabelRow {
+        LabelRow { parent: Some(parent.into()), ..l(name, "", None) }
+    }
+    fn parents(c: &Connection) -> Vec<(String, Option<String>)> {
+        read_labels(c).unwrap().into_iter().map(|r| (r.name, r.parent)).collect()
+    }
+
+    #[test]
+    fn a_parent_round_trips() {
+        let mut c = db();
+        load_labels_conn(&mut c, None).unwrap();
+        let list = vec![l("Clone", "u", None), sub("Clone Basement Series", "Clone"), sub("Clone Aqualung Series", "clone ")];
+        write_labels(&mut c, &list).unwrap();
+        let mut want = list.clone();
+        want[2].parent = Some("clone".into());
+        assert_eq!(read_labels(&c).unwrap(), want, "stored as given, trimmed");
+    }
+
+    #[test]
+    fn families_stay_one_level_deep() {
+        let mut c = db();
+        load_labels_conn(&mut c, None).unwrap();
+        write_labels(
+            &mut c,
+            &[
+                sub("Self", " self "),                   // its own parent: dropped
+                sub("Blank", "  "),                      // blank: dropped
+                sub("Warp Records", "Big Group"),        // heads a family: stays top-level
+                sub("Warp Artificial Intelligence Series", "warp records"),
+                sub("A", "B"),                           // a cycle: B heads A, A heads B
+                sub("B", "A"),
+            ],
+        )
+        .unwrap();
+        let none = |n: &str| (n.to_string(), None);
+        assert_eq!(
+            parents(&c),
+            vec![
+                none("Self"),
+                none("Blank"),
+                none("Warp Records"),
+                ("Warp Artificial Intelligence Series".into(), Some("warp records".into())),
+                none("A"),
+                none("B"),
+            ]
+        );
     }
 
     #[test]
