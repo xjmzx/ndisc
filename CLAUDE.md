@@ -52,6 +52,13 @@ The release path is `tauri build`, which runs Vite. **Never `cargo build
   its stem is there, and the plan names the file that IS there). Keep that
   rule in mind for stage 3d and anything else that reads `art_file`:
   **the extension is not part of the identity.**
+- **One key for label names and label-art files: `label_words`.** Case,
+  separators (`. - _` and space), a trailing `label`, accents, `μ`/`mu` and
+  apostrophes don't count. Anything that compares a label to a file must use
+  it — `label_words(&label_file_stem(file))` against `label_words(name)` — or
+  a renamed file stops counting and Fill writes a duplicate (fixed after
+  0.9.2). `label_file_name` is the *suggested* form (`stuff-records-label`),
+  never a requirement.
 
 ## Not here
 

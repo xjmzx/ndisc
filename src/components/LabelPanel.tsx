@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FolderOpen, ImageUp, Pause, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
+import { FolderOpen, ImageUp, Pause, PencilLine, Play, Plus, Tag, Trash2, Upload, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useReview } from "../lib/review";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -12,6 +12,7 @@ import {
   getLabelOverview,
   migrateLabelArtToBlossom,
   publishLabels,
+  renameLabel,
   uploadFeedImage,
   type ImportProgress,
   type LabelOverview,
@@ -73,6 +74,9 @@ interface Props {
   // screen. Additive ONLY in this mode, so nothing shifts when the detail card
   // is open. Mirrors NostrPanel's `roomy` / LabelviewPanel's `fill`.
   roomy?: boolean;
+  // Called after a label is renamed or merged, so release lists and counts
+  // reload: the rename changes the label on releases too.
+  onRenamed?: () => void;
 }
 
 // localStorage key for the fingerprint of the last-published labels.v1
@@ -120,6 +124,7 @@ export function LabelPanel({
   formSite,
   setFormSite,
   roomy = false,
+  onRenamed,
 }: Props) {
   const [cycleIndex, setCycleIndex] = useState(0);
   const cycleRef = useRef(cycleIndex);
@@ -517,6 +522,66 @@ export function LabelPanel({
     setFormOpen(false);
   }
 
+  // Rename / merge: the name is captured when the form opens, so the
+  // carousel moving on underneath never changes which label is renamed.
+  const [renameFrom, setRenameFrom] = useState<string | null>(null);
+  const [renameTo, setRenameTo] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [renameMsg, setRenameMsg] = useState<string | null>(null);
+
+  function openRename() {
+    if (!display) return;
+    setRenameFrom(display.name);
+    setRenameTo(display.name);
+    setRenameMsg(null);
+    setPaused(true);
+  }
+
+  async function submitRename() {
+    const from = renameFrom;
+    const to = renameTo.trim();
+    if (!from || !to || renaming) return;
+    const target = labels.find(
+      (l) =>
+        l.name.trim().toLowerCase() === to.toLowerCase() &&
+        l.name.trim().toLowerCase() !== from.trim().toLowerCase(),
+    );
+    const question = target
+      ? `Merge "${from}" into "${target.name}"?\n\nEvery release labelled "${from}" (in any case) becomes "${to}", and the two label entries become one. "${target.name}" keeps its own image and website; an empty one is filled from "${from}".`
+      : from === to
+        ? `Make every release's spelling of "${from}" exactly "${to}"?`
+        : `Rename "${from}" to "${to}" on every release and in the label list?`;
+    const yes = await ask(`${question}\n\nPublished releases that change will need republishing.`, {
+      title: target ? "Merge labels" : "Rename label",
+      kind: "warning",
+    });
+    if (!yes) return;
+    setRenaming(true);
+    try {
+      const r = await renameLabel(from, to);
+      setLabels(
+        r.labels.map((l) => ({
+          name: l.name,
+          imageUrl: l.imageUrl,
+          ...(l.siteUrl ? { siteUrl: l.siteUrl } : {}),
+          ...(l.artFile ? { artFile: l.artFile } : {}),
+        })),
+      );
+      setRenameMsg(
+        `"${from}" → "${to}": ${r.releases.toLocaleString()} release${r.releases === 1 ? "" : "s"} changed` +
+          (r.stale ? `, ${r.stale.toLocaleString()} to republish` : "") +
+          (r.merged ? " · entries merged" : "") +
+          ". Publish the labels manifest to send it.",
+      );
+      setRenameFrom(null);
+      onRenamed?.();
+    } catch (e) {
+      setRenameMsg(`Not renamed: ${e}`);
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   function removeCurrent() {
     if (!display) return;
     setLabels(labels.filter((l) => l !== display));
@@ -538,6 +603,18 @@ export function LabelPanel({
                          rounded-md hover:bg-surface"
             >
               {paused ? <Play size={12} /> : <Pause size={12} />}
+            </button>
+          )}
+          {display && (
+            <button
+              type="button"
+              onClick={openRename}
+              title={`Rename or merge "${display.name}" (on every release, too)`}
+              aria-label={`Rename ${display.name}`}
+              className="text-muted hover:text-mauve transition-colors p-1
+                         rounded-md hover:bg-surface"
+            >
+              <PencilLine size={12} />
             </button>
           )}
           {display && display !== match && !isSynthetic && (
@@ -791,6 +868,56 @@ export function LabelPanel({
             />
           </div>
         </div>
+      )}
+
+      {renameFrom !== null && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <div className="text-[10px] text-muted">
+            Rename "{renameFrom}" on every release, or type an existing label to merge into it.
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              list="ndisc-label-rename-names"
+              value={renameTo}
+              autoFocus
+              onChange={(e) => setRenameTo(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitRename();
+                if (e.key === "Escape") setRenameFrom(null);
+              }}
+              placeholder="new label name"
+              className="flex-1 min-w-0 px-2 py-1 rounded-md bg-surface text-fg text-xs
+                         outline-none border border-transparent
+                         focus:border-accent/50 placeholder:text-muted"
+              spellCheck={false}
+            />
+            <datalist id="ndisc-label-rename-names">
+              {labels.map((l, i) => (
+                <option key={`${l.name}-${i}`} value={l.name} />
+              ))}
+            </datalist>
+            <button
+              type="button"
+              onClick={() => void submitRename()}
+              disabled={renaming || !renameTo.trim()}
+              className="shrink-0 px-2 py-1 rounded-md bg-surface text-muted
+                         hover:text-fg text-[10px] disabled:opacity-40"
+            >
+              {renaming ? "Renaming…" : "Rename"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRenameFrom(null)}
+              className="shrink-0 px-2 py-1 rounded-md text-muted hover:text-fg text-[10px]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {renameMsg && (
+        <div className="mt-1 text-[10px] text-muted break-words">{renameMsg}</div>
       )}
 
       {formOpen && (

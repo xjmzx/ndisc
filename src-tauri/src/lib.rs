@@ -9685,21 +9685,143 @@ fn read_labels(conn: &Connection) -> Result<Vec<LabelRow>, String> {
 /// its whole list on each change, as it did to localStorage.
 fn write_labels(conn: &mut Connection, labels: &[LabelRow]) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM labels", []).map_err(|e| e.to_string())?;
-    {
-        let mut ins = tx
-            .prepare(
-                "INSERT INTO labels (position, name, image_url, site_url, art_file) VALUES (?1, ?2, ?3, ?4, ?5)",
-            )
+    replace_labels(&tx, labels)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn replace_labels(conn: &Connection, labels: &[LabelRow]) -> Result<(), String> {
+    conn.execute("DELETE FROM labels", []).map_err(|e| e.to_string())?;
+    let mut ins = conn
+        .prepare("INSERT INTO labels (position, name, image_url, site_url, art_file) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .map_err(|e| e.to_string())?;
+    for (i, l) in labels.iter().enumerate() {
+        let site = l.site_url.as_deref().filter(|s| !s.trim().is_empty());
+        let art = l.art_file.as_deref().filter(|s| !s.trim().is_empty());
+        ins.execute(params![i as i64, l.name, l.image_url, site, art])
             .map_err(|e| e.to_string())?;
-        for (i, l) in labels.iter().enumerate() {
-            let site = l.site_url.as_deref().filter(|s| !s.trim().is_empty());
-            let art = l.art_file.as_deref().filter(|s| !s.trim().is_empty());
-            ins.execute(params![i as i64, l.name, l.image_url, site, art])
-                .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// ── Rename / merge a label ──────────────────────────────────────────────
+//
+// A label lives in two places: the `label` text on its releases, and its
+// entry in the label list (image, website, art pick). Renaming has to move
+// both or the entry is orphaned, and merging two spellings ("Challeger Deep"
+// into "Challenger Deep") is the same operation with a target that already
+// exists. Names compare without regard to case, so a case-only rename
+// ("Firescope Records" → "FireScope Records") works too.
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelRenameResult {
+    /// Releases whose label text changed.
+    pub releases: usize,
+    /// Of those, how many were on the relays and are now waiting to be republished.
+    pub stale: usize,
+    /// True when two or more label entries became one.
+    pub merged: bool,
+    /// The label list after the rename, for the app to show.
+    pub labels: Vec<LabelRow>,
+}
+
+/// The label list with `from` renamed to `to`, merging entries that end up
+/// under one name. The surviving entry is `to`'s own when there is one, and
+/// keeps its fields; an empty field is filled from a merged entry. An image
+/// shared by three or more labels is the placeholder and counts as empty, so
+/// a merge never trades real art for it. Returns the list and whether
+/// entries were merged.
+fn rename_in_label_list(list: &[LabelRow], from: &str, to: &str) -> (Vec<LabelRow>, bool) {
+    let fk = from.trim().to_lowercase();
+    let tk = to.trim().to_lowercase();
+    let is = |l: &LabelRow, k: &str| l.name.trim().to_lowercase() == k;
+    let hits: Vec<usize> = (0..list.len()).filter(|&i| is(&list[i], &fk) || is(&list[i], &tk)).collect();
+    if hits.is_empty() {
+        return (list.to_vec(), false);
+    }
+    let keep = hits.iter().copied().find(|&i| is(&list[i], &tk)).unwrap_or(hits[0]);
+    let mut uses: std::collections::HashMap<&str, usize> = Default::default();
+    for l in list {
+        *uses.entry(l.image_url.trim()).or_default() += 1;
+    }
+    let real = |u: &str| !u.trim().is_empty() && uses.get(u.trim()).copied().unwrap_or(0) < 3;
+    let blank = |s: &Option<String>| s.as_deref().map(str::trim).unwrap_or("").is_empty();
+    let mut entry = list[keep].clone();
+    entry.name = to.trim().to_string();
+    for &i in hits.iter().filter(|&&i| i != keep) {
+        let other = &list[i];
+        if !real(&entry.image_url) && real(&other.image_url) {
+            entry.image_url = other.image_url.clone();
+        } else if entry.image_url.trim().is_empty() {
+            entry.image_url = other.image_url.clone();
+        }
+        if blank(&entry.site_url) && !blank(&other.site_url) {
+            entry.site_url = other.site_url.clone();
+        }
+        if blank(&entry.art_file) && !blank(&other.art_file) {
+            entry.art_file = other.art_file.clone();
         }
     }
-    tx.commit().map_err(|e| e.to_string())
+    let out = list
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| if i == keep { Some(entry.clone()) } else if hits.contains(&i) { None } else { Some(l.clone()) })
+        .collect();
+    (out, hits.len() > 1)
+}
+
+fn rename_label_conn(conn: &mut Connection, from: &str, to: &str) -> Result<LabelRenameResult, String> {
+    let to = to.trim();
+    let fk = from.trim().to_lowercase();
+    if to.is_empty() {
+        return Err("The new name is empty.".into());
+    }
+    if fk.is_empty() {
+        return Err("No label to rename.".into());
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // Compared in Rust, not with SQL lower(), which only folds ASCII.
+    let ids: Vec<(i64, String, String)> = {
+        let mut st = tx
+            .prepare("SELECT id, label, COALESCE(publish_state, '') FROM releases WHERE label IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|(_, l, _)| l.trim().to_lowercase() == fk && l != to)
+            .collect()
+    };
+    let labels = read_labels(&tx)?;
+    let (next, merged) = rename_in_label_list(&labels, from, to);
+    if ids.is_empty() && next == labels {
+        return Err(format!("No release or label is called \"{}\".", from.trim()));
+    }
+    let mut stale = 0;
+    for (id, _, state) in &ids {
+        tx.execute(
+            "UPDATE releases SET label = ?1, updated_at = strftime('%s','now') WHERE id = ?2",
+            params![to, id],
+        )
+        .map_err(|e| e.to_string())?;
+        mark_unpublished(&tx, *id)?;
+        if state == "published" {
+            stale += 1;
+        }
+    }
+    replace_labels(&tx, &next)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(LabelRenameResult { releases: ids.len(), stale, merged, labels: next })
+}
+
+/// Rename a label on every release and in the label list, merging it into
+/// `to` when that label exists already. One transaction.
+#[tauri::command]
+fn rename_label(app: tauri::AppHandle, from: String, to: String) -> Result<LabelRenameResult, String> {
+    let mut conn = open(&app)?;
+    rename_label_conn(&mut conn, &from, &to)
 }
 
 /// The labels, from the database. The first time a database is asked, and
@@ -9740,6 +9862,100 @@ fn load_labels(app: tauri::AppHandle, from_storage: Option<Vec<LabelRow>>) -> Re
 fn save_labels(app: tauri::AppHandle, labels: Vec<LabelRow>) -> Result<(), String> {
     let mut conn = open(&app)?;
     write_labels(&mut conn, &labels)
+}
+
+#[cfg(test)]
+mod label_rename_tests {
+    use super::*;
+
+    fn db() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        ensure_column(&c, "labels", "art_file", "TEXT").unwrap();
+        for (col, ty) in [("last_published_at", "INTEGER"), ("last_published_naddr", "TEXT"), ("publish_state", "TEXT")] {
+            ensure_column(&c, "releases", col, ty).unwrap();
+        }
+        c
+    }
+    fn l(name: &str, url: &str) -> LabelRow {
+        LabelRow { name: name.into(), image_url: url.into(), site_url: None, art_file: None }
+    }
+    fn release(c: &Connection, label: &str, state: &str) -> i64 {
+        c.execute(
+            "INSERT INTO releases (artist, title, label, publish_state) VALUES ('a', 't', ?1, ?2)",
+            params![label, state],
+        )
+        .unwrap();
+        c.last_insert_rowid()
+    }
+    fn labels_of(c: &Connection) -> Vec<String> {
+        let mut st = c.prepare("SELECT label FROM releases ORDER BY id").unwrap();
+        st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn a_case_only_rename_moves_releases_and_the_entry() {
+        let mut c = db();
+        release(&c, "Echospace [detroit]", "published");
+        release(&c, "echospace [detroit]", "never");
+        release(&c, "Warp", "published");
+        replace_labels(&c, &[l("Warp", "w"), l("Echospace [detroit]", "e")]).unwrap();
+        let r = rename_label_conn(&mut c, "Echospace [detroit]", "echospace [detroit]").unwrap();
+        assert_eq!((r.releases, r.stale, r.merged), (1, 1, false), "the one already spelt that way is left");
+        assert_eq!(labels_of(&c), ["echospace [detroit]", "echospace [detroit]", "Warp"]);
+        assert_eq!(r.labels, [l("Warp", "w"), l("echospace [detroit]", "e")]);
+        assert_eq!(read_labels(&c).unwrap(), r.labels);
+        let state: String = c.query_row("SELECT publish_state FROM releases WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(state, "stale");
+    }
+
+    #[test]
+    fn a_merge_keeps_the_target_and_takes_real_art_over_the_placeholder() {
+        let mut c = db();
+        for _ in 0..3 {
+            release(&c, "AP Music", "never");
+        }
+        release(&c, "AP Musik", "never");
+        let ph = "https://b/placeholder.png";
+        replace_labels(
+            &c,
+            &[l("AP Music", "https://b/ap.jpg"), l("Other", ph), l("AP Musik", ph), l("Else", ph)],
+        )
+        .unwrap();
+        let r = rename_label_conn(&mut c, "AP Music", "AP Musik").unwrap();
+        assert_eq!((r.releases, r.merged), (3, true));
+        assert_eq!(labels_of(&c), ["AP Musik"; 4]);
+        assert_eq!(r.labels, [l("Other", ph), l("AP Musik", "https://b/ap.jpg"), l("Else", ph)]);
+    }
+
+    #[test]
+    fn a_merge_never_trades_the_target_s_own_art_and_fills_what_is_empty() {
+        let list = vec![
+            LabelRow { name: "Challeger Deep".into(), image_url: "https://b/old.jpg".into(), site_url: Some("https://cd".into()), art_file: Some("x.jpg".into()) },
+            l("Challenger deep", "https://b/new.jpg"),
+        ];
+        let (out, merged) = rename_in_label_list(&list, "Challeger Deep", "Challenger Deep");
+        assert!(merged);
+        // "Challenger deep" is the target (same name, other case): its art stays.
+        assert_eq!(
+            out,
+            [LabelRow { name: "Challenger Deep".into(), image_url: "https://b/new.jpg".into(), site_url: Some("https://cd".into()), art_file: Some("x.jpg".into()) }]
+        );
+    }
+
+    #[test]
+    fn non_ascii_names_compare_without_case_and_nothing_found_is_an_error() {
+        let mut c = db();
+        release(&c, "WÉMÈ RECORDS", "never");
+        replace_labels(&c, &[l("Weme", "w")]).unwrap();
+        let r = rename_label_conn(&mut c, "wémè records", "WéMè Records").unwrap();
+        assert_eq!(r.releases, 1);
+        let r = rename_label_conn(&mut c, "Weme", "WéMè Records").unwrap();
+        assert_eq!((r.releases, r.merged), (0, false));
+        assert_eq!(r.labels, [l("WéMè Records", "w")]);
+        assert!(rename_label_conn(&mut c, "Nobody", "Somebody").is_err());
+        assert!(rename_label_conn(&mut c, "WéMè Records", "  ").is_err());
+    }
 }
 
 #[cfg(test)]
@@ -9849,19 +10065,27 @@ const LABEL_NAME_FILLER: [&str; 10] = [
     "records", "recordings", "music", "rec", "recs", "label", "ltd", "inc", "rcords", "reocrds",
 ];
 
-/// Lower case, accents composed, dots / dashes / underscores as spaces, other
-/// punctuation dropped (keeping `&`, `!` and `+`, which tell labels apart).
+/// The key a label name and a label-art file are compared by. Lower case;
+/// accents folded, so `moatun 7` is `Móatún 7` whatever the keyboard; `μ` is
+/// `mu` (`Planet μ` = `planet-mu`); apostrophes dropped (`His Master's Voice`
+/// = `his-masters-voice`); dots / dashes / underscores / spaces all one
+/// separator; other punctuation dropped, keeping `&`, `!` and `+`, which tell
+/// labels apart. Everything that reads or writes `_labels` goes through this.
 fn label_words(s: &str) -> String {
+    use unicode_normalization::char::is_combining_mark;
     use unicode_normalization::UnicodeNormalization;
     let s: String = s.nfkc().collect::<String>().to_lowercase();
-    let mapped: String = s
-        .chars()
-        .map(|c| match c {
-            '.' | '_' | '-' | '\u{2013}' | '\u{2014}' => ' ',
-            c if c.is_alphanumeric() || c == '&' || c == '!' || c == '+' || c == ' ' => c,
-            _ => ' ',
-        })
-        .collect();
+    let folded: String = s.nfd().filter(|c| !is_combining_mark(*c)).collect();
+    let mut mapped = String::with_capacity(folded.len());
+    for c in folded.chars() {
+        match c {
+            '\u{3bc}' => mapped.push_str("mu"),
+            '\'' | '\u{2018}' | '\u{2019}' | '\u{2bc}' | '`' => {}
+            '.' | '_' | '-' | '\u{2013}' | '\u{2014}' => mapped.push(' '),
+            c if c.is_alphanumeric() || c == '&' || c == '!' || c == '+' || c == ' ' => mapped.push(c),
+            _ => mapped.push(' '),
+        }
+    }
     mapped.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -9877,12 +10101,12 @@ fn label_file_stem(file: &str) -> String {
     // Find the last "label" that is preceded by '.' or ' ' and followed by
     // nothing, digits, "-out" / " out", or "2"-style suffixes.
     if let Some(i) = lower.rfind("label") {
-        let before_ok = i > 0 && matches!(lower.as_bytes()[i - 1], b'.' | b' ');
+        let before_ok = i > 0 && matches!(lower.as_bytes()[i - 1], b'.' | b' ' | b'-' | b'_');
         let rest = lower[i + 5..].trim_start_matches([' ', '-']);
         let after_ok = rest.is_empty() || rest == "out" || rest.chars().all(|c| c.is_ascii_digit());
         if before_ok && after_ok {
             let mut head = &base[..i - 1];
-            for alt in [".alt", " alt"] {
+            for alt in [".alt", " alt", "-alt", "_alt"] {
                 if head.to_lowercase().ends_with(alt) {
                     head = &head[..head.len() - alt.len()];
                 }
@@ -10229,31 +10453,19 @@ fn label_art_default(app: tauri::AppHandle) -> Result<LabelArtDefault, String> {
     Ok(LabelArtDefault { exists: path.is_dir(), path: path.to_string_lossy().into_owned() })
 }
 
-/// A label name as a file name on every OS: the characters Windows forbids
-/// become "-" ("Planet μ / Matador" → "Planet μ - Matador"), spaces collapse,
-/// and trailing dots and spaces go (Windows drops them silently).
+/// The file name ndisc suggests and writes for a label: its matching key
+/// with dashes for gaps and `-label` on the end — `Stuff Records` →
+/// `stuff-records-label`, `Móatún 7` → `moatun-7-label`, `R & S Records` →
+/// `r-&-s-records-label`. Lower case so no rename is ever case-only, ASCII
+/// for Latin names so any keyboard can type it, nothing any OS forbids, and
+/// `-label` rules out Windows' reserved names. A suggestion only: matching
+/// takes any spelling with the same key.
 fn label_file_name(name: &str) -> String {
-    let mapped: String = name
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .collect();
-    let joined = mapped.split_whitespace().collect::<Vec<_>>().join(" ");
-    let trimmed = joined.trim_end_matches(['.', ' ']).to_string();
-    let reserved = ["con", "prn", "aux", "nul"]
-        .contains(&trimmed.to_lowercase().as_str())
-        || (trimmed.len() == 4
-            && (trimmed.to_lowercase().starts_with("com") || trimmed.to_lowercase().starts_with("lpt"))
-            && trimmed.chars().last().is_some_and(|c| c.is_ascii_digit()));
-    if trimmed.is_empty() {
+    let w = label_words(name);
+    if w.is_empty() {
         "label".into()
-    } else if reserved {
-        format!("{trimmed} label")
     } else {
-        trimmed
+        format!("{}-label", w.replace(' ', "-"))
     }
 }
 
@@ -10319,9 +10531,11 @@ fn plan_label_fill(
         if target.is_dir() { label_art_files(&target.to_string_lossy())? } else { Vec::new() };
     let existing: std::collections::HashSet<String> =
         present.iter().map(|f| f.to_lowercase()).collect();
+    // Keyed like matching is: `Werk.Discs.label.jpg` and `werk-discs-label.jpg`
+    // are one label's file, so a fill never writes the other beside it.
     let by_stem: std::collections::HashMap<String, String> = present
         .iter()
-        .map(|f| (label_file_stem(f).to_lowercase(), f.clone()))
+        .map(|f| (label_words(&label_file_stem(f)), f.clone()))
         .collect();
     // The old folder's matches (name, close, hand pick), as 3a finds them.
     let src_matches: Vec<Option<String>> = match source.map(str::trim).filter(|s| !s.is_empty()) {
@@ -10344,7 +10558,7 @@ fn plan_label_fill(
             }
             // The same label's file under another extension is still that
             // label's file — and the plan names the file that IS there.
-            if let Some(found) = by_stem.get(&base.to_lowercase()) {
+            if let Some(found) = by_stem.get(&label_words(&label_file_stem(&first))) {
                 return (found.clone(), true);
             }
         }
@@ -10623,12 +10837,68 @@ mod label_fill_tests {
 
     #[test]
     fn a_label_name_is_a_file_name_on_every_os() {
-        assert_eq!(label_file_name("Planet μ / Matador"), "Planet μ - Matador");
-        assert_eq!(label_file_name("What?  Records."), "What- Records");
-        assert_eq!(label_file_name("CON"), "CON label");
-        assert_eq!(label_file_name("COM1"), "COM1 label");
-        assert_eq!(label_file_name("Dear Boss."), "Dear Boss");
+        assert_eq!(label_file_name("Stuff Records"), "stuff-records-label");
+        assert_eq!(label_file_name("Planet μ / Matador"), "planet-mu-matador-label");
+        assert_eq!(label_file_name("Móatún 7"), "moatun-7-label");
+        assert_eq!(label_file_name("WéMè Records"), "weme-records-label");
+        assert_eq!(label_file_name("R & S Records"), "r-&-s-records-label");
+        assert_eq!(label_file_name("!K7 Records"), "!k7-records-label");
+        assert_eq!(label_file_name("His Master's Voice"), "his-masters-voice-label");
+        assert_eq!(label_file_name("E’G"), "eg-label");
+        assert_eq!(label_file_name("echospace [detroit]"), "echospace-detroit-label");
+        assert_eq!(label_file_name("10/30 Uproar Records"), "10-30-uproar-records-label");
+        assert_eq!(label_file_name("What?  Records."), "what-records-label");
+        assert_eq!(label_file_name("CON"), "con-label", "never a reserved name");
+        assert_eq!(label_file_name("Dear Boss."), "dear-boss-label");
+        assert_eq!(label_file_name("трип"), "трип-label");
         assert_eq!(label_file_name("  "), "label");
+        // Whatever is suggested is found again by its own label.
+        for n in ["Stuff Records", "Móatún 7", "Planet μ", "R & S Records", "!K7 Records", "E’G", "Play Label"] {
+            assert_eq!(label_words(&label_file_stem(&format!("{}.jpg", label_file_name(n)))), label_words(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn every_spelling_of_a_label_file_is_one_key() {
+        let key = |f: &str| label_words(&label_file_stem(f));
+        for f in [
+            "Stuff.Records.label.jpg",
+            "stuff.records.label.jpg",
+            "stuff records label.jpg",
+            "stuff-records-label.jpg",
+            "stuff_records_label.jpeg",
+            "Stuff Records.png",
+        ] {
+            assert_eq!(key(f), "stuff records", "{f}");
+        }
+        assert_eq!(key("moatun-7-label.jpg"), label_words("Móatún 7"));
+        assert_eq!(key("Moatun.7.label.jpg"), label_words("Móatún 7"));
+        assert_eq!(key("Börft.Records.label.jpg"), key("borft-records-label.jpg"));
+        assert_eq!(key("planet-mu-label.jpg"), label_words("Planet μ"));
+        assert_eq!(key("HisMasters.Voice.label.jpg"), "hismasters voice");
+        assert_eq!(key("labelle.jpg"), "labelle", "label inside a word is not the suffix");
+    }
+
+    #[test]
+    fn a_fill_never_writes_a_second_file_for_a_renamed_one() {
+        let base = std::env::temp_dir().join("ndisc-label-fill-renamed");
+        let _ = std::fs::remove_dir_all(&base);
+        let target = base.join(LABELS_DIR);
+        std::fs::create_dir_all(&target).unwrap();
+        for f in ["werk-discs-label.jpg", "Móatún.7.label.jpg", "Planet Mu.png"] {
+            std::fs::write(target.join(f), b"x").unwrap();
+        }
+        let labels = vec![
+            input("Werk Discs", "https://x/1.jpg"),
+            input("Móatún 7", "https://x/2.jpg"),
+            input("Planet μ", "https://x/3.jpg"),
+        ];
+        let plan = plan_label_fill(&target, None, &labels).unwrap();
+        let got: Vec<(&str, &str)> = plan.items.iter().map(|i| (i.action.as_str(), i.file.as_str())).collect();
+        assert_eq!(
+            got,
+            [("exists", "werk-discs-label.jpg"), ("exists", "Móatún.7.label.jpg"), ("exists", "Planet Mu.png")]
+        );
     }
 
     #[test]
@@ -10662,11 +10932,11 @@ mod label_fill_tests {
         assert_eq!(
             got,
             [
-                ("Red Rhino Records".into(), "copy", "Red Rhino Records.jpg".into()),
-                ("Rephlex Records+Rephlex".into(), "copy", "Rephlex.jpg".into()),
+                ("Red Rhino Records".into(), "copy", "red-rhino-records-label.jpg".into()),
+                ("Rephlex Records+Rephlex".into(), "copy", "rephlex-label.jpg".into()),
                 ("Warp".into(), "exists", "Warp.png".into()),
-                ("Metalheadz".into(), "download", "Metalheadz.jpg".into()),
-                ("EMI+EMI America".into(), "download", "EMI.jpg".into()),
+                ("Metalheadz".into(), "download", "metalheadz-label.jpg".into()),
+                ("EMI+EMI America".into(), "download", "emi-label.jpg".into()),
             ],
             "one copy per master, named after the label whose words it is; own images downloaded once; the placeholder never"
         );
@@ -10682,7 +10952,7 @@ mod label_fill_tests {
         let labels = vec![input("A/B", "https://x/1.jpg"), input("A:B", "https://x/2.jpg")];
         let plan = plan_label_fill(&target, None, &labels).unwrap();
         let files: Vec<&str> = plan.items.iter().map(|i| i.file.as_str()).collect();
-        assert_eq!(files, ["A-B.jpg", "A-B (2).jpg"]);
+        assert_eq!(files, ["a-b-label.jpg", "a-b-label (2).jpg"]);
 
         std::fs::write(target.join("Keep.jpg"), b"original").unwrap();
         assert!(write_new_file(&target, "Keep.jpg", b"new").is_err());
@@ -14798,6 +15068,7 @@ pub fn run() {
             check_label_art,
             load_labels,
             save_labels,
+            rename_label,
             match_label_art,
             label_art_default,
             plan_labels_fill,

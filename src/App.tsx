@@ -785,6 +785,7 @@ export default function App() {
                 formSite={labelFormSite}
                 setFormSite={setLabelFormSite}
                 roomy
+                onRenamed={reload}
               />
         </div>
       ) : view === "table" ? (

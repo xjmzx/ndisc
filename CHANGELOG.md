@@ -23,6 +23,34 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+### Added
+- **Rename / merge a label.** A pencil on the label panel renames the label
+  on screen on every release *and* in the label list, in one transaction.
+  Typing a label that already exists merges into it: the target keeps its own
+  image, website and art pick, and an empty one is filled from the merged
+  entry. An image shared by three or more labels counts as the placeholder,
+  so a merge never trades real art for it. Names compare without case, so a
+  case-only rename (`Firescope Records` → `FireScope Records`) works, and
+  renaming a label to itself makes every release's spelling match. Changed
+  releases that were on the relays go stale for republishing; the labels
+  manifest shows its pending-changes dot as usual.
+
+### Changed
+- **Label art filenames: one forgiving key, one suggested form.** A label and
+  a file in the label art folder are compared by one key everywhere
+  (matching, the art pick fallback and Fill `_labels`): case ignored; `.`,
+  space, `-` and `_` one separator; a trailing `label` after any of them
+  optional; accents folded (`moatun-7` is *Móatún 7*); `μ` read as `mu`;
+  apostrophes dropped. Fill `_labels` now writes the suggested form,
+  `stuff-records-label.jpg`: lower case, dashes, `-label` on the end. Any
+  other spelling with the same key still matches.
+
+### Fixed
+- **Fill `_labels` no longer writes a second file for one already there
+  under another spelling.** It looked for the label's exact name (case and
+  extension aside), so `Werk.Discs.label.jpg` did not count as *Werk Discs*'
+  file and a fill copied `Werk Discs.jpg` in beside it.
+
 ## 0.9.2 — 2026-11-24
 
 ### Added

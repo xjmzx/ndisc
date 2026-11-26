@@ -1227,6 +1227,24 @@ export async function loadLabelsDb(
   return invoke("load_labels", { fromStorage });
 }
 
+export interface LabelRenameResult {
+  // Releases whose label text changed.
+  releases: number;
+  // Of those, how many were on the relays and now wait to be republished.
+  stale: number;
+  // True when two or more label entries became one.
+  merged: boolean;
+  // The label list after the rename.
+  labels: LabelRow[];
+}
+
+// Rename a label on every release and in the label list, merging it into
+// `to` when that label exists already (names compare without case). One
+// transaction; the result carries the new label list.
+export async function renameLabel(from: string, to: string): Promise<LabelRenameResult> {
+  return invoke("rename_label", { from, to });
+}
+
 // Replace every label with `labels` (the whole list, as the app holds it).
 export async function saveLabelsDb(labels: LabelRow[]): Promise<void> {
   return invoke("save_labels", {
