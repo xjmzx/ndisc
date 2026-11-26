@@ -23,6 +23,14 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.1 — 2026-11-26
+
+### Fixed
+- **The rename field could act on the previous label.** It kept the name it
+  was opened on after another label came up in the panel, so *Rename* while
+  looking at Satamile would have renamed Tresor. The field now closes as soon
+  as a different label is shown.
+
 ## 0.10.0 — 2026-11-26
 
 ### Added

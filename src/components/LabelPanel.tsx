@@ -529,6 +529,18 @@ export function LabelPanel({
   const [renaming, setRenaming] = useState(false);
   const [renameMsg, setRenameMsg] = useState<string | null>(null);
 
+  // The form belongs to the label it was opened on. When another label comes
+  // up (picked in the list, a release selected, the edit form opened on
+  // another), close it, so Rename can never act on a label that isn't on
+  // screen. Its last result line goes too.
+  const shownName = display?.name ?? null;
+  const lastRenamedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (renameFrom !== null && shownName !== renameFrom) setRenameFrom(null);
+    if (shownName !== lastRenamedRef.current) setRenameMsg(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownName]);
+
   function openRename() {
     if (!display) return;
     setRenameFrom(display.name);
@@ -573,6 +585,7 @@ export function LabelPanel({
           (r.merged ? " · entries merged" : "") +
           ". Publish the labels manifest to send it.",
       );
+      lastRenamedRef.current = to;
       setRenameFrom(null);
       onRenamed?.();
     } catch (e) {
