@@ -6,10 +6,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
+import { NoArt } from "./NoArt";
 import { cn } from "../lib/cn";
 import { DB_BUTTON_CLS } from "../lib/buttonStyles";
 import {
   getLabelOverview,
+  labelArtFileHash,
   migrateLabelArtToBlossom,
   publishLabels,
   renameLabel,
@@ -36,18 +38,6 @@ type Slide =
   | { kind: "brand"; variant: BrandVariant };
 
 const BRAND_VARIANTS: BrandVariant[] = ["themeA", "themeB", "ink"];
-
-// Fixed brand colours — the cards always render theme A / theme B regardless
-// of the app's active theme, so the idle carousel previews both palettes.
-// The "ink" card is transparent with black text: a near-blank breather slide.
-const BRAND_STYLES: Record<
-  BrandVariant,
-  { wrap: string; n: string; disc: string }
-> = {
-  themeA: { wrap: "bg-black/5", n: "text-[#34d399]", disc: "text-[#f0f6fc]" },
-  themeB: { wrap: "bg-black/5", n: "text-[#ff7849]", disc: "text-[#c9d1d9]" },
-  ink: { wrap: "bg-transparent", n: "text-black", disc: "text-black" },
-};
 
 interface Props {
   labels: LabelEntry[];
@@ -335,8 +325,27 @@ export function LabelPanel({
     return () => window.clearTimeout(t);
   }, [selected]);
 
-  // Idle = nothing pinned: no release (or its pin expired) and no form open.
-  const idle = (!selected || releaseExpired) && !formOpen;
+  // After Save the panel stays on the label just saved for RESELECT_MS, with
+  // a "saved" line, instead of dropping straight back into the carousel.
+  // Selecting a release ends the pin.
+  const [savedPin, setSavedPin] = useState<string | null>(null);
+  useEffect(() => {
+    if (!savedPin) return;
+    const t = window.setTimeout(() => setSavedPin(null), RESELECT_MS);
+    return () => window.clearTimeout(t);
+  }, [savedPin]);
+  useEffect(() => {
+    setSavedPin(null);
+  }, [selected]);
+  const pinnedEntry = useMemo(() => {
+    const key = savedPin?.trim().toLowerCase();
+    if (!key) return null;
+    return labels.find((l) => l.name.trim().toLowerCase() === key) ?? null;
+  }, [savedPin, labels]);
+
+  // Idle = nothing pinned: no release (or its pin expired), no form open and
+  // no label just saved.
+  const idle = (!selected || releaseExpired) && !formOpen && !pinnedEntry;
 
   // Carousel slides: label art interleaved with three ndisc brand cards.
   // The brand cards break up the run of label images and give a fresh
@@ -392,6 +401,7 @@ export function LabelPanel({
   // being configured — not the selected release's matched label.
   const display: LabelEntry | null =
     editingEntry ??
+    pinnedEntry ??
     (idle ? null : match) ??
     (idle ? null : releaseLabelPlaceholder) ??
     (slide?.kind === "label" ? slide.entry : null);
@@ -448,6 +458,52 @@ export function LabelPanel({
   const formKey = formName.trim().toLowerCase();
   const formEntry = labels.find((l) => l.name.trim().toLowerCase() === formKey) ?? null;
   const formMatch = formKey ? review.artMatchFor(formName) : null;
+
+  // Is the label's local file the image its address points at? A Blossom
+  // address is named by the blob's SHA-256, so hashing the local file and
+  // comparing says so without fetching anything. Follows the URL field as
+  // typed, so after "Use this file" it reads "same" straight away.
+  const [localHash, setLocalHash] = useState<string | null>(null);
+  const [usingFile, setUsingFile] = useState(false);
+  const artFolderNow = review.artFolder;
+  const localFile = formMatch?.file ?? null;
+  useEffect(() => {
+    setLocalHash(null);
+    if (!formOpen || !artFolderNow || !localFile) return;
+    let cancelled = false;
+    labelArtFileHash(artFolderNow, localFile)
+      .then((h) => {
+        if (!cancelled) setLocalHash(h.toLowerCase());
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [formOpen, artFolderNow, localFile]);
+  const urlHash = formUrl.trim().toLowerCase().match(/[0-9a-f]{64}/)?.[0] ?? null;
+  const artCompare: "same" | "differs" | "unhashed" | "empty" | null =
+    !localHash
+      ? null
+      : !formUrl.trim()
+        ? "empty"
+        : !urlHash
+          ? "unhashed"
+          : urlHash === localHash
+            ? "same"
+            : "differs";
+
+  async function uploadLocalFile() {
+    if (!artFolderNow || !localFile || usingFile) return;
+    setFormUploadErr(null);
+    setUsingFile(true);
+    try {
+      setFormUrl(await uploadFeedImage(`${artFolderNow}/${localFile}`, blossomServers));
+    } catch (e) {
+      setFormUploadErr(`upload failed: ${e}`);
+    } finally {
+      setUsingFile(false);
+    }
+  }
   const [pickErr, setPickErr] = useState<string | null>(null);
   const setArtFile = (file: string | undefined) => {
     if (!formEntry) return;
@@ -516,6 +572,7 @@ export function LabelPanel({
           )
         : [...labels, fresh];
     setLabels(next);
+    setSavedPin(name);
     setFormName("");
     setFormUrl("");
     setFormSite("");
@@ -819,37 +876,13 @@ export function LabelPanel({
           </div>
         ) : (
           <div
-            className={
-              "aspect-square w-full rounded-md border-2 flex " +
-              "flex-col items-center justify-center gap-1 text-center px-2 " +
-              (editing
-                ? "border-accent/70 border-solid bg-bg/40"
-                : awaitingArt
-                  ? "border-dashed border-mauve/50 bg-mauve/5"
-                  : "border-dashed border-surface bg-bg/30")
-            }
-          >
-            {display ? (
-              isSelfReleased ? (
-                <span className="text-xs text-muted">Self-released</span>
-              ) : (
-                <>
-                  <span className="text-[10px] uppercase tracking-wide text-mauve/80">
-                    {imageFailed ? "image unavailable" : "[no data]"}
-                  </span>
-                  <span
-                    className="text-xs text-fg/80 truncate max-w-full"
-                    title={display.name}
-                  >
-                    {display.name}
-                  </span>
-                </>
-              )
-            ) : (
-              <span className="text-muted text-xs">
-                {selected ? "no label" : "no label images"}
-              </span>
+            className={cn(
+              // A faint outline, only hinting at the square's size: the
+              // no-art frame inside says the rest.
+              "aspect-square w-full rounded-md overflow-hidden ring-1 ring-fg/10",
             )}
+          >
+            <NoArt />
           </div>
         )}
         </div>
@@ -970,6 +1003,11 @@ export function LabelPanel({
                     : `→ renames "${renameFrom}" to "${renameTo.trim()}" (a new name)`}
             </div>
           )}
+        </div>
+      )}
+      {pinnedEntry && !formOpen && (
+        <div className="mt-1 text-[10px] text-muted break-words">
+          Saved "{pinnedEntry.name}" in ndisc. Publish the labels manifest to send it.
         </div>
       )}
       {renameMsg && (
@@ -1093,6 +1131,41 @@ export function LabelPanel({
               )}
             </div>
           )}
+          {artCompare && (
+            <div
+              className={cn(
+                "flex items-center gap-2 px-2 text-[10px]",
+                artCompare === "same" ? "text-muted" : "text-warn",
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                {artCompare === "same"
+                  ? "✓ this file is the image at the address above"
+                  : artCompare === "differs"
+                    ? "this file differs from the image at the address above"
+                    : artCompare === "empty"
+                      ? "no image address yet"
+                      : "the address above isn't a Blossom hash, so it can't be compared"}
+              </span>
+              {artCompare !== "same" && (
+                <button
+                  type="button"
+                  onClick={() => void uploadLocalFile()}
+                  disabled={usingFile || blossomServers.length === 0}
+                  title={
+                    blossomServers.length === 0
+                      ? "Add a Blossom server in the Nostr panel first"
+                      : `Upload ${localFile} to the primary Blossom server and put its address above. Then Save, and publish the labels manifest.`
+                  }
+                  className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded bg-surface
+                             text-muted hover:text-fg disabled:opacity-40"
+                >
+                  <ImageUp size={11} />
+                  {usingFile ? "uploading…" : "Use this file"}
+                </button>
+              )}
+            </div>
+          )}
           {pickErr && <p className="text-[10px] text-alert">{pickErr}</p>}
           <p className="text-[10px] text-muted leading-snug">
             Paste an image address from any host, or upload a local file to
@@ -1123,24 +1196,13 @@ export function LabelPanel({
   );
 }
 
-// A square ndisc-branded carousel slide. Brand colours are fixed (not the
-// app's active theme) so the carousel can preview both palettes. The "n" and
-// "disc" weights match the app title header.
-function BrandCard({ variant }: { variant: BrandVariant }) {
-  const s = BRAND_STYLES[variant];
+// A carousel breather between label images: the suite's no-art tile (it
+// replaced the old "ndisc" wordmark card). The variants only space the three
+// breathers through the run; they all look the same.
+function BrandCard(_: { variant: BrandVariant }) {
   return (
-    <div
-      className={
-        "aspect-square w-full rounded-md flex items-center " +
-        "justify-center select-none " +
-        s.wrap
-      }
-    >
-      <span
-        className={"text-2xl font-bold tracking-tight leading-none " + s.n}
-      >
-        n<span className={s.disc}>disc</span>
-      </span>
+    <div className="aspect-square w-full rounded-md overflow-hidden select-none">
+      <NoArt />
     </div>
   );
 }

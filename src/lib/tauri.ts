@@ -1323,6 +1323,12 @@ export async function runLabelsFill(items: LabelFillItem[]): Promise<LabelFillRu
   return invoke("run_labels_fill", { items });
 }
 
+// SHA-256 (hex) of one file in the label art folder: what a Blossom address
+// for that exact file would be named by.
+export async function labelArtFileHash(folder: string, file: string): Promise<string> {
+  return invoke<string>("label_art_file_hash", { folder, file });
+}
+
 export async function matchLabelArt(
   folder: string,
   labels: { name: string; artFile?: string }[],

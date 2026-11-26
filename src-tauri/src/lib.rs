@@ -10267,6 +10267,21 @@ fn label_art_files(folder: &str) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
+/// The SHA-256 of one file in the label art folder, lower-case hex. A Blossom
+/// address names its blob by this same hash, so comparing the two says
+/// whether the label's local file is the image its address points at,
+/// without fetching anything. `file` is a bare name in `folder`.
+#[tauri::command]
+fn label_art_file_hash(folder: String, file: String) -> Result<String, String> {
+    let file = file.trim();
+    if file.is_empty() || file.contains(['/', '\\']) || file == "." || file == ".." {
+        return Err(format!("not a file name: {file}"));
+    }
+    let path = std::path::Path::new(folder.trim()).join(file);
+    let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    Ok(blossom::sha256_hex(&bytes))
+}
+
 /// Match every label to a file in the label art folder. Read-only.
 #[tauri::command]
 fn match_label_art(folder: String, labels: Vec<LabelPickInput>) -> Result<LabelArtMatches, String> {
@@ -15070,6 +15085,7 @@ pub fn run() {
             save_labels,
             rename_label,
             match_label_art,
+            label_art_file_hash,
             label_art_default,
             plan_labels_fill,
             run_labels_fill,

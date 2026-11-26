@@ -12,7 +12,6 @@ import {
   ExternalLink,
   Disc3,
   AlertTriangle,
-  ImageOff,
   Plus,
   Pencil,
   Trash2,
@@ -25,6 +24,7 @@ import {
   X,
   ShieldCheck,
 } from "lucide-react";
+import { NoArt } from "./NoArt";
 import { nip19, type Event as NostrEvent } from "nostr-tools";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -615,8 +615,8 @@ function FeedCard({ note, byId }: { note: FeedNote; byId: Map<number, Release> }
           loading="lazy"
         />
       ) : (
-        <div className="w-20 h-20 rounded shrink-0 bg-surface grid place-items-center text-muted">
-          <ImageOff size={18} />
+        <div className="w-20 h-20 rounded shrink-0 overflow-hidden">
+          <NoArt />
         </div>
       )}
 

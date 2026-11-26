@@ -23,6 +23,29 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.3 — 2026-11-26
+
+### Added
+- **"Is this file the published image?" on the label form.** Under the
+  label's art file a line says whether that local file is the image at the
+  address in the image field (`✓ this file is the image at the address
+  above`) or not. When it differs, or the label has no address yet, **Use
+  this file** uploads that exact file to Blossom and fills in its address;
+  Save and publishing stay with you. The check hashes the local file and
+  compares it with the SHA-256 a Blossom address is named by — nothing is
+  fetched.
+- **After Save the panel stays on the label just saved**, with a line
+  saying it is saved in ndisc and the labels manifest still needs
+  publishing, instead of falling straight back into the carousel.
+
+### Changed
+- **One "no art" image everywhere.** A release with no cover, a label with
+  no image, the carousel's breather slides (the old "ndisc" wordmark cards)
+  and feed notes without an image all show the suite's transparent no-art
+  frame (`ndisc-no_cover_blank-sq.svg`) at half opacity, in place of dashed
+  boxes, captions and icons. A cover that fails to load still says so. The
+  label panel's frame has only a faint outline.
+
 ## 0.10.2 — 2026-11-26
 
 ### Added

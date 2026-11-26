@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Image as ImageIcon } from "lucide-react";
+import { NoArt } from "./NoArt";
 
 // The 200 × 200 cover square shared by Release detail and Add release, so
 // both cards put the cover in the same place at the same size. 200 is half
 // the 400 × 400 cover art: pixel-exact on a 2× screen. With no image (or one
-// that fails to load) it shows a dashed placeholder.
+// that fails to load) it shows the suite's no-art square.
 interface CoverArtProps {
   src: string | null;
   alt: string;
@@ -25,9 +25,7 @@ export function CoverArt({ src, alt }: CoverArtProps) {
       className={
         "shrink-0 w-[200px] h-[200px] rounded-md overflow-hidden flex " +
         "items-center justify-center " +
-        (showImage
-          ? "bg-surface"
-          : "border-2 border-dashed border-mauve/50 bg-mauve/5")
+        (showImage ? "bg-surface" : "")
       }
     >
       {showImage ? (
@@ -39,15 +37,7 @@ export function CoverArt({ src, alt }: CoverArtProps) {
           onError={() => setFailed(true)}
         />
       ) : (
-        <div
-          className="text-mauve/70 flex flex-col items-center gap-1.5
-                     text-[10px] text-center px-2"
-        >
-          <ImageIcon size={28} strokeWidth={1.5} />
-          <span className="uppercase tracking-wide">
-            {failed ? "cover failed to load" : "no cover"}
-          </span>
-        </div>
+        <NoArt caption={failed ? "cover failed to load" : undefined} />
       )}
     </div>
   );
