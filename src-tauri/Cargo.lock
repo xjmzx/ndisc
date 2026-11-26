@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "ndisc"
-version = "0.9.2"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "csv",

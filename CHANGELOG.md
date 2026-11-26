@@ -23,6 +23,8 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.0 — 2026-11-26
+
 ### Added
 - **Rename / merge a label.** A pencil on the label panel renames the label
   on screen on every release *and* in the label list, in one transaction.
