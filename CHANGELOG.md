@@ -23,6 +23,26 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.4 — 2026-11-27
+
+### Added
+- **Sublabels.** A label can name another label as its parent: an imprint
+  or a series under a label, such as Clone's series or Warp's AI series.
+  Set or clear it with the **Parent label** field on the label form. A
+  sublabel shows `↑ Parent` and a parent shows `↓` followed by its
+  sublabels, each one click away. In the label list a sublabel has a `↳`
+  before its name, with its parent in the tooltip. One level only: a label
+  with sublabels stays top-level. The parent is stored by name in a new
+  `labels.parent` column. Design: `docs/sublabels-design-2026-11-26.md`.
+- **Rename/merge carries families.** Renaming a parent moves its sublabels
+  with it. A merge keeps the target's parent, or takes the merged label's
+  when the target has none. The result stays one level deep.
+- **`labels.v1` gains an optional `parent`** (kind 31238; still unfrozen,
+  `schemaVersion` unchanged). An entry with a parent may omit `image`.
+  glmps and nview ignore the field until they are updated to read it.
+  Setting a parent lights the publish dot; labels without one fingerprint
+  as before, so upgrading does not.
+
 ## 0.10.3 — 2026-11-26
 
 ### Added
