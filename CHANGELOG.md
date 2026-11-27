@@ -23,6 +23,8 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.5 — 2026-11-27
+
 ### Added
 - **A release on a sublabel shows its parent.** Beside the label field:
   `part of Clone`; clicking it opens Clone in the Labels view.
