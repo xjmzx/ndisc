@@ -285,6 +285,15 @@ it stays optional at most.
 
 ### More than one discography
 
+**Superseded 2026-11-27 — see `docs/collections-design-2026-11-27.md`.**
+The user settled the key questions that evening (one keypair per machine;
+a release may belong to several discographies), and those two answers rule
+out a database or a column per discography: with one key, two databases
+collide on `disco-vault:<rowid>` and on the single labels manifest. The
+design is **collections inside one database**, plus a split of platform
+from seller in `source_label`. The sketch below is kept as the record of
+how the question was first framed.
+
 Keep several discographies side by side instead of one per database. Two kinds
 of user in mind:
 
@@ -392,7 +401,10 @@ structural change until last, so nothing built earlier has to be redone.
    limiting at 60 requests a minute.
 6. **Genre interests.** Small to medium, and optional. Easier after the grid,
    since it changes how filters present genres in both views.
-7. **More than one discography.** Large and structural: database or column,
+7. **More than one discography.** Designed 2026-11-27 as *collections in one
+   database* — `docs/collections-design-2026-11-27.md`, which replaces the
+   framing below and lists its own stages. Originally: large and structural,
+   database or column,
    config, keys (one keypair per discography), publishing, and every view.
    Write a design doc first. Anything stored per user before this (genre
    interests, view choices such as the grid layout, kept today under the one
