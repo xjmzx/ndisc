@@ -6137,7 +6137,6 @@ pub struct CoverQualityItem {
     pub low_res: bool,
     /// Long side over LIBRARY_COVER_PX.
     pub over_size: bool,
-    pub png: bool,
     /// How far off square, in percent (0 for square); flagged over the
     /// tolerance.
     pub off_square_pct: f64,
@@ -6387,9 +6386,10 @@ async fn check_local_covers(
                 }
                 None => (false, false, 0.0),
             };
-            let png = *format == "png";
+            // The format is reported, not flagged: PNG suits some art
+            // better than JPEG (decided 2026-11-27).
             let not_square = off > COVER_SQUARE_TOLERANCE;
-            if low_res || over_size || png || not_square || dims.is_none() {
+            if low_res || over_size || not_square || dims.is_none() {
                 result.quality.push(CoverQualityItem {
                     id,
                     artist: artist.clone(),
@@ -6401,7 +6401,6 @@ async fn check_local_covers(
                     format: format.to_string(),
                     low_res,
                     over_size,
-                    png,
                     off_square_pct: (off * 1000.0).round() / 10.0,
                     not_square,
                 });
@@ -6558,7 +6557,6 @@ pub struct LabelArtItem {
     pub on_primary: bool,
     pub low_res: bool,
     pub over_size: bool,
-    pub png: bool,
     pub off_square_pct: f64,
     pub not_square: bool,
     /// Not JPEG or PNG: the readers show it, but it is outside the library's
@@ -6612,7 +6610,6 @@ pub struct LabelLocalItem {
     pub format: String,
     pub low_res: bool,
     pub over_size: bool,
-    pub png: bool,
     pub off_square_pct: f64,
     pub not_square: bool,
     pub other_format: bool,
@@ -6703,7 +6700,6 @@ fn label_locals(
             format: format.to_string(),
             low_res,
             over_size,
-            png: format == "png",
             off_square_pct: (off * 1000.0).round() / 10.0,
             not_square,
             other_format: !head.is_empty() && !matches!(format, "jpeg" | "png"),
@@ -6797,7 +6793,6 @@ fn label_art_item(
         on_primary,
         low_res,
         over_size,
-        png: format == "png",
         off_square_pct: (off * 1000.0).round() / 10.0,
         not_square: off > COVER_SQUARE_TOLERANCE,
         other_format: head.is_ok() && !matches!(format, "jpeg" | "png"),
@@ -6807,8 +6802,8 @@ fn label_art_item(
 
 /// Stage 1 of label art getting the covers' checks (docs/backlog.md, 4b):
 /// read the first 128 KB of every published label image and flag the ones
-/// outside the library's shape — low-res, over the publishing size, PNG, not
-/// square, another format, or not on the primary Blossom server. Each
+/// outside the library's shape — low-res, over the publishing size, not
+/// square, a format other than JPEG or PNG, or not on the primary Blossom server. Each
 /// distinct address is read once, however many labels share it, up to eight
 /// at a time, a failed read tried once more.
 ///
@@ -6944,9 +6939,9 @@ mod label_art_tests {
         let c = tauri::async_runtime::block_on(survey_label_art(labels, &servers, folder, |_, _, _| {})).unwrap();
         let count = |f: &dyn Fn(&LabelArtItem) -> bool| c.items.iter().filter(|r| f(r)).count();
         println!(
-            "{} labels, {} with an image, {} images · low-res {} · over {} · png {} · not square {} · other format {} · not on primary {} · unreadable {}",
+            "{} labels, {} with an image, {} images · low-res {} · over {} · not square {} · other format {} · not on primary {} · unreadable {}",
             c.labels, c.with_image, c.images,
-            count(&|r| r.low_res), count(&|r| r.over_size), count(&|r| r.png), count(&|r| r.not_square),
+            count(&|r| r.low_res), count(&|r| r.over_size), count(&|r| r.not_square),
             count(&|r| r.other_format), count(&|r| !r.on_primary), count(&|r| r.unreadable.is_some()),
         );
         for r in c.items.iter().take(5) {
@@ -6960,9 +6955,9 @@ mod label_art_tests {
         }
         let lc = |f: &dyn Fn(&LabelLocalItem) -> bool| c.locals.iter().filter(|r| f(r)).count();
         println!(
-            "local: {} with a file, {} without · low-res {} · over {} · png {} · not square {} · other {} · placeholder published {} · published larger {}",
+            "local: {} with a file, {} without · low-res {} · over {} · not square {} · other {} · placeholder published {} · published larger {}",
             c.locals.len(), c.no_local.len(),
-            lc(&|r| r.low_res), lc(&|r| r.over_size), lc(&|r| r.png), lc(&|r| r.not_square),
+            lc(&|r| r.low_res), lc(&|r| r.over_size), lc(&|r| r.not_square),
             lc(&|r| r.other_format), lc(&|r| r.published_not_own), lc(&|r| r.published_larger),
         );
     }
@@ -6971,7 +6966,7 @@ mod label_art_tests {
     fn the_flags_are_the_covers_flags() {
         let p = Some("https://blossom.example");
         let wide = label_art_item("https://blossom.example/a.png".into(), vec![], Ok(png_head(800, 400)), p);
-        assert!(wide.png && wide.over_size && wide.not_square && !wide.low_res);
+        assert!(wide.format == "png" && !wide.other_format && wide.over_size && wide.not_square && !wide.low_res);
         assert_eq!(wide.off_square_pct, 50.0);
         assert!(wide.on_primary && !wide.other_format && wide.unreadable.is_none());
 

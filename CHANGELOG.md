@@ -27,6 +27,13 @@ wave; an app-only change bumps ndisc alone. See
 - **A release on a sublabel shows its parent.** Beside the label field:
   `part of Clone`; clicking it opens Clone in the Labels view.
 
+### Changed
+- **PNG is no longer flagged.** Some artwork is better kept as PNG, so the
+  cover check and the label-art check report a file's format but don't flag
+  PNG, the PNG filter buttons are gone, and Export list no longer writes
+  `png` or `ncover:convert` (ncover's Convert still works when chosen by
+  hand). WebP, GIF and AVIF label art is still flagged as another format.
+
 ## 0.10.4 — 2026-11-27
 
 ### Added

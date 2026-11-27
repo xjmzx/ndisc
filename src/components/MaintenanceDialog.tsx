@@ -179,8 +179,8 @@ export const MAINT_GROUPS: MaintGroup[] = [
           "Compares each published release's cover file with the copy on " +
           "Blossom and lists the ones changed on disk since publishing, and " +
           "the ones it can't compare: published from elsewhere, no file on " +
-          "disk, no cover — plus local covers that are low-res, over 600 px, " +
-          "PNG or not square. You choose which to upload; Export list writes " +
+          "disk, no cover — plus local covers that are low-res, over 600 px " +
+          "or not square. You choose which to upload; Export list writes " +
           "them all for ncover.",
         mode: "check",
       },

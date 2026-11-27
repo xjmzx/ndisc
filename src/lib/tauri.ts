@@ -1178,7 +1178,6 @@ export interface CoverQualityItem {
   format: "jpeg" | "png" | "other";
   lowRes: boolean;
   overSize: boolean;
-  png: boolean;
   offSquarePct: number;
   notSquare: boolean;
 }
@@ -1353,7 +1352,6 @@ export interface LabelArtItem {
   onPrimary: boolean;
   lowRes: boolean;
   overSize: boolean;
-  png: boolean;
   offSquarePct: number;
   notSquare: boolean;
   otherFormat: boolean;
@@ -1372,7 +1370,6 @@ export interface LabelLocalItem {
   format: string;
   lowRes: boolean;
   overSize: boolean;
-  png: boolean;
   offSquarePct: number;
   notSquare: boolean;
   otherFormat: boolean;
@@ -1419,7 +1416,6 @@ export function labelLocalKinds(r: LabelLocalItem, check: LabelArtCheck): string
   const k: string[] = [];
   if (r.lowRes) k.push(`low-res<${check.lowPx}`);
   if (r.overSize) k.push(`over-${check.libraryPx}`);
-  if (r.png) k.push("png");
   if (r.otherFormat) k.push(r.format);
   if (r.notSquare) k.push(`off-square-${Math.round(r.offSquarePct)}%`);
   if (r.publishedNotOwn) k.push("not-its-own-image");
@@ -1433,7 +1429,6 @@ export function labelArtKinds(r: LabelArtItem, check: LabelArtCheck): string[] {
   if (r.unreadable) k.push("unreadable");
   if (r.lowRes) k.push(`low-res<${check.lowPx}`);
   if (r.overSize) k.push(`over-${check.libraryPx}`);
-  if (r.png) k.push("png");
   if (r.otherFormat) k.push(r.format);
   if (r.notSquare) k.push(`off-square-${Math.round(r.offSquarePct)}%`);
   if (check.primary && !r.onPrimary) k.push("not-on-primary");
@@ -1455,7 +1450,6 @@ export function labelArtKinds(r: LabelArtItem, check: LabelArtCheck): string[] {
 //   review           look before doing anything (different picture, …)
 //   ncover:square    crop to square
 //   ncover:cap       shrink to the publishing size
-//   ncover:convert   PNG → JPEG
 //   ndisc:reconcile  download the published cover into the folder
 //   ndisc:upload     upload the local file and republish
 // A cover marked `resource` gets no ncover action: re-sourcing replaces it,
@@ -1465,7 +1459,6 @@ export const COVER_ACTIONS = [
   "review",
   "ncover:square",
   "ncover:cap",
-  "ncover:convert",
   "ndisc:reconcile",
   "ndisc:upload",
 ] as const;
@@ -1485,7 +1478,6 @@ const KIND_ACTION: [RegExp, (typeof COVER_ACTIONS)[number]][] = [
   [/^unreadable$/, "review"],
   [/^low-res/, "resource"],
   [/^over-/, "ncover:cap"],
-  [/^png$/, "ncover:convert"],
   [/^off-square-/, "ncover:square"],
 ];
 
@@ -1578,7 +1570,6 @@ export function labelListText(check: LabelArtCheck): string {
       if (!r.dims && !r.otherFormat) kinds.push("unreadable");
       if (r.lowRes) kinds.push(`low-res<${check.lowPx}`);
       if (r.overSize) kinds.push(`over-${check.libraryPx}`);
-      if (r.png) kinds.push("png");
       if (r.otherFormat) kinds.push(`other-format:${r.format}`);
       if (r.notSquare) kinds.push(`off-square-${r.offSquarePct}%`);
       if (r.publishedNotOwn) kinds.push("not-its-own-image");
@@ -1607,7 +1598,6 @@ export function qualityKinds(r: CoverQualityItem, check: LocalCoverCheck): strin
   if (!r.dims) k.push("unreadable");
   if (r.lowRes) k.push(`low-res<${check.lowPx}`);
   if (r.overSize) k.push(`over-${check.libraryPx}`);
-  if (r.png) k.push("png");
   if (r.notSquare) k.push(`off-square-${r.offSquarePct}%`);
   return k;
 }

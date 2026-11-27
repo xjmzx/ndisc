@@ -3995,7 +3995,7 @@ export function LocalCoverDetails({
     });
   }, [check, done]);
   const listCount = listText ? listText.split("\n").length - 1 : 0;
-  const [qFilter, setQFilter] = useState<"all" | "low" | "over" | "png" | "shape">("all");
+  const [qFilter, setQFilter] = useState<"all" | "low" | "over" | "shape">("all");
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   async function exportList() {
     setExportMsg(null);
@@ -4485,15 +4485,14 @@ export function LocalCoverDetails({
             {check.quality.length} local cover{check.quality.length === 1 ? "" : "s"} outside
             the library’s shape · {check.quality.filter((r) => r.lowRes).length} low-res ·{" "}
             {check.quality.filter((r) => r.overSize).length} over {check.libraryPx} px ·{" "}
-            {check.quality.filter((r) => r.png).length} PNG ·{" "}
             {check.quality.filter((r) => r.notSquare).length} not square
           </summary>
           <p className="mt-1 text-[10px] text-muted">
             Read from each file’s header; nothing is changed. Low-res is a long side
             under {check.lowPx} px (worth a better source); over {check.libraryPx} px
-            and PNG aren’t optimised for publishing; not square is more than{" "}
-            {check.squareTolerancePct}% off. Resizing, converting and cropping are
-            ncover’s job: Export list includes these.
+            isn’t optimised for publishing; not square is more than{" "}
+            {check.squareTolerancePct}% off. JPEG and PNG are both fine. Resizing and
+            cropping are ncover’s job: Export list includes these.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px]">
             {(
@@ -4501,7 +4500,6 @@ export function LocalCoverDetails({
                 ["all", "All", check.quality.length],
                 ["low", "Low-res", check.quality.filter((r) => r.lowRes).length],
                 ["over", `Over ${check.libraryPx}`, check.quality.filter((r) => r.overSize).length],
-                ["png", "PNG", check.quality.filter((r) => r.png).length],
                 ["shape", "Not square", check.quality.filter((r) => r.notSquare).length],
               ] as const
             ).map(([k, label, n]) => (
@@ -4524,11 +4522,9 @@ export function LocalCoverDetails({
                   ? r.lowRes
                   : qFilter === "over"
                     ? r.overSize
-                    : qFilter === "png"
-                      ? r.png
-                      : qFilter === "shape"
-                        ? r.notSquare
-                        : true,
+                    : qFilter === "shape"
+                      ? r.notSquare
+                      : true,
               )
               .map((r) => (
                 <li
@@ -4546,7 +4542,7 @@ export function LocalCoverDetails({
                       localDims: r.dims,
                       publishedDims: null,
                       localBytes: r.localBytes,
-                      note: `Outside the library's shape: ${qualityKinds(r, check).join(" · ")}. Resizing, converting and cropping are ncover's job; Export list includes it.`,
+                      note: `Outside the library's shape: ${qualityKinds(r, check).join(" · ")}. Resizing and cropping are ncover's job; Export list includes it.`,
                       canUpload: false,
                       canSave: false,
                     })

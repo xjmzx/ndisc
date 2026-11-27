@@ -31,7 +31,7 @@ import type { LabelEntry } from "./LabelPanel";
 // closing it. A fresh cover check remounts the cover results (`key`).
 
 // The label results' filter chips: every flagged image, or one flag.
-export type ArtFilter = "flagged" | "low" | "over" | "png" | "shape" | "other" | "elsewhere" | "unreadable";
+export type ArtFilter = "flagged" | "low" | "over" | "shape" | "other" | "elsewhere" | "unreadable";
 
 export function artPasses(f: ArtFilter, r: LabelArtItem, check: LabelArtCheck): boolean {
   switch (f) {
@@ -39,8 +39,6 @@ export function artPasses(f: ArtFilter, r: LabelArtItem, check: LabelArtCheck): 
       return r.lowRes;
     case "over":
       return r.overSize;
-    case "png":
-      return r.png;
     case "shape":
       return r.notSquare;
     case "other":
@@ -73,8 +71,8 @@ function LabelArtDetails({
     <div className="text-xs">
       <p className="text-muted">
         Read from each image’s first bytes; nothing is changed. Low-res is a long side under{" "}
-        {check.lowPx} px; over {check.libraryPx} px and PNG aren’t optimised for publishing; not
-        square is more than {check.squareTolerancePct}% off. Click an image to see it large and
+        {check.lowPx} px; over {check.libraryPx} px isn’t optimised for publishing; not square is
+        more than {check.squareTolerancePct}% off. JPEG and PNG are both fine. Click an image to see it large and
         edit the labels that use it.
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
@@ -83,7 +81,6 @@ function LabelArtDetails({
             ["flagged", "Flagged"],
             ["low", "Low-res"],
             ["over", `Over ${check.libraryPx}`],
-            ["png", "PNG"],
             ["shape", "Not square"],
             ["other", "Other format"],
             ["elsewhere", "Not on primary"],
@@ -153,7 +150,7 @@ function LabelArtDetails({
   );
 }
 
-type LocalFilter = "all" | "low" | "over" | "png" | "shape" | "other" | "shared" | "larger" | "none";
+type LocalFilter = "all" | "low" | "over" | "shape" | "other" | "shared" | "larger" | "none";
 
 function localPasses(f: LocalFilter, r: LabelLocalItem): boolean {
   switch (f) {
@@ -161,8 +158,6 @@ function localPasses(f: LocalFilter, r: LabelLocalItem): boolean {
       return r.lowRes;
     case "over":
       return r.overSize;
-    case "png":
-      return r.png;
     case "shape":
       return r.notSquare;
     case "other":
@@ -242,7 +237,6 @@ function LabelLocalDetails({
             ["all", "With a file", check.locals.length],
             ["low", "Low-res", check.locals.filter((r) => r.lowRes).length],
             ["over", `Over ${check.libraryPx}`, check.locals.filter((r) => r.overSize).length],
-            ["png", "PNG", check.locals.filter((r) => r.png).length],
             ["shape", "Not square", check.locals.filter((r) => r.notSquare).length],
             ["other", "Other format", check.locals.filter((r) => r.otherFormat).length],
             ["shared", "Not its own image", check.locals.filter((r) => r.publishedNotOwn).length],
