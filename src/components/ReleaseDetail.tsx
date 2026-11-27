@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import {
   Check,
   Combine,
+  CornerLeftUp,
   Copy,
   ExternalLink,
   FolderOpen,
@@ -38,6 +39,8 @@ import { GenrePicker } from "./GenrePicker";
 import { FeedbackArea, type FeedbackTone } from "./FeedbackArea";
 import { CountBadge, LeafDots } from "./LeafIcon";
 import { SUBTLE_BUTTON_CLS } from "../lib/buttonStyles";
+import { parentOf } from "../lib/labelFamily";
+import type { LabelEntry } from "./LabelPanel";
 import { coverImageSrc } from "../lib/cover";
 import { houseGenreOrder } from "../lib/genre";
 import {
@@ -139,6 +142,10 @@ interface Props {
   filterNote?: string | null;
   filterTone?: FeedbackTone;
   stripError?: string | null;
+  // The label library, for the release's label family (its parent label).
+  labels?: LabelEntry[];
+  // Open a label in the Labels view.
+  onOpenLabel?: (name: string) => void;
 }
 
 // Status block at the bottom of the detail panel shows exactly one of:
@@ -164,7 +171,11 @@ export function ReleaseDetail({
   filterNote = null,
   filterTone = "nostr",
   stripError = null,
+  labels = [],
+  onOpenLabel,
 }: Props) {
+  // A sublabel's parent, shown beside the label field (sublabels, 0.10.4).
+  const labelParent = release.label ? parentOf(labels, release.label) : null;
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -934,6 +945,24 @@ export function ReleaseDetail({
           placeholder="label"
           width="w-40"
         />
+        {labelParent && (
+          <span className="flex items-center gap-1 text-xs min-w-0">
+            <CornerLeftUp size={12} className="text-muted shrink-0" aria-hidden="true" />
+            <span className="text-muted">part of</span>
+            {onOpenLabel ? (
+              <button
+                type="button"
+                onClick={() => onOpenLabel(labelParent)}
+                title={`Open ${labelParent} in Labels`}
+                className="truncate text-accent hover:underline"
+              >
+                {labelParent}
+              </button>
+            ) : (
+              <span className="truncate text-fg">{labelParent}</span>
+            )}
+          </span>
+        )}
         {/* Keyed by release: this editor stays open after a commit (for the
             colour/digital controls), and ReleaseDetail is reused across
             selections, so without a key its draft carried to the next release

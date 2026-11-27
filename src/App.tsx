@@ -262,6 +262,14 @@ export default function App() {
     setLabelFormOpen(true);
   }
 
+  // From a release: show a label (e.g. a sublabel's parent) in the Labels view.
+  function openLabelInLabels(name: string) {
+    const k = name.trim().toLowerCase();
+    const entry = labels.find((l) => l.name.trim().toLowerCase() === k);
+    promptAddLabel(entry?.name ?? name, entry?.imageUrl ?? "", entry?.siteUrl ?? "");
+    setView("labels");
+  }
+
   // Undo toast — generic, used by destructive actions like delete-release.
   const [toast, setToast] = useState<UndoToastState | null>(null);
   function showUndoToast(message: string, undo: () => void | Promise<void>) {
@@ -718,6 +726,8 @@ export default function App() {
                 }
                 filterTone={filterTone}
                 stripError={stripError}
+                labels={labels}
+                onOpenLabel={openLabelInLabels}
               />
             ) : (
               <AddReleaseForm
