@@ -653,6 +653,45 @@ export function LabelPanel({
     setFormOpen(false);
   }
 
+  // Replace a shared image: the form's label has an image other labels use
+  // too, and the URL field now holds a different one. Saving "on all" swaps
+  // the old address for the new on every label that has it — names, sites,
+  // parents and art files are left alone.
+  const sharedOldUrl = formEntry?.imageUrl.trim() ?? "";
+  const sharedCount = sharedOldUrl
+    ? labels.filter((l) => l.imageUrl.trim() === sharedOldUrl).length
+    : 0;
+  const canReplaceShared =
+    sharedCount > 1 && !!formUrl.trim() && formUrl.trim() !== sharedOldUrl;
+
+  async function replaceSharedImage() {
+    const url = formUrl.trim();
+    if (!canReplaceShared || !url) return;
+    const yes = await ask(
+      `Replace this image on all ${sharedCount.toLocaleString()} labels that use it?\n\n` +
+        `${sharedOldUrl}\n→\n${url}\n\n` +
+        "Only the image address changes. Nothing is published until you " +
+        "publish the labels manifest.",
+      { title: "Replace a shared image", kind: "info" },
+    );
+    if (!yes) return;
+    const site = formSite.trim();
+    setLabels(
+      labels.map((l) =>
+        l === formEntry
+          ? { ...l, imageUrl: url, siteUrl: site || undefined }
+          : l.imageUrl.trim() === sharedOldUrl
+            ? { ...l, imageUrl: url }
+            : l,
+      ),
+    );
+    setSavedPin(formEntry!.name);
+    setFormName("");
+    setFormUrl("");
+    setFormSite("");
+    setFormOpen(false);
+  }
+
   // Rename / merge: the name is captured when the form opens, so the
   // carousel moving on underneath never changes which label is renamed.
   const [renameFrom, setRenameFrom] = useState<string | null>(null);
@@ -1347,6 +1386,16 @@ export function LabelPanel({
           >
             <Plus size={12} /> Save
           </button>
+          {canReplaceShared && (
+            <button
+              type="button"
+              onClick={() => void replaceSharedImage()}
+              title={`The old image is used by ${sharedCount.toLocaleString()} labels. Put the new address on every one of them.`}
+              className={`${DB_BUTTON_CLS} justify-center`}
+            >
+              <ImageUp size={12} /> Save on all {sharedCount.toLocaleString()} labels with this image
+            </button>
+          )}
         </div>
       )}
     </Section>

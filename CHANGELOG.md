@@ -23,6 +23,16 @@ wave; an app-only change bumps ndisc alone. See
 
 ## Unreleased
 
+## 0.10.6 — 2026-11-27
+
+### Added
+- **Replace a shared label image on every label at once.** When the label in
+  the form has an image other labels use too, and the URL field now holds a
+  different one, a second button appears under Save: *Save on all N labels
+  with this image*. After a confirm it swaps the old address for the new on
+  every label that had it; names, websites, parents and art files are left
+  alone. Publish the labels manifest once to send them all.
+
 ## 0.10.5 — 2026-11-27
 
 ### Added
