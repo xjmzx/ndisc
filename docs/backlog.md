@@ -26,6 +26,12 @@ Proposal: fold the **A/V filter** (has video / audio-only / any) into the
 **medium filter** as a third value, so it cycles *physical / digital /
 has audio+video / any*, and use the freed slot for **Recent**.
 
+**The freed slot is uncontested (2026-11-28).** Collections were briefly the
+other claim on it; they are now a **scope** (opened, like the database path),
+not a filter, so they take no slot in this row. See
+[`collections-design-2026-11-27.md`](collections-design-2026-11-27.md) § 3.
+Recent is the only candidate.
+
 To settle:
 - The merge loses a state. Today A/V can select *audio-only* (digital with
   no video); in the merged cycle, *digital* would mean either all digital
@@ -106,8 +112,12 @@ a release may belong to several discographies), and those two answers rule
 out a database or a column per discography: with one key, two databases
 collide on `disco-vault:<rowid>` and on the single labels manifest. The
 design is **collections inside one database**, plus a split of platform
-from seller in `source_label`. The sketch below is kept as the record of
-how the question was first framed.
+from seller in `source_label`. **Amended 2026-11-28:** a collection is a
+*scope* the user opens, not a filter; it can be **publishing-locked** (locked
+by default), and a lock never decides what event *kind* its releases publish
+as — samples and mixes belong to nsmpl's clip kinds, not 31237. Also corrected
+there: the **Apple Music import is already built**. The sketch below is kept
+as the record of how the question was first framed.
 
 Keep several discographies side by side instead of one per database. Two kinds
 of user in mind:
