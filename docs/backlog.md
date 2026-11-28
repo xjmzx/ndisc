@@ -115,8 +115,10 @@ design is **collections inside one database**, plus a split of platform
 from seller in `source_label`. **Amended 2026-11-28:** a collection is a
 *scope* the user opens, not a filter; it can be **publishing-locked** (locked
 by default), and a lock never decides what event *kind* its releases publish
-as — samples and mixes belong to nsmpl's clip kinds, not 31237. Also corrected
-there: the **Apple Music import is already built**. The sketch below is kept
+as. Corrected the same day: samples and mixes **are** publishable as releases —
+`release.v2` already carries `type: sample`/`stem`/`field-recording` and
+`category: mix`, ndisc emits `type`, and glmps already filters the full enum.
+Also corrected there: the **Apple Music import is already built**. The sketch below is kept
 as the record of how the question was first framed.
 
 Keep several discographies side by side instead of one per database. Two kinds

@@ -47,7 +47,7 @@ could show *portions* of one catalogue in different ways. That framing is why
 | Removable media | Supported if the user insists, never designed for | § 8 |
 | How a collection is reached | **Opened, not filtered** — a scope, like the database path (2026-11-28) | § 3 |
 | Publishing a collection | **Locked by default**; the lock blocks, never retracts (2026-11-28) | § 5a |
-| Samples, mixes, other non-releases | Filed locally yes; published as kind 31237 **no** (2026-11-28) | § 5a |
+| Samples, mixes, other non-releases | **Publishable as releases** — `type: sample` and `category: mix` already exist in the contract (corrected 2026-11-28) | § 5a |
 
 ## 2. Why one database is forced, not merely preferred
 
@@ -166,6 +166,20 @@ exactly the list of things that ought to narrow.
 Records or Móatún 7 purchases as a thing they open filters by seller once
 (§ 4), bulk-files the result, and from then on opens it. Sources describe;
 a collection is the decision to present one.
+
+**"All is all" (the user, 2026-11-28).** The across-all view is not narrowed by
+anything a collection says: there is **no "exclude this collection from All"
+flag**, and one was proposed and deliberately turned down. The case for it was
+that the Apple library here is 1,325 albums, 800 of them partial purchases, and
+would swamp a 162-release catalogue in the default view. The case against is
+stronger: **partial is a transient state.** Apple offers "complete this album"
+on every partial purchase, so some will become full over time and others will
+be dropped and unpublished — and a condition that changes should not become a
+permanent structural property of a collection. The question the flag was
+reaching for is better asked **at import**: "*n* partial releases are present —
+exclude them?" Which the importer already asks, as the *Full albums only* tick
+box, and already has the numbers for (`newFull` / `newPartial` in the scan
+report); only the wording leaves the count unsaid.
 
 ## 4. Source, seller, reference — three facts in two fields
 
@@ -287,30 +301,44 @@ safety property and the UI is not where safety lives.
 ### What the lock is not
 
 **A collection decides whether its releases publish. It never decides what
-*kind* they publish as.**
+*kind* they publish as.** That principle holds — but it is a much smaller
+claim than the first version of this section made, because what a release
+publishes as is already a per-release field, and the contract already covers
+the cases that prompted the question.
 
-Kind 31237 means "a release in a discography". `glmps` and `nview` read
-everything the owner key publishes at that kind and render it as an album with
-artist, title, year, label and catalogue number. Publishing a sample library
-there would grow nurture's 1,899-release catalogue with sample packs that
-readers draw as albums — a change to what the published catalogue *means*, and
-not something a collection flag should be able to cause as a side effect.
+**Corrected 2026-11-28, same day, from the contract and the readers.** The
+first version of this section argued that samples and long mixes should not be
+published as kind 31237 at all, and that they belonged to nsmpl's clip kinds.
+That was wrong twice over, and it was agreed on before it was checked:
 
-The suite already has the right shape. ntree and nsmpl publish audio clips
-(the `clip.v1` work), and nurture's event list carries **kind 1063 ×11** —
-file metadata. A shared sample library on relay.nfunc.xyz is that: a set of
-files with duration, BPM, key and licence, none of which `release.v2` has room
-for and none of which it should grow. So "share my samples" is a real and good
-goal that belongs to **nsmpl and its own kind**, as a suite conversation on its
-own merits — not something that rides in on stage 2.
+- `schema/release.v2.json` carries a **`type`** tag whose enum is
+  `music · sample · stem · field-recording · message · other`, and
+  **`category`** includes `mix`. So the contract was built for exactly this.
+- **ndisc already emits `type`** (`lib.rs`, `push_tag(…, "type", t)`), and the
+  catalogue on this Mac already uses `category: mix` on three releases. Every
+  one of its 162 is `type: music`.
+- **glmps already filters on it.** `src/components/FilterBar.tsx` holds
+  `TYPE_ORDER` with the full enum and `CATEGORY_ORDER` with `mix`, commented
+  "Schema enums from ndisc". So the reader side is built, and the fear that a
+  reader would draw a sample pack as an album was unfounded.
+- `clip.v1` / kind 1063 is a **clip of a track** — ntree and nsmpl's
+  ten-second previews, eleven of them in nurture's events. That is not a
+  sample someone made, so it was the wrong home to point at.
 
-**Agreed with the user 2026-11-28**, who put it as "your clarity on locking,
-and event kinds distinguished IS the way to go."
+So "maybe we want a library of samples we made on our relay, maybe we want to
+share them all" (the user, 2026-11-28) is **already supported end to end**: set
+`type: sample`, publish, and a reader can tell them apart. No new kind, no
+contract change, no nsmpl dependency.
 
-**If that is ever overruled** and samples go out as 31237, note the knock-on:
-the § 5 `collection` tag becomes load-bearing immediately, because readers
-would *need* it to keep sample packs out of the release list. Stage 3 would
-stop being optional and become a prerequisite.
+What survives unchanged is the **lock**, and its default, for the reason given
+above: an accidental bulk publish is the expensive direction whatever the
+releases are. And the boundary survives in its narrow form — `type` is a fact
+about a release that the user sets per release, so a collection should neither
+set it nor override it.
+
+One consequence worth keeping in view: because `type` already distinguishes
+them, the § 5 `collection` tag is **not** needed to keep samples out of a
+reader's album view. Stage 3 stays optional, which is what § 10 assumed.
 
 ## 6. Settings scope
 
@@ -364,6 +392,30 @@ Two consequences, both of which shorten the path:
 
 Nothing has imported it here yet: the catalogue is 162 rows with no
 `Apple Music` source label, so it is a clean first test.
+
+**What the export actually holds here (read 2026-11-28):** 4,694 tracks, 25
+videos skipped, **1,325 albums — 524 full, 800 partial**; 4,611 m4a and 25 m4v
+under `/Volumes/AV/Music_Apple/Music/<Artist>/<Album>/`, with 1,316 albums
+having every track located on disk. Track kinds: 4,560 Purchased AAC, 94 AAC,
+**10 Protected AAC** (old FairPlay — those will not play and cannot be
+tag-read) and 5 Apple Lossless. The folder tree is the same shape the folder
+import expects, which is why either importer can read this library.
+
+**`file_path` is filled from the export itself (built 2026-11-28).** The
+Location of every track was already in the XML and `apple_import` discarded
+it; it now derives the album's folder (`album_dir`) and the import writes it,
+so one pass gives Apple's own facts *and* the files. That also makes the two
+importers mutually idempotent, since the folder import de-duplicates on
+`file_path` alone — before this, an Apple import and a later scan of the same
+tree each created their own copy of every album.
+
+**Nothing re-judges "partial" on a second run.** The import skips an album
+already in the catalogue (by `match_key`), so an album completed on Apple later
+keeps its `Apple Music (partial)` label. With `file_path` filled the live
+record is the folder rather than the export: `track_count` against
+`track_total` after a library rescan is what will show an album completed.
+Re-reading an export to update existing rows would be a separate mode, and is
+not built.
 
 **Subscription downloads are out, firmly (2026-11-27).** ndisc is about files
 the user has, not files they have access to. A streaming subscription's
@@ -422,8 +474,10 @@ storage, which costs only disk.
 
 ## 9. Open questions
 
-0. *Settled 2026-11-28:* how a collection is reached (§ 3, a scope), and
-   publishing locks against event kinds (§ 5a).
+0. *Settled 2026-11-28:* how a collection is reached (§ 3, a scope);
+   publishing locks against event kinds (§ 5a, corrected the same day); and
+   that the across-all view stays unfiltered — "all is all", with partials
+   excluded at import time if at all (§ 3).
 1. The tag name and value in § 5, and whether readers group or filter.
 2. Whether **platform** and **seller** are two columns, or one column plus a
    vocabulary table — and what happens to the 19 releases with neither.
