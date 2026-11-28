@@ -525,6 +525,11 @@ export interface ScanAppleReport {
   existing: number;
   newFull: number;
   newPartial: number;
+  /** Albums whose tracks agree on one folder — the ones that get a file path. */
+  withPath: number;
+  /** Of those, the folders on disk right now (a library on an unmounted drive
+   *  still imports its paths). */
+  pathOnDisk: number;
 }
 
 export async function scanAppleXml(path: string): Promise<ScanAppleReport> {

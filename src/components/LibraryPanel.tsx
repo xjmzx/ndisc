@@ -571,6 +571,11 @@ export function LibraryFlowPanel({ lib }: { lib: LibraryController }) {
                 {scan.report.tracks.toLocaleString()} tracks
                 {scan.report.skippedTracks > 0 &&
                   ` · ${scan.report.skippedTracks.toLocaleString()} videos or tracks without an album left out`}
+                {" · "}
+                {scan.report.withPath.toLocaleString()} of{" "}
+                {scan.report.albums.toLocaleString()} carry a file path
+                {scan.report.withPath > scan.report.pathOnDisk &&
+                  ` · ${(scan.report.withPath - scan.report.pathOnDisk).toLocaleString()} of those folders are not mounted`}
                 {" · "}albums already in the catalogue are skipped
               </div>
               <label className="mt-2 inline-flex items-center gap-2 text-xs text-fg/80 cursor-pointer select-none">

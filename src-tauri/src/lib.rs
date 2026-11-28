@@ -14030,6 +14030,27 @@ pub struct ScanAppleReport {
     pub existing: usize,
     pub new_full: usize,
     pub new_partial: usize,
+    /// Albums whose tracks agree on one folder — the ones that can carry a
+    /// `file_path` (2026-11-28).
+    pub with_path: usize,
+    /// Of those, the folders that are on disk right now. Lower when the
+    /// library sits on a drive that is not mounted; the path is imported
+    /// either way, since absence is not evidence the file has gone.
+    pub path_on_disk: usize,
+}
+
+/// Every non-null value of a single TEXT column, as a set. Used by the Apple
+/// import to learn the `file_path`s and merged paths already on record.
+fn string_set(conn: &Connection, sql: &str) -> Result<HashSet<String>, String> {
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut out = HashSet::new();
+    for row in rows {
+        out.insert(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
 }
 
 fn catalogue_keys(conn: &Connection) -> Result<HashSet<String>, String> {
@@ -14061,8 +14082,16 @@ fn scan_apple_xml(app: tauri::AppHandle, path: String) -> Result<ScanAppleReport
         existing: 0,
         new_full: 0,
         new_partial: 0,
+        with_path: 0,
+        path_on_disk: 0,
     };
     for a in &lib.albums {
+        if let Some(dir) = a.dir.as_deref() {
+            report.with_path += 1;
+            if std::path::Path::new(dir).is_dir() {
+                report.path_on_disk += 1;
+            }
+        }
         if a.full {
             report.full += 1;
         } else {
@@ -14119,12 +14148,34 @@ fn import_apple_albums(
         errors: Vec::new(),
     };
     let mut keys = catalogue_keys(conn)?;
+    // The folder import de-duplicates on `file_path` ALONE, so this one has to
+    // as well now that it fills that column (2026-11-28): without it, a folder
+    // scan of the same tree and this import would each create their own copy
+    // of every album. Inserting into the set as we go also stops two export
+    // entries that point at one folder both landing.
+    let mut paths = string_set(conn, "SELECT file_path FROM releases WHERE TRIM(COALESCE(file_path,'')) <> ''")?;
+    // A folder deliberately removed as a duplicate does not come back through
+    // the XML either — the same rule, and the same wording, as the folder
+    // import: the user has already said it isn't wanted as its own release.
+    let merged = string_set(conn, "SELECT path FROM merged_paths")?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for (i, a) in albums.iter().enumerate() {
         progress(i + 1, total, &format!("{} — {}", a.artist, a.title));
         if full_only && !a.full {
             summary.skipped += 1;
             continue;
+        }
+        // Before the match-key check, so an album turned away on its path does
+        // not consume its key on the way out.
+        if let Some(dir) = a.dir.as_deref() {
+            if merged.contains(dir) {
+                summary.ignored += 1;
+                continue;
+            }
+            if !paths.insert(dir.to_string()) {
+                summary.skipped += 1;
+                continue;
+            }
         }
         if !keys.insert(apple_import::match_key(&a.artist, &a.title)) {
             summary.skipped += 1;
@@ -14139,8 +14190,9 @@ fn import_apple_albums(
         match tx.execute(
             "INSERT INTO releases
              (artist, title, year, medium, format, release_type, category,
-              genre_primary, track_count, track_total, disc_total, source_label)
-             VALUES (?1, ?2, ?3, 'digital', ?4, 'music', ?5, ?6, ?7, ?8, ?9, ?10)",
+              genre_primary, track_count, track_total, disc_total, source_label,
+              file_path)
+             VALUES (?1, ?2, ?3, 'digital', ?4, 'music', ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 a.artist,
                 a.title,
@@ -14152,6 +14204,7 @@ fn import_apple_albums(
                 a.track_total,
                 a.disc_total.map(|d| d.min(99)),
                 source_label,
+                a.dir,
             ],
         ) {
             Ok(_) => summary.imported += 1,
